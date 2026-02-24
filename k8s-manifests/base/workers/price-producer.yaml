@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: price-producer
+  namespace: tutum-app
+  labels:
+    app: price-producer
+    app.kubernetes.io/name: price-producer
+    app.kubernetes.io/part-of: tutum
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: price-producer
+  template:
+    metadata:
+      labels:
+        app: price-producer
+    spec:
+      containers:
+        - name: price-producer
+          image: 192.168.56.12:8080/tutum/workers:latest
+          command: ["python", "-u", "price_producer.py"]
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka.tutum-data.svc.cluster.local:9092"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

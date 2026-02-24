@@ -1,0 +1,41 @@
+multitenancy_enabled: false
+
+server:
+  http_listen_port: 9009
+
+blocks_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/blocks
+  tsdb:
+    dir: /data/tsdb
+  bucket_store:
+    sync_dir: /data/bucket-sync
+
+compactor:
+  data_dir: /data/compactor
+
+distributor:
+  ring:
+    kvstore:
+      store: memberlist
+
+ingester:
+  ring:
+    kvstore:
+      store: memberlist
+    replication_factor: 1
+
+store_gateway:
+  sharding_ring:
+    replication_factor: 1
+
+limits:
+  max_global_series_per_user: 500000
+  ingestion_rate: 10000
+  ingestion_burst_size: 200000
+
+ruler_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/rules

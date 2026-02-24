@@ -1,0 +1,221 @@
+﻿version: '3.8'
+
+services:
+  # ============================================
+  # Infrastructure Services
+  # ============================================
+
+  mongodb:
+    image: mongo:7.0
+    container_name: clouddx-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=clouddx
+    networks:
+      - backend-network
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    container_name: clouddx-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend-network
+    restart: always
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: clouddx-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    networks:
+      - backend-network
+    restart: always
+
+  minio:
+    image: minio/minio:latest
+    container_name: clouddx-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    networks:
+      - backend-network
+    restart: always
+
+  # ============================================
+  # Application Services
+  # ============================================
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: clouddx-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+      # ?댁쁺 ?섍꼍?먯꽌??Secret?쇰줈 愿由?
+    depends_on:
+      - mongodb
+      - redis
+      - kafka
+      - minio
+    networks:
+      - backend-network
+      - frontend-network
+    restart: always
+
+  workers:
+    build:
+      context: ./backend/workers
+      dockerfile: Dockerfile
+    container_name: clouddx-price-producer
+    command: ["python", "-u", "price_producer.py"]
+    env_file:
+      - ./backend/.env
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MONGODB_URL=mongodb://mongodb:27017
+      - MONGODB_DB_NAME=clouddx
+      - REDIS_URL=redis://redis:6379
+      - PRICE_TOPIC=prices
+      - PRICE_TICK_TOPIC=price_tick
+      - KAFKA_TICK_TOPIC=price_tick
+      - STOCK_VENDOR=auto
+      - ALLOW_MOCK_PRICE_FEED=false
+      - PRICE_POLL_INTERVAL_SECONDS=5
+    depends_on:
+      - kafka
+      - mongodb
+      - redis
+    networks:
+      - backend-network
+    restart: always
+
+  price-consumer:
+    build:
+      context: ./backend/workers
+      dockerfile: Dockerfile
+    container_name: clouddx-price-consumer
+    command: ["python", "-u", "price_consumer.py"]
+    env_file:
+      - ./backend/.env
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - MONGODB_URL=mongodb://mongodb:27017
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - kafka
+      - mongodb
+      - redis
+    networks:
+      - backend-network
+    restart: always
+
+  candle-aggregator:
+    build:
+      context: ./backend/workers
+      dockerfile: Dockerfile
+    container_name: clouddx-candle-aggregator
+    command: ["python", "-u", "candle_aggregator.py"]
+    env_file:
+      - ./backend/.env
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TICK_TOPIC=price_tick
+      - MONGODB_URL=mongodb://mongodb:27017
+      - MONGODB_DB_NAME=clouddx
+      - REDIS_URL=redis://redis:6379
+      - CANDLE_KEEP=2000
+      - MAX_TICK_AGE_SECONDS_STOCK=900
+      - MAX_TICK_AGE_SECONDS_CRYPTO=180
+    depends_on:
+      - kafka
+      - mongodb
+      - redis
+    networks:
+      - backend-network
+    restart: always
+
+  candle-replay:
+    build:
+      context: ./backend/workers
+      dockerfile: Dockerfile
+    container_name: clouddx-candle-replay
+    command: ["python", "-u", "replay_candles_to_redis.py", "--days", "7"]
+    env_file:
+      - ./backend/.env
+    environment:
+      - MONGODB_URL=mongodb://mongodb:27017
+      - MONGODB_DB_NAME=clouddx
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - backend-network
+    profiles:
+      - ops
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: clouddx-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - BACKEND_INTERNAL_URL=http://backend:8000
+      - API_BASE_URL=http://backend:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - frontend-network
+    restart: always
+
+networks:
+  frontend-network:
+    driver: bridge
+  backend-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  redis_data:
+  minio_data:
+
+

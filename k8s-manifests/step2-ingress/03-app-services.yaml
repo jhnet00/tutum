@@ -1,0 +1,38 @@
+# Step 2-3: Frontend + Backend Service 정의
+# 실행: kubectl apply -f 03-app-services.yaml
+
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-svc
+  namespace: tutum-app
+  labels:
+    app: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+      protocol: TCP
+---
+# Backend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-svc
+  namespace: tutum-app
+  labels:
+    app: backend
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP

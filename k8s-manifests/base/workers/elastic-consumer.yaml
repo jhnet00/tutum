@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elastic-consumer
+  namespace: tutum-app
+  labels:
+    app: elastic-consumer
+    app.kubernetes.io/name: elastic-consumer
+    app.kubernetes.io/part-of: tutum
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elastic-consumer
+  template:
+    metadata:
+      labels:
+        app: elastic-consumer
+    spec:
+      nodeSelector:
+        workload: app
+      imagePullSecrets:
+        - name: harbor-secret
+      containers:
+        - name: elastic-consumer
+          image: 192.168.56.12:8080/tutum/node3-elastic_consumer:v1
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "elastic_consumer.py"]
+          envFrom:
+            - configMapRef:
+                name: news-pipeline-config
+            - secretRef:
+                name: news-pipeline-secret
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

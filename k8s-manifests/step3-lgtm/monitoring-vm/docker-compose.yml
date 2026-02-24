@@ -1,0 +1,108 @@
+services:
+  # ── Loki (로그 저장) ──
+  loki:
+    image: grafana/loki:3.0.0
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/config.yml:/etc/loki/config.yml
+      - loki_data:/loki
+    command: -config.file=/etc/loki/config.yml
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q --tries=1 -O- http://localhost:3100/ready || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Tempo (트레이스 저장) ──
+  tempo:
+    image: grafana/tempo:2.4.0
+    ports:
+      - "4317:4317" # OTLP gRPC (Alloy → Tempo)
+      - "4318:4318" # OTLP HTTP
+      - "3200:3200" # Tempo API (Grafana 쿼리용)
+    volumes:
+      - ./tempo/config.yml:/etc/tempo/config.yml
+      - tempo_data:/var/tempo
+    command: -config.file=/etc/tempo/config.yml
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q --tries=1 -O- http://localhost:3200/ready || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Mimir (메트릭 저장) ──
+  mimir:
+    image: grafana/mimir:2.12.0
+    ports:
+      - "9009:9009"
+    volumes:
+      - ./mimir/config.yml:/etc/mimir/config.yml
+      - mimir_data:/data
+    command:
+      - -config.file=/etc/mimir/config.yml
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q --tries=1 -O- http://localhost:9009/ready || exit 1",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── Grafana (대시보드) ──
+  grafana:
+    image: grafana/grafana:11.0.0
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=tutum2026!
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+    depends_on:
+      loki:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+      mimir:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── InfluxDB (k6 부하테스트 결과 저장) ──
+  influxdb:
+    image: influxdb:2.7
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=tutum2026!
+      - DOCKER_INFLUXDB_INIT_ORG=tutum
+      - DOCKER_INFLUXDB_INIT_BUCKET=k6
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=tutum-influx-token-2026
+    restart: unless-stopped
+
+volumes:
+  loki_data:
+  tempo_data:
+  mimir_data:
+  grafana_data:
+  influxdb_data:

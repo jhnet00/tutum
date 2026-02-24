@@ -1,0 +1,113 @@
+# ============================================
+# Harbor 컨테이너 레지스트리 - Docker Compose
+# ============================================
+#
+# 운영 환경: Node2 호스트에 별도 설치
+#
+# Harbor 공식 설치 방법:
+# 1. https://github.com/goharbor/harbor/releases 에서 설치 패키지 다운로드
+# 2. tar -xvf harbor-offline-installer-v2.x.x.tgz
+# 3. harbor.yml 수정
+# 4. ./install.sh 실행
+#
+# 이 파일은 개발/테스트 환경용 간소화 버전입니다.
+# 운영 환경에서는 공식 설치 스크립트 사용을 권장합니다.
+# ============================================
+
+version: '3.8'
+
+services:
+  # Harbor 코어 서비스
+  harbor-core:
+    image: goharbor/harbor-core:v2.10.0
+    container_name: harbor-core
+    restart: always
+    environment:
+      - CONFIG_PATH=/etc/harbor/app.conf
+    volumes:
+      - harbor_data:/data
+      - ./config/core:/etc/harbor
+    networks:
+      - harbor-network
+    depends_on:
+      - harbor-db
+      - harbor-redis
+
+  # Harbor Portal (Web UI)
+  harbor-portal:
+    image: goharbor/harbor-portal:v2.10.0
+    container_name: harbor-portal
+    restart: always
+    networks:
+      - harbor-network
+
+  # Harbor Registry
+  harbor-registry:
+    image: goharbor/registry-photon:v2.10.0
+    container_name: harbor-registry
+    restart: always
+    volumes:
+      - harbor_registry:/storage
+    networks:
+      - harbor-network
+
+  # Harbor Database (PostgreSQL)
+  harbor-db:
+    image: goharbor/harbor-db:v2.10.0
+    container_name: harbor-db
+    restart: always
+    volumes:
+      - harbor_db:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=harbor_db_password
+    networks:
+      - harbor-network
+
+  # Harbor Redis
+  harbor-redis:
+    image: goharbor/redis-photon:v2.10.0
+    container_name: harbor-redis
+    restart: always
+    volumes:
+      - harbor_redis:/var/lib/redis
+    networks:
+      - harbor-network
+
+  # Harbor Job Service
+  harbor-jobservice:
+    image: goharbor/harbor-jobservice:v2.10.0
+    container_name: harbor-jobservice
+    restart: always
+    volumes:
+      - harbor_job_logs:/var/log/jobs
+    networks:
+      - harbor-network
+    depends_on:
+      - harbor-core
+
+  # Nginx Proxy (Harbor 진입점)
+  harbor-nginx:
+    image: goharbor/nginx-photon:v2.10.0
+    container_name: harbor-nginx
+    restart: always
+    ports:
+      - "8080:8080" # HTTP
+      - "4443:4443" # HTTPS (운영 환경)
+    networks:
+      - harbor-network
+    depends_on:
+      - harbor-core
+      - harbor-portal
+      - harbor-registry
+
+networks:
+  harbor-network:
+    driver: bridge
+
+volumes:
+  harbor_data:
+  harbor_db:
+  harbor_redis:
+  harbor_registry:
+  harbor_job_logs:

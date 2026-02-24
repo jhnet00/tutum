@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: news-pipeline-config
+  namespace: tutum-app
+  labels:
+    app.kubernetes.io/part-of: tutum
+    app.kubernetes.io/name: news-pipeline
+  
+data:
+  KAFKA_TOPIC: "news.raw"
+  KAFKA_NEWS_TOPIC: "news.raw"
+  KAFKA_BOOTSTRAP_SERVERS: "kafka.tutum-data.svc.cluster.local:9092"
+  KAFKA_BOOTSTRAP: "kafka.tutum-data.svc.cluster.local:9092"
+  KAFKA_GROUP_ID: "clouddx-news-consumer-v1"
+  KAFKA_INDEXER_GROUP_ID: "indexer-consumer-group"
+  ES_INDEX: "news"
+  ELASTICSEARCH_URL: "http://elasticsearch.tutum-data.svc.cluster.local:9200"
+  MONGO_DB: "tutum"
+  MONGO_COLL: "news"
+  PRODUCER_RUN_FOREVER: "true"
+  PRODUCER_POLL_INTERVAL_SEC: "30"
+  PRODUCER_LIMIT: "30"
+  PRODUCER_PAGES: "5"
+  ENABLE_NAVER: "true"
+  ENABLE_COINNESS: "true"
+  ENABLE_EINFOMAX: "true"
+  ENABLE_BEDROCK_EMBEDDING: "false"
+  BEDROCK_REGION: "ap-northeast-2"

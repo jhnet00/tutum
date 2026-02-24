@@ -1,0 +1,14 @@
+# CovaEX Antigravity Rules (NO CODE IN CHATGPT - Claude will code)
+
+1. Always follow Prettier/Formatter rules for any code changes.
+2. Ask for permission before installing any new library/dependency.
+3. Answer concisely, but never omit required deliverables/checklists.
+4. Never commit secrets. Use env files (.env.example) + secret manager/IRSA in infra.
+5. Any PR must include: What/Why/How to test + Jira Issue key.
+6. For protected pages/actions: enforce auth guard (unauth -> redirect /login).
+7. Keep architecture split:
+   - Real-time market data path (speed-first) must not block order path.
+   - Order/portfolio path (consistency-first) must be transactional.
+8. Prefer incremental MVP:
+   - Main page first, then login, then coin detail mock, then portfolio.
+9. Since I am using powershell, methods in command such as &&, ||, etc. are not supported.

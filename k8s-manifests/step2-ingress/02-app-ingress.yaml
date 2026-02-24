@@ -1,0 +1,40 @@
+# Step 2-2: Frontend + Backend Ingress 라우팅 규칙
+# 전제: frontend-svc (port 80→3000), backend-svc (port 8000) 가 tutum-app 네임스페이스에 존재해야 함
+# 실행: kubectl apply -f 02-app-ingress.yaml
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tutum-ingress
+  namespace: tutum-app
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    # WebSocket 지원 (시세 실시간 스트리밍)
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+spec:
+  ingressClassName: nginx
+  rules:
+    # Backend API 라우팅: /api/* → backend-svc:8000
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-svc
+                port:
+                  number: 8000
+          # Frontend 라우팅: /* → frontend-svc:80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-svc
+                port:
+                  number: 80

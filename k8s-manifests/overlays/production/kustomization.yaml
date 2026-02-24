@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  - path: replicas-patch.yaml
+
+images:
+  - name: 192.168.56.12:8080/tutum/frontend
+    newTag: stable
+  - name: 192.168.56.12:8080/tutum/backend
+    newTag: stable
+  - name: 192.168.56.12:8080/tutum/workers
+    newTag: stable

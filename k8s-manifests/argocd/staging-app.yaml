@@ -1,0 +1,34 @@
+# ArgoCD Application - Staging 환경
+# 실행: kubectl apply -f staging-app.yaml
+# 전제: ArgoCD 설치 완료 + k8s-manifests GitLab 레포 연동 완료
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tutum-staging
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: http://192.168.56.12:8929/root/k8s-manifests.git
+    targetRevision: main
+    path: overlays/staging
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tutum-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 5

@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: news-producer
+  namespace: tutum-app
+  labels:
+    app: news-producer
+    app.kubernetes.io/name: news-producer
+    app.kubernetes.io/part-of: tutum
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: news-producer
+  template:
+    metadata:
+      labels:
+        app: news-producer
+    spec:
+      nodeSelector:
+        workload: app
+      imagePullSecrets:
+        - name: harbor-secret
+      containers:
+        - name: news-producer
+          image: 192.168.56.12:8080/tutum/node3-producer:v1
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-u", "producer_news.py"]
+          envFrom:
+            - configMapRef:
+                name: news-pipeline-config
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

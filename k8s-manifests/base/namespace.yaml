@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tutum-app
+  labels:
+    app.kubernetes.io/part-of: tutum
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tutum-data
+  labels:
+    app.kubernetes.io/part-of: tutum
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tutum-storage
+  labels:
+    app.kubernetes.io/part-of: tutum

@@ -1,0 +1,51 @@
+version: "3.8"
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: tutum-minio
+    ports:
+      - "9000:9000" # API port
+      - "9001:9001" # Console port
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - tutum-network
+
+  # MinIO Client (mc) for bucket initialization
+  minio-init:
+    image: minio/mc:latest
+    container_name: tutum-minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      /usr/bin/mc alias set tutum http://minio:9000 ${MINIO_ACCESS_KEY:-minioadmin} ${MINIO_SECRET_KEY:-minioadmin};
+      /usr/bin/mc mb tutum/ocr-images --ignore-existing;
+      /usr/bin/mc mb tutum/profile-images --ignore-existing;
+      /usr/bin/mc anonymous set none tutum/ocr-images;
+      /usr/bin/mc anonymous set none tutum/profile-images;
+      echo 'MinIO buckets initialized successfully';
+      exit 0;
+      "
+    networks:
+      - tutum-network
+
+volumes:
+  minio_data:
+    driver: local
+
+networks:
+  tutum-network:
+    driver: bridge

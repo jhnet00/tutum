@@ -1,0 +1,48 @@
+apiVersion: 1
+datasources:
+  - name: Mimir
+    type: prometheus
+    uid: mimir
+    access: proxy
+    url: http://mimir:9009/prometheus
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      derivedFields:
+        - datasourceUid: tempo
+          matcherRegex: "traceID=(\\w+)"
+          name: TraceID
+          url: "${__value.raw}"
+
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      tracesToLogs:
+        datasourceUid: loki
+        tags: ["service.name"]
+      nodeGraph:
+        enabled: true
+      serviceMap:
+        datasourceUid: mimir
+
+  - name: InfluxDB
+    type: influxdb
+    uid: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    jsonData:
+      version: Flux
+      organization: tutum
+      defaultBucket: k6
+    secureJsonData:
+      token: "tutum-influx-token-2026"

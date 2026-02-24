@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: tutum-app
+  labels:
+    app: backend
+    version: v1
+    app.kubernetes.io/name: backend
+    app.kubernetes.io/part-of: tutum
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+        version: v1
+    spec:
+      containers:
+        - name: backend
+          image: 192.168.56.12:8080/tutum/backend:latest
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: MONGODB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MONGODB_URL
+            - name: REDIS_URL
+              value: "redis://redis.tutum-data.svc.cluster.local:6379"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka.tutum-data.svc.cluster.local:9092"
+            - name: MARIADB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MARIADB_HOST
+            - name: MARIADB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MARIADB_PORT
+            - name: MARIADB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MARIADB_USER
+            - name: MARIADB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MARIADB_PASSWORD
+            - name: MARIADB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MARIADB_DATABASE
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: SECRET_KEY
+          resources:
+            requests:
+              cpu: 300m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 3
+      imagePullSecrets:
+        - name: harbor-secret

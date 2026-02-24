@@ -1,0 +1,42 @@
+# Step 1-2: 네임스페이스 생성
+# 실행: kubectl apply -f 02-namespaces.yaml
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tutum-app
+  labels:
+    name: tutum-app
+    istio-injection: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tutum-data
+  labels:
+    name: tutum-data
+    istio-injection: disabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tutum-storage
+  labels:
+    name: tutum-storage
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    name: monitoring
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kyverno

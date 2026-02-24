@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: email-worker
+  namespace: tutum-app
+  labels:
+    app: email-worker
+    app.kubernetes.io/name: email-worker
+    app.kubernetes.io/part-of: tutum
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: email-worker
+  template:
+    metadata:
+      labels:
+        app: email-worker
+    spec:
+      containers:
+        - name: email-worker
+          image: 192.168.56.12:8080/tutum/workers:latest
+          command: ["python", "-u", "email_worker.py"]
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka.tutum-data.svc.cluster.local:9092"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

@@ -1,0 +1,23 @@
+# Step 1-1: MetalLB IP 주소 풀 설정
+# 실행 순서:
+#   1. kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.3/config/manifests/metallb-native.yaml
+#   2. kubectl wait --namespace metallb-system --for=condition=ready pod --selector=app=metallb --timeout=120s
+#   3. kubectl apply -f 01-metallb-ippool.yaml
+
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: tutum-pool
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.56.100-192.168.56.110
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: tutum-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - tutum-pool
