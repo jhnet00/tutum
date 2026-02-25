@@ -248,6 +248,9 @@ security:frontend:
   needs:
     - job: build:frontend
       optional: true
+  rules:
+    - changes:
+        - frontend/**/*
 
 security:backend:
   stage: security
@@ -262,6 +265,10 @@ security:backend:
   needs:
     - job: build:backend
       optional: true
+  rules:
+    - changes:
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 security:workers:
   stage: security
@@ -276,6 +283,9 @@ security:workers:
   needs:
     - job: build:workers
       optional: true
+  rules:
+    - changes:
+        - backend/workers/**/*
 
 # ============================================
 # Stage 6: Cosign 이미지 서명
@@ -294,6 +304,9 @@ sign:frontend:
   needs:
     - job: security:frontend
       optional: true
+  rules:
+    - changes:
+        - frontend/**/*
 
 sign:backend:
   stage: sign
@@ -308,6 +321,10 @@ sign:backend:
   needs:
     - job: security:backend
       optional: true
+  rules:
+    - changes:
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 sign:workers:
   stage: sign
@@ -322,6 +339,9 @@ sign:workers:
   needs:
     - job: security:workers
       optional: true
+  rules:
+    - changes:
+        - backend/workers/**/*
 
 # ============================================
 # Stage 7: GitOps 배포 (k8s-manifests 이미지 태그 업데이트)
