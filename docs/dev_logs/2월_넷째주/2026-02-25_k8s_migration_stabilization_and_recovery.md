@@ -66,6 +66,87 @@ git log --oneline --since="2026-02-25" --until="2026-02-25 23:59:59"
   - 현재 worker 호스트 기준으로 기존 Docker Compose 런타임 잔존 징후 없음
   - 병행 실행 리스크는 낮으나, Phase 6 최종 완료 표기는 안정화 모니터링 종료 후 확정 예정
 
+## 9. Worker 노드 RAM 업그레이드 (2026-02-25 오후)
+
+### 업그레이드 내역
+| 노드 | 전 | 후 | 비고 |
+|------|-----|-----|------|
+| worker3 | 4GB | 8GB | swap 재활성화 이슈 → fstab 수정 |
+| worker1 | 6GB | 8GB | Istio PDB 제거 후 drain |
+| worker2 | 6GB | 12GB | drain 정상 완료 |
+
+### 절차
+```
+kubectl cordon <node>
+kubectl drain <node> --ignore-daemonsets --force --delete-emptydir-data
+# VM 셧다운 → RAM 증설 → VM 기동
+sudo swapoff -a
+sudo sed -i '/swap/s/^/#/' /etc/fstab   # swap 영구 비활성화
+kubectl uncordon <node>
+```
+
+### 이슈 및 대응
+- **swap 재활성화**: VM 재기동 시 swap 자동 활성화 → kubelet 시작 실패
+  - 원인: 기존 `sed -i '/ swap / s/^/#/'` 패턴이 탭 문자 포함 라인 미매칭
+  - 해결: `sed -i '/swap/s/^/#/' /etc/fstab` 으로 수정
+- **Istio PDB 차단**: worker1 drain 시 `istiod`, `istio-ingressgateway` PDB minAvailable=1 위반
+  - 해결: PDB 임시 삭제 후 drain → pod 자동 재스케줄
+
+### 업그레이드 후 메모리 현황
+| 노드 | 총 메모리 | 여유 |
+|------|-----------|------|
+| worker1 | 7.8Gi | 5.0Gi |
+| worker2 | 11Gi | 10Gi |
+| worker3 | 7.8Gi | 4.4Gi |
+
+---
+
+## 10. GitLab 레포 통합 (2026-02-25 오후)
+
+### 배경
+- 팀원이 `tutum-project/k8s-manifests` (GitLab UI: tutum-app)에서 별도 작업
+- 우리 메인: `tutum-project/tutum-app/backend` (GitLab UI: tutum-b/backend)
+- 두 레포 코드 내용은 이미 동일 (Already up to date 확인)
+
+### 작업 내용
+1. 서브그룹 이름 변경: `tutum-b` → `tutum`
+2. CI/CD 변수 이전 (tutum-app → tutum/backend)
+   - SLACK_WEBHOOK_URL, JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT_KEY
+3. tutum-app(k8s-manifests) 레포 archive 처리
+4. 로컬 remote 정리: GitHub origin 제거, GitLab SSH → HTTPS 통일
+
+### 최종 구조
+```
+tutum-project (GitLab 그룹)
+└── tutum (서브그룹, URL: tutum-app)
+    └── backend  ← 팀 단일 레포
+        git clone: https://gitlab.com/tutum-project/tutum-app/backend.git
+```
+
+### 팀원 remote 전환 안내
+```bash
+git remote set-url origin https://gitlab.com/tutum-project/tutum-app/backend.git
+git pull origin develop
+```
+
+---
+
+## 11. push 트리거 파이프라인 0 jobs 문제 (미해결)
+
+### 증상
+- `git push` → 파이프라인 즉시 failed, jobs 0개
+- API/Web 트리거 → 정상 (17개 jobs)
+
+### 조사 결과
+- `yaml_errors: null` ✓
+- `ci_config_path: ""` (default .gitlab-ci.yml) ✓
+- `shared_runners_enabled: true` ✓
+- `workflow:rules`에 push 포함 ✓
+- CI Lint dry_run → valid, 모든 job 정상 ✓
+- 원인 미확정 → 추가 조사 필요
+
+---
+
 ## 8. 재발 대응 (stg 자동 생성 루프 차단)
 - 증상: `tutum-staging` Application이 재생성되며 `stg-*` 리소스 재발
 - 조치:
