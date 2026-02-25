@@ -10,10 +10,11 @@ metadata:
   annotations:
     policies.kyverno.io/title: Verify Image Signature
     policies.kyverno.io/description: >
-      Harbor에 push된 이미지는 반드시 Cosign으로 서명되어야 합니다.
+      GitLab CR에 push된 이미지는 반드시 Cosign으로 서명되어야 합니다.
       미서명 이미지는 tutum-app 네임스페이스에 배포할 수 없습니다.
+      CI/CD 파이프라인 완성 후 Enforce로 변경할 것.
 spec:
-  validationFailureAction: Enforce
+  validationFailureAction: Audit
   background: false
   rules:
     - name: verify-cosign-signature
@@ -26,12 +27,14 @@ spec:
                 - tutum-app
       verifyImages:
         - imageReferences:
-            - "192.168.56.12:8080/tutum/*"
+            - "registry.gitlab.com/tutum-project/tutum-app/backend*"
+          mutateDigest: false
+          verifyDigest: false
           attestors:
             - entries:
                 - keys:
-                    # cosign generate-key-pair 실행 후 cosign.pub 내용으로 교체
                     publicKeys: |-
                       -----BEGIN PUBLIC KEY-----
-                      <cosign.pub 내용을 여기에 붙여넣기>
+                      MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9ajQMQpN1SxVpZIR9MBSIDUl4lYF
+                      Ce7QflpVFbpC3Kv1XfKUOHuxWG9cVH+yj2U+3pKz7XkrX5eRFEJyq+vLFQ==
                       -----END PUBLIC KEY-----

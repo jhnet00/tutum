@@ -10,9 +10,9 @@ patches:
   - path: replicas-patch.yaml
 
 images:
-  - name: 192.168.56.12:8080/tutum/frontend
+  - name: registry.gitlab.com/tutum-project/tutum-app/backend/frontend
     newTag: staging
-  - name: 192.168.56.12:8080/tutum/backend
+  - name: registry.gitlab.com/tutum-project/tutum-app/backend
     newTag: staging
-  - name: 192.168.56.12:8080/tutum/workers
+  - name: registry.gitlab.com/tutum-project/tutum-app/backend/workers
     newTag: staging
