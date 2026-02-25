@@ -23,6 +23,7 @@
       - 브랜치 + `K8S_MANIFESTS_TOKEN` 존재 조건
       - `backend/**/*`, `frontend/**/*` 변경 시에만 실행
     - notify 잡에 변수 미설정 방어 로직 추가(미설정 시 `exit 0`으로 skip)
+    - `security/sign` 잡에도 `rules:changes`를 추가해 docs-only 커밋에서 불필요 실행 방지
 
 ## 3. 작업 중 발생 이슈 및 대응
 - 이슈: CI Lint API 호출이 장시간 응답 지연
@@ -33,13 +34,17 @@
 ## 4. 결과
 - 수정 커밋
   - `253c648`: `ci: fix deploy target repo and harden notify guards`
+  - `eba82bc`: `ci: scope security and sign jobs by file changes`
 - 검증 파이프라인
   - `#31` (`2348374821`, source=`push`, ref=`develop`) -> `success`
   - Jobs: `14`개 생성(0-job 이슈 미재발)
   - `deploy:staging` -> `success`
   - `notify:slack_on_failure`, `notify:jira_on_failure` -> `skipped` (실패로 인한 파이프라인 중단 없음)
+  - `#34` (`2348394897`, source=`push`, ref=`develop`) -> `success`
+  - Jobs: `10`개 생성, `security/sign`은 `backend` 관련 잡만 실행됨
 - 배포 반영 커밋(파이프라인 자동 생성)
   - `70ad720`: `deploy: staging 253c6483 [skip ci]`
+  - `185b558`: `deploy: staging eba82bcc [skip ci]`
 
 ## 5. 커밋 로그
 ```bash
