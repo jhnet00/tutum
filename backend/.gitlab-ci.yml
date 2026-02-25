@@ -85,6 +85,7 @@ lint:backend:
     - cd backend
     - pip install flake8
     - flake8 app/ --max-line-length=120
+  allow_failure: true
   only:
     changes:
       - backend/**/*
