@@ -1,152 +1,120 @@
 @echo off
-setlocal EnableExtensions
-
 REM =============================================================
-REM CloudDX K8s Cluster - MobaXterm session launcher
-REM Supports: all / cp / worker / data / single node
+REM CloudDX K8s Cluster - MobaXterm SSH 일괄 접속 스크립트
+REM 브릿지 네트워크 (192.168.0.x) 기준
+REM =============================================================
+REM
+REM 사용법:
+REM   mobaxterm-k8s-sessions.bat          → 전체 노드 접속 (8개 탭)
+REM   mobaxterm-k8s-sessions.bat cp       → Control Plane만 (cp-1,2,3)
+REM   mobaxterm-k8s-sessions.bat worker   → Worker만 (worker1,2,3)
+REM   mobaxterm-k8s-sessions.bat data     → Data 노드만 (mongodb, monitoring)
+REM   mobaxterm-k8s-sessions.bat cp-1     → 개별 노드 접속
 REM =============================================================
 
-set "MOBA_PATH=C:\Program Files (x86)\Mobatek\MobaXterm\MobaXterm.exe"
-set "SSH_USER=clouddx"
+set MOBA_PATH="C:\Program Files (x86)\Mobatek\MobaXterm\MobaXterm.exe"
+set SSH_USER=clouddx
+set SSH_KEY=%USERPROFILE%\.ssh\id_rsa
 
-REM Optional key path. If missing, SSH will use default keys/agent.
-set "SSH_KEY=%USERPROFILE%\.ssh\id_rsa"
-set "SSH_OPTS=-o StrictHostKeyChecking=no -o ConnectTimeout=5"
-if exist "%SSH_KEY%" (
-  set "SSH_OPTS=%SSH_OPTS% -i %SSH_KEY%"
-)
+REM --- 브릿지 IP 정의 ---
+set CP1_IP=192.168.0.220
+set CP2_IP=192.168.0.221
+set CP3_IP=192.168.0.222
+set W1_IP=192.168.0.223
+set W2_IP=192.168.0.224
+set W3_IP=192.168.0.225
+set MONGO_IP=192.168.0.231
+set MON_IP=192.168.0.230
 
-REM Bridge network IPs
-set "CP1_IP=192.168.0.220"
-set "CP2_IP=192.168.0.221"
-set "CP3_IP=192.168.0.222"
-set "W1_IP=192.168.0.223"
-set "W2_IP=192.168.0.224"
-set "W3_IP=192.168.0.225"
-set "MONGO_IP=192.168.0.231"
-set "MON_IP=192.168.0.230"
+if "%1"=="" goto all
+if "%1"=="all" goto all
+if "%1"=="cp" goto cp_only
+if "%1"=="worker" goto worker_only
+if "%1"=="data" goto data_only
+if "%1"=="cp-1" goto single_cp1
+if "%1"=="cp-2" goto single_cp2
+if "%1"=="cp-3" goto single_cp3
+if "%1"=="worker1" goto single_w1
+if "%1"=="worker2" goto single_w2
+if "%1"=="worker3" goto single_w3
+if "%1"=="mongodb" goto single_mongo
+if "%1"=="monitoring" goto single_mon
 
-set "BOOT_DELAY=4"
-set "TAB_DELAY=1"
-
-if not exist "%MOBA_PATH%" (
-  echo [ERROR] MobaXterm not found: %MOBA_PATH%
-  exit /b 1
-)
-
-if "%~1"=="" goto menu
-set "MODE=%~1"
-goto dispatch
-
-:menu
-echo.
-echo [CloudDX K8s SSH Launcher]
-echo 1^) all       ^(cp + worker + data^)
-echo 2^) cp        ^(cp-1, cp-2, cp-3^)
-echo 3^) worker    ^(worker1, worker2, worker3^)
-echo 4^) data      ^(mongodb, monitoring^)
-echo 5^) single    ^(one node^)
-echo Q^) quit
-choice /C 12345Q /N /M "Select: "
-if errorlevel 6 goto end
-if errorlevel 5 goto menu_single
-if errorlevel 4 set "MODE=data" & goto dispatch
-if errorlevel 3 set "MODE=worker" & goto dispatch
-if errorlevel 2 set "MODE=cp" & goto dispatch
-if errorlevel 1 set "MODE=all" & goto dispatch
+echo [ERROR] 알 수 없는 옵션: %1
+echo 사용법: %~n0 [all^|cp^|worker^|data^|cp-1^|cp-2^|cp-3^|worker1^|worker2^|worker3^|mongodb^|monitoring]
 goto end
-
-:menu_single
-echo.
-echo Enter node name: cp-1 ^| cp-2 ^| cp-3 ^| worker1 ^| worker2 ^| worker3 ^| mongodb ^| monitoring
-set /p MODE="single> "
-if "%MODE%"=="" goto end
-
-:dispatch
-if /I "%MODE%"=="all" goto all
-if /I "%MODE%"=="cp" goto cp_only
-if /I "%MODE%"=="worker" goto worker_only
-if /I "%MODE%"=="data" goto data_only
-if /I "%MODE%"=="cp-1" goto single_cp1
-if /I "%MODE%"=="cp-2" goto single_cp2
-if /I "%MODE%"=="cp-3" goto single_cp3
-if /I "%MODE%"=="worker1" goto single_w1
-if /I "%MODE%"=="worker2" goto single_w2
-if /I "%MODE%"=="worker3" goto single_w3
-if /I "%MODE%"=="mongodb" goto single_mongo
-if /I "%MODE%"=="monitoring" goto single_mon
-
-echo [ERROR] Unknown option: %MODE%
-echo Usage: %~n0 [all^|cp^|worker^|data^|cp-1^|cp-2^|cp-3^|worker1^|worker2^|worker3^|mongodb^|monitoring]
-goto end
-
-:open
-start "" "%MOBA_PATH%" -newtab "ssh %SSH_USER%@%~1 %SSH_OPTS%"
-timeout /t %TAB_DELAY% >nul
-goto :eof
 
 :all
-echo [INFO] Open all cluster nodes...
-start "" "%MOBA_PATH%" -newtab "ssh %SSH_USER%@%CP1_IP% %SSH_OPTS%"
-timeout /t %BOOT_DELAY% >nul
-call :open %CP2_IP%
-call :open %CP3_IP%
-call :open %W1_IP%
-call :open %W2_IP%
-call :open %W3_IP%
-call :open %MONGO_IP%
-call :open %MON_IP%
-echo [OK] 8 tabs requested.
+echo [INFO] 전체 K8s 클러스터 노드 접속 (8개 탭)...
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%CP1_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+timeout /t 1 >nul
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%CP2_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+timeout /t 1 >nul
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%CP3_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+timeout /t 1 >nul
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%W1_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+timeout /t 1 >nul
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%W2_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+timeout /t 1 >nul
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%W3_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+timeout /t 1 >nul
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%MONGO_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+timeout /t 1 >nul
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%MON_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+echo [OK] 8개 탭 열기 완료!
 goto end
 
 :cp_only
-echo [INFO] Open control plane nodes...
-start "" "%MOBA_PATH%" -newtab "ssh %SSH_USER%@%CP1_IP% %SSH_OPTS%"
-timeout /t %BOOT_DELAY% >nul
-call :open %CP2_IP%
-call :open %CP3_IP%
-echo [OK] CP tabs requested.
+echo [INFO] Control Plane 노드 접속 (3개 탭)...
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%CP1_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+timeout /t 1 >nul
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%CP2_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+timeout /t 1 >nul
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%CP3_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+echo [OK] CP 3개 탭 열기 완료!
 goto end
 
 :worker_only
-echo [INFO] Open worker nodes...
-call :open %W1_IP%
-call :open %W2_IP%
-call :open %W3_IP%
-echo [OK] Worker tabs requested.
+echo [INFO] Worker 노드 접속 (3개 탭)...
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%W1_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+timeout /t 1 >nul
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%W2_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+timeout /t 1 >nul
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%W3_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+echo [OK] Worker 3개 탭 열기 완료!
 goto end
 
 :data_only
-echo [INFO] Open data nodes...
-call :open %MONGO_IP%
-call :open %MON_IP%
-echo [OK] Data tabs requested.
+echo [INFO] Data 노드 접속 (2개 탭)...
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%MONGO_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+timeout /t 1 >nul
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%MON_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
+echo [OK] Data 2개 탭 열기 완료!
 goto end
 
 :single_cp1
-call :open %CP1_IP%
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%CP1_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
 goto end
 :single_cp2
-call :open %CP2_IP%
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%CP2_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
 goto end
 :single_cp3
-call :open %CP3_IP%
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%CP3_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
 goto end
 :single_w1
-call :open %W1_IP%
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%W1_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
 goto end
 :single_w2
-call :open %W2_IP%
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%W2_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
 goto end
 :single_w3
-call :open %W3_IP%
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%W3_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
 goto end
 :single_mongo
-call :open %MONGO_IP%
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%MONGO_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
 goto end
 :single_mon
-call :open %MON_IP%
+start "" %MOBA_PATH% -newtab "ssh %SSH_USER%@%MON_IP% -i %SSH_KEY% -o StrictHostKeyChecking=no"
 goto end
 
 :end
-endlocal
