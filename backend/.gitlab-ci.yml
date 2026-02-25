@@ -312,8 +312,7 @@ deploy:staging:
     - git config user.email "ci@tutum.dev"
     - git config user.name "GitLab CI"
     # staging overlay 이미지 태그 업데이트
-    - |
-      sed -i "s|newTag: .*|newTag: ${CI_COMMIT_SHORT_SHA}|g" overlays/staging/kustomization.yaml
+    - sed -i "s/newTag:.*/newTag:\ ${CI_COMMIT_SHORT_SHA}/g" overlays/staging/kustomization.yaml
     - git add -A
     - git diff --cached --quiet || git commit -m "deploy(staging): update images to ${CI_COMMIT_SHORT_SHA}"
     - git push origin main
@@ -333,8 +332,7 @@ deploy:production:
     - git config user.email "ci@tutum.dev"
     - git config user.name "GitLab CI"
     # production overlay 이미지 태그 업데이트
-    - |
-      sed -i "s|newTag: .*|newTag: ${CI_COMMIT_SHORT_SHA}|g" overlays/production/kustomization.yaml
+    - sed -i "s/newTag:.*/newTag:\ ${CI_COMMIT_SHORT_SHA}/g" overlays/production/kustomization.yaml
     - git add -A
     - git diff --cached --quiet || git commit -m "deploy(production): update images to ${CI_COMMIT_SHORT_SHA}"
     - git push origin main
