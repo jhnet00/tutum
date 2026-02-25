@@ -11,8 +11,8 @@ patches:
 
 images:
   - name: registry.gitlab.com/tutum-project/tutum-app/backend/frontend
-    newTag: staging
+    newTag: 253c6483
   - name: registry.gitlab.com/tutum-project/tutum-app/backend
-    newTag: staging
+    newTag: 253c6483
   - name: registry.gitlab.com/tutum-project/tutum-app/backend/workers
-    newTag: staging
+    newTag: 253c6483
