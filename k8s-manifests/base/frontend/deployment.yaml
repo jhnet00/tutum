@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: 192.168.56.12:8080/tutum/frontend:latest
+          image: registry.gitlab.com/tutum-project/tutum-app/backend/frontend:latest
           ports:
             - containerPort: 3000
               name: http
