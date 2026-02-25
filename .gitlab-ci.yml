@@ -45,6 +45,7 @@ stages:
   - security
   - sign
   - deploy
+  - notify
 
 # ============================================
 # Stage 0: Commit Policy Guard
@@ -357,4 +358,55 @@ deploy:production:
     name: production
   when: manual
   rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ============================================
+# Slack, Jira
+# ============================================
+
+notify:slack_on_failure:
+  stage: notify
+  image: curlimages/curl:8.7.1
+  allow_failure: true
+  script:
+    - |
+      curl -fsS -X POST -H "Content-type: application/json" \
+      --data "{\"text\":\"[CI FAIL] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\n${CI_PIPELINE_URL}\"}" \
+      "${SLACK_WEBHOOK_URL}"
+  when: on_failure
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+notify:jira_on_failure:
+  stage: notify
+  image: curlimages/curl:8.7.1
+  allow_failure: true
+  script:
+    - |
+      curl -fsS -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -X POST "${JIRA_BASE_URL}/rest/api/3/issue" \
+        -d '{
+          "fields": {
+            "project": { "key": "'"${JIRA_PROJECT_KEY}"'" },
+            "summary": "[CI FAIL] '"${CI_PROJECT_PATH}"' #'"${CI_PIPELINE_ID}"'",
+            "description": {
+              "type": "doc",
+              "version": 1,
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    { "type": "text", "text": "Pipeline URL: '"${CI_PIPELINE_URL}"'" }
+                  ]
+                }
+              ]
+            },
+            "issuetype": { "name": "Task" }
+          }
+        }'
+  when: on_failure
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
     - if: '$CI_COMMIT_BRANCH == "main"'
