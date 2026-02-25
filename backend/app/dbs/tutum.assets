@@ -1,0 +1,19 @@
+// tutum.assets
+{
+  _id: ObjectId,
+  userId: ObjectId,              // users._id 참조
+  assetType: "crypto" | "stock" | "others" 
+  symbol: "BTC",                 // 있으면
+  name: "Bitcoin",               // 없으면 symbol만
+  quantity: 0.15,
+  avgPrice: 53000000,            // 통화는 별도로
+  currency: "KRW" | "USD",
+  status: "HOLD" | "WATCH" | "", // 너희 “상태” 필드
+  source: {
+    type: "ocr" | "csv" | "manual",
+    jobId: "uuid",               // import job 추적용
+    originalText: "optional"
+  },
+  createdAt: ISODate,
+  updatedAt: ISODate
+}

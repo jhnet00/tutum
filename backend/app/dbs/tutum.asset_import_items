@@ -1,0 +1,11 @@
+{
+  _id: ObjectId,
+  jobId: "uuid",
+  userId: ObjectId,
+  rowNo: 1,
+  parsed: { name: "BTC", quantity: "0.15", avgPrice: "53000000", status: "" },
+  normalized: { symbol: "BTC", quantity: 0.15, avgPrice: 53000000, currency: "KRW" },
+  confidence: { name: 0.78, quantity: 0.62, avgPrice: 0.55 }, // optional
+  isConfirmed: false, // 유저가 수정/확정했는지
+  createdAt: ISODate
+}
