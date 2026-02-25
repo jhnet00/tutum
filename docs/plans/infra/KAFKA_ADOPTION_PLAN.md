@@ -23,8 +23,8 @@
 
 - 시세 producer: `backend/workers/price_producer.py`
 - 시세 consumer(캐시): `backend/workers/price_consumer.py`
-- 뉴스 producer: `backend/workers/news_producer.py`
-- 뉴스 indexer consumer: `backend/workers/indexer_consumer.py`
+- 뉴스 producer: `news_producer.py`
+- 뉴스 elastic consumer: `elastic_consumer.py`
 - API 조회 경로(개선 대상): `backend/app/routers/market.py`
 - 알림 로직 연계 후보: `backend/app/services/alert_service.py`
 
@@ -118,7 +118,7 @@
   - 뉴스 수집/인덱싱 계약 통일 및 실패 복구 체계 확립
 - 작업:
   - `news_producer.py` -> `news.raw` 표준 이벤트 발행
-  - `indexer_consumer.py`에서 스키마 검증/버전 분기
+  - `elastic_consumer.py`에서 스키마 검증/버전 분기
   - DLQ + 재처리 스크립트 도입
 - 완료 기준:
   - 인덱싱 실패 데이터 유실 0에 수렴
