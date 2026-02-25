@@ -52,5 +52,6 @@
 
 1. 단기 실행 계획은 `docs/work-plans`에 작성합니다.
 2. 완료된 개발 이력은 `docs/dev_logs`에 기록합니다.
-3. 장기 참고 문서는 `docs/guides` 또는 `docs/plans/infra`에 둡니다.
-4. 백업 파일은 `docs/archive/backups`에만 보관합니다.
+3. `docs/dev_logs` 문서를 새로 작성/수정할 때는 반드시 먼저 `docs/dev_logs/DEV_LOGS_GUIDE.md`를 확인하고 형식을 준수합니다.
+4. 장기 참고 문서는 `docs/guides` 또는 `docs/plans/infra`에 둡니다.
+5. 백업 파일은 `docs/archive/backups`에만 보관합니다.

@@ -2,7 +2,7 @@
 
 ## 1. 작업 요약
 - 작업 일시: 2026-02-24
-- 작업자: jhnet00 (with CloudDX)
+- 작업자: jhnet00, Kyung Yoon Kim
 - 작업 목적: node3 Docker Compose 기반 뉴스 파이프라인(Producer/Consumer/Elastic Consumer + ES/Kibana)을 Tutum의 K8s 매니페스트 구조로 이관하기 위한 base 리소스 작성
 
 ## 2. 상세 변경 사항
