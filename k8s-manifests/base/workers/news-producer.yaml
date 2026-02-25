@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: news-producer
     app.kubernetes.io/part-of: tutum
 spec:
-  replicas: 0
+  replicas: 1
   selector:
     matchLabels:
       app: news-producer
