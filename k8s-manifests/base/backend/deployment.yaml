@@ -19,6 +19,8 @@ spec:
         app: backend
         version: v1
     spec:
+      nodeSelector:
+        workload: app
       containers:
         - name: backend
           image: registry.gitlab.com/tutum-project/tutum-app/backend:latest
@@ -88,3 +90,4 @@ spec:
             failureThreshold: 3
       imagePullSecrets:
         - name: harbor-secret
+        - name: gitlab-registry-secret

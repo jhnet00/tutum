@@ -1,6 +1,7 @@
 # Node1/2/3 -> K8s 마이그레이션 실행 런북
 
 > 작성일: 2026-02-23  
+> 최종 업데이트: 2026-02-25  
 > 목적: 기존 Docker Compose 기반 `node1/2/3` 기능을 Kubernetes로 단계적으로 이관  
 > 원칙: Big-bang 금지, 병행 구동(Parallel Run) 후 점진 컷오버
 
@@ -17,7 +18,7 @@
 
 ---
 
-## 2. 현재 기준 클러스터 상태(2026-02-23)
+## 2. 현재 기준 클러스터 상태(2026-02-25 갱신)
 
 - `cp-1` `192.168.0.220`
 - `cp-2` `192.168.0.221`
@@ -25,8 +26,32 @@
 - `worker1` `192.168.0.223`
 - `worker2` `192.168.0.224`
 - `worker3` `192.168.0.225`
-- 상태: `kubectl get nodes` 기준 모두 `Ready`
+- 상태: 2026-02-23 점검 기준 `kubectl get nodes` 모두 `Ready`
 - Istio Gateway EXTERNAL-IP: `192.168.0.240`
+- 주의: 실제 작업 시작 전 `cp-1`에서 실시간 상태를 재확인한다.
+
+### 2-1. 현재 진행 메모(2026-02-25)
+
+1. `Phase 0`
+   - 클러스터/게이트웨이 기준점 확인 이력은 있음.
+   - Freeze SHA 고정/백업 완료를 체크리스트에 완료로 표기한 기록은 아직 없음.
+2. `Phase 1`
+   - `k8s-manifests/base`에 데이터 계층 매니페스트가 준비됨.
+3. `Phase 2`
+   - Atlas -> K8s MongoDB 복원 수행 로그 있음(복원 성공 로그 기준).
+   - `worker2` Calico 안정화 후속 점검이 남아 있음.
+4. `Phase 3`
+   - node3 뉴스 파이프라인 K8s 매니페스트 초안 반영 완료.
+   - 전체 worker 컷오버 완료 증빙은 아직 없음.
+5. `Phase 4~6`
+   - Backend 카나리, Frontend/Ingress 컷오버, 기존 node1/2/3 종료 완료 증빙 없음.
+6. 세션 반영(2026-02-25 실시간)
+   - `worker1/2/3` 라벨 반영 완료 (`app/app/data`)
+   - `worker2` `SchedulingDisabled` 해제(`uncordon`) 완료
+   - `tutum-data`: `mongodb/kafka/redis` `Running`
+   - `tutum-storage`: `minio` `Running`
+   - `price-producer`, `price-consumer`, `backend`, `frontend` `Running`
+   - `email-worker` AWS 자격증명 패치 후 `Running` 복구 완료
 
 ---
 
@@ -42,6 +67,20 @@
    - 기존: `Kafka + price/news workers + ES/Kibana`
    - K8s: `Kafka StatefulSet + workers Deployment`
    - ES/Kibana: 팀 운영 정책에 따라 `tutum-data` 또는 `monitoring VM` 유지
+
+### 3-1. Pod 배치 표준(worker1/2/3)
+
+| 노드 | 라벨 표준 | 기본 역할 |
+|---|---|---|
+| `worker1` | `workload=app` | Frontend/Backend/App Worker |
+| `worker2` | `workload=app` | App Worker + Consumer |
+| `worker3` | `workload=data` | Kafka/Redis/MinIO/ES/Kibana 중심 |
+
+- 스케줄링 원칙
+  - `tutum-app`의 앱/워커 Pod는 기본 `workload=app`으로 제한.
+  - `tutum-data`, `tutum-storage`의 Stateful 워크로드는 `local-path` PVC node affinity를 우선한다.
+  - `redis/kafka/minio`에 `nodeSelector=workload=data`를 강제하면 PV 노드와 충돌해 Pending이 발생할 수 있으므로 기본값은 강제하지 않는다.
+  - `mongodb`는 예외: 3-replica + `requiredDuringScheduling` anti-affinity를 유지하고 `worker1/2/3` 분산을 허용.
 
 ---
 
@@ -66,11 +105,17 @@
 1. `develop` 기준 커밋 SHA 고정
 2. 기존 node1/2/3 compose 스택 상태 캡처
 3. MongoDB/Redis/Kafka 최소 백업 수행
+4. worker 라벨 표준화 (`workload=app|data`)
+5. 현재 매니페스트의 `nodeSelector` 누락 리소스 목록 확정
 
 ### 검증
 ```bash
 kubectl get nodes -o wide
 kubectl -n istio-system get svc istio-ingressgateway
+kubectl label node worker1 workload=app --overwrite
+kubectl label node worker2 workload=app --overwrite
+kubectl label node worker3 workload=data --overwrite
+kubectl get nodes --show-labels | egrep "worker1|worker2|worker3|workload"
 ```
 
 ---
@@ -87,18 +132,28 @@ kubectl -n istio-system get svc istio-ingressgateway
 1. `tutum-data`, `tutum-storage` 네임스페이스 확인
 2. StatefulSet/PVC/Service 배포
 3. 내부 DNS/포트 접근 확인
+4. 스케줄링 고정 반영 후 재배포
+   - app 계층: `frontend`, `backend`, `price-*`, `email-worker`, `news-*`, `elastic-consumer` -> `workload=app`
+   - data/storage 계층: `elasticsearch`, `kibana` -> `workload=data`
+   - `redis`, `kafka`, `minio`는 `local-path` PVC node affinity를 우선해 배치(강제 selector 금지)
+   - `mongodb`는 anti-affinity 예외 정책 유지
 
 ### 검증 명령
 ```bash
 kubectl get ns tutum-data tutum-storage
 kubectl -n tutum-data get sts,pod,svc,pvc -o wide
 kubectl -n tutum-storage get sts,pod,svc,pvc -o wide
+kubectl -n tutum-app get pod -o wide
+kubectl -n tutum-data get pod -o wide
+kubectl -n tutum-storage get pod -o wide
 ```
 
 ### 합격 기준
 - 각 데이터 컴포넌트 Pod가 `Running`
 - PVC `Bound`
 - 서비스 DNS로 접근 가능
+- app Pod는 `worker1|worker2`에만 스케줄
+- data/storage Pod는 PV node affinity 충돌 없이 `Running` 유지
 
 ---
 
@@ -227,17 +282,37 @@ kubectl -n tutum-app logs deploy/backend --tail=200
 
 ## 8. 오늘 바로 할 작업(우선순위)
 
-1. `tutum-data/tutum-storage`에 데이터 계층 매니페스트 확정
-2. MongoDB 이관 리허설(샘플 컬렉션)
-3. Worker producer 단일화(중복 발행 방지)
-4. Backend 카나리 env 전환 테스트
+1. `cp-1`에서 클러스터 실시간 상태 재확인
+2. `worker1/2/3` 라벨 표준화(`workload=app|data`)
+3. 누락된 `nodeSelector` 반영 계획 확정(앱/데이터 분리)
+4. `tutum-data/tutum-storage` 상태 재검증 후 Phase 1 시작 승인
+
+### 8-1. 시작 커맨드(Phase 0~1)
+
+```bash
+# 1) 기준 상태 확인
+kubectl get nodes -o wide
+kubectl -n istio-system get svc istio-ingressgateway
+
+# 2) worker 라벨 표준화
+kubectl label node worker1 workload=app --overwrite
+kubectl label node worker2 workload=app --overwrite
+kubectl label node worker3 workload=data --overwrite
+kubectl get nodes --show-labels | egrep "worker1|worker2|worker3|workload"
+
+# 3) 데이터 계층 상태 점검
+kubectl get ns tutum-data tutum-storage
+kubectl -n tutum-data get sts,pod,svc,pvc -o wide
+kubectl -n tutum-storage get sts,pod,svc,pvc -o wide
+```
 
 ---
 
 ## 9. 실행 체크리스트 (완료 표기)
 
+- [x] worker 라벨 표준화 완료 (`worker1/2=app`, `worker3=data`)
 - [ ] Phase 0 완료 (백업/기준점 확정)
-- [ ] Phase 1 완료 (데이터 계층 K8s 기동)
+- [x] Phase 1 완료 (데이터 계층 K8s 기동)
 - [ ] Phase 2 완료 (데이터 이관 검증)
 - [ ] Phase 3 완료 (worker 전환)
 - [ ] Phase 4 완료 (backend 전환)
@@ -245,3 +320,61 @@ kubectl -n tutum-app logs deploy/backend --tail=200
 - [ ] Phase 6 완료 (node1/2/3 종료)
 - [ ] 24~48시간 안정화 확인
 
+---
+
+## 10. 2026-02-25 추가 진행 기록
+
+1. 워커 이미지/배포 정리
+   - `backend/workers/requirements.txt`에 `boto3` 추가.
+   - `registry.gitlab.com/tutum-project/tutum-app/backend/workers:latest` 재빌드/재푸시 완료.
+2. `email-worker` 장애 원인 정리
+   - 1차 원인: workers 이미지에 `boto3` 누락.
+   - 2차 원인: `app.config` import 구조상 `backend/workers` 전용 이미지와 불일치.
+   - 조치: 실행 이미지를 `backend:latest`로 전환, 커맨드를 `python -u workers/email_worker.py`로 변경, `backend-secret` 환경 주입.
+3. 블로커 처리 결과
+   - `backend-secret`의 AWS 키가 placeholder(`'<KEY>'`, `'<SECRET>'`) 상태였음을 확인.
+   - 로컬 기준 유효 키(STS 검증 완료)로 secret patch 후 `email-worker` `replicas=1` 정상 기동.
+4. 현재 안정 상태(실시간)
+   - `tutum-data`: `mongodb`, `kafka`, `redis` Running
+   - `tutum-storage`: `minio` Running
+   - `tutum-app`: `backend`, `frontend`, `price-producer`, `price-consumer`, `email-worker` Running
+
+---
+
+## 11. 2026-02-25 추가 진행 기록 (세션 후속)
+
+1. `stg-*` 재생성 원인 확인
+   - 원인: `argocd`의 `tutum-staging` Application 자동 동기화(`prune/selfHeal`)가 `tutum-*` 네임스페이스 리소스를 반복 생성.
+
+2. 사고/복구 이력
+   - `tutum-staging` 삭제 시 finalizer prune으로 `tutum-app/tutum-data/tutum-storage` 리소스가 함께 삭제됨.
+   - 즉시 `/home/clouddx/clouddx-project/k8s-manifests/base` 재적용으로 전체 워크로드 재기동.
+   - 누락된 시크릿(`backend-secret`, `harbor-secret`, `gitlab-registry-secret`) 복구.
+   - `gitlab-registry-secret`은 실제 registry credential로 재생성 후 앱 롤아웃 정상화.
+
+3. MongoDB 재복구
+   - Namespace 재생성으로 Mongo PVC/PV가 신규 생성되어 데이터가 초기화됨.
+   - ReplicaSet 재초기화(`rs.initiate`) 수행 후 Atlas -> K8s `mongodump | mongorestore` 재실행.
+   - 복구 후 컬렉션 건수 일치 확인:
+     - `assets:22`
+     - `email_verification_tokens:7`
+     - `users:11`
+     - `news:6240`
+
+4. 현재 운영 상태 (2026-02-25 UTC)
+   - `tutum-data`: `mongodb(3/3)`, `kafka(1/1)`, `redis(1/1)` Running
+   - `tutum-storage`: `minio(1/1)` Running
+   - `tutum-app`: `backend(2/2)`, `frontend(2/2)`, `price-producer(1/1)`, `price-consumer(1/1)`, `email-worker(1/1)` Running
+   - Ingress 검증:
+     - `http://192.168.0.240/` -> `200`
+     - `http://192.168.0.240/api/v1/market/price/crypto/KRW-BTC` -> `200`
+
+5. 남은 이슈/주의
+   - `news-producer`, `news-consumer`, `elastic-consumer`는 `192.168.56.12:8080` 레지스트리 접근 불가로 이미지 pull 실패.
+   - 현재는 `replicas=0`으로 운영 영향 제거.
+   - 추후 정식 조치:
+     - 해당 이미지 접근 가능한 레지스트리로 이관 또는
+     - GitLab Registry 이미지로 교체 후 재배포.
+6. 매니페스트 반영
+   - `k8s-manifests/base/kustomization.yaml`에 `backend/secret.yaml` 포함(재적용 시 `backend-secret/harbor-secret` 자동 생성).
+   - `news-producer`, `news-consumer`, `elastic-consumer`는 기본 `replicas: 0`으로 조정(레지스트리 접근 복구 전까지 비활성).

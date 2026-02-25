@@ -17,10 +17,18 @@ spec:
       labels:
         app: email-worker
     spec:
+      nodeSelector:
+        workload: app
+      imagePullSecrets:
+        - name: harbor-secret
+        - name: gitlab-registry-secret
       containers:
         - name: email-worker
-          image: registry.gitlab.com/tutum-project/tutum-app/backend/workers:latest
-          command: ["python", "-u", "email_worker.py"]
+          image: registry.gitlab.com/tutum-project/tutum-app/backend:latest
+          command: ["python", "-u", "workers/email_worker.py"]
+          envFrom:
+            - secretRef:
+                name: backend-secret
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka.tutum-data.svc.cluster.local:9092"
