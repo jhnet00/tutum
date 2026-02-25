@@ -29,6 +29,8 @@ export default function WatchlistPreview() {
     const { user } = useAuth();
     const [data, setData] = useState<WatchlistData | null>(null);
     const [loading, setLoading] = useState(true);
+    const getSparklineColor = (isPositive: boolean): string =>
+        isPositive ? "rgb(32, 123, 112)" : "rgb(108, 52, 60)";
 
     useEffect(() => {
         async function loadData() {
@@ -117,7 +119,7 @@ export default function WatchlistPreview() {
                     <span className="text-lg font-medium text-muted-foreground">{rank}</span>
                     <Sparkline
                         data={asset.data}
-                        color={isPositive ? '#ef4444' : '#3b82f6'}
+                        color={getSparklineColor(isPositive)}
                         width={120}
                         height={40}
                     />
@@ -138,7 +140,7 @@ export default function WatchlistPreview() {
                                 ? `₩${asset.price.toLocaleString()}`
                                 : `$${asset.price.toLocaleString()}`}
                         </span>
-                        <span className={`text-sm font-medium ${isPositive ? 'text-red-500' : 'text-blue-500'}`}>
+                        <span className={`text-sm font-medium ${isPositive ? 'text-profit' : 'text-loss'}`}>
                             {isPositive ? '+' : ''}{asset.changePercent}%
                         </span>
                     </div>

@@ -6,6 +6,46 @@
   .font-technical {
     font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   }
+
+  .text-profit {
+    color: rgb(32, 123, 112);
+  }
+
+  .text-loss {
+    color: rgb(108, 52, 60);
+  }
+
+  .bg-profit-soft {
+    background-color: rgb(32 123 112 / 0.12);
+  }
+
+  .bg-loss-soft {
+    background-color: rgb(108 52 60 / 0.12);
+  }
+
+  .bg-profit-solid {
+    background-color: rgb(20 93 86);
+  }
+
+  .bg-loss-solid {
+    background-color: rgb(104 44 53);
+  }
+
+  .border-profit-soft {
+    border-color: rgb(32 123 112 / 0.30);
+  }
+
+  .border-loss-soft {
+    border-color: rgb(108 52 60 / 0.30);
+  }
+
+  .fill-profit {
+    fill: rgb(32, 123, 112);
+  }
+
+  .fill-loss {
+    fill: rgb(108, 52, 60);
+  }
 }
 
 @layer base {
@@ -71,6 +111,48 @@
     --border: 0 0% 12%;
     --input: 0 0% 12%;
     --ring: 158 80% 40%; /* Professional Chrome Green */
+  }
+}
+
+@layer utilities {
+  .dark .text-profit {
+    color: rgb(75, 170, 161);
+  }
+
+  .dark .text-loss {
+    color: rgb(171, 92, 105);
+  }
+
+  .dark .bg-profit-soft {
+    background-color: rgb(75 170 161 / 0.14);
+  }
+
+  .dark .bg-loss-soft {
+    background-color: rgb(171 92 105 / 0.14);
+  }
+
+  .dark .bg-profit-solid {
+    background-color: rgb(56 148 137);
+  }
+
+  .dark .bg-loss-solid {
+    background-color: rgb(148 88 101);
+  }
+
+  .dark .border-profit-soft {
+    border-color: rgb(75 170 161 / 0.35);
+  }
+
+  .dark .border-loss-soft {
+    border-color: rgb(171 92 105 / 0.35);
+  }
+
+  .dark .fill-profit {
+    fill: rgb(75, 170, 161);
+  }
+
+  .dark .fill-loss {
+    fill: rgb(171, 92, 105);
   }
 }
 

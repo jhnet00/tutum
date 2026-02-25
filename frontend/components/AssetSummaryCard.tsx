@@ -18,7 +18,7 @@ export default function AssetSummaryCard({ summary }: AssetSummaryCardProps) {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-2 gap-6">
         <div>
           <h3 className="text-sm text-gray-400">투자</h3>
           <p className="mt-1 text-xl font-semibold text-white">
@@ -33,19 +33,17 @@ export default function AssetSummaryCard({ summary }: AssetSummaryCardProps) {
           </p>
         </div>
 
-        <div>
+            <div>
           <h3 className="text-sm text-gray-400">총 수익</h3>
           <div className="mt-1 flex items-baseline gap-2">
             <p
-              className={`text-xl font-semibold ${summary.totalProfit >= 0 ? "text-[#34D399]" : "text-[#FB7185]"
-                }`}
+              className={`text-xl font-semibold ${summary.totalProfit >= 0 ? "text-profit" : "text-loss"}`}
             >
               {summary.totalProfit >= 0 ? "+" : ""}
               {formatCurrency(summary.totalProfit)}
             </p>
             <span
-              className={`text-sm ${summary.totalProfit >= 0 ? "text-[#34D399]/80" : "text-[#FB7185]/80"
-                }`}
+              className={`text-sm ${summary.totalProfit >= 0 ? "text-profit" : "text-loss"}`}
             >
               {summary.totalProfit >= 0 ? "+" : ""}
               {summary.profitRate.toFixed(2)}%
@@ -57,15 +55,13 @@ export default function AssetSummaryCard({ summary }: AssetSummaryCardProps) {
           <h3 className="text-sm text-gray-400">일간 수익</h3>
           <div className="mt-1 flex items-baseline gap-2">
             <p
-              className={`text-xl font-semibold ${summary.dailyChange >= 0 ? "text-red-500" : "text-blue-500"
-                }`}
+              className={`text-xl font-semibold ${summary.dailyChange >= 0 ? "text-profit" : "text-loss"}`}
             >
               {summary.dailyChange >= 0 ? "+" : ""}
               {formatCurrency(summary.dailyChange)}
             </p>
             <span
-              className={`text-sm ${summary.dailyChange >= 0 ? "text-red-400" : "text-blue-400"
-                }`}
+              className={`text-sm ${summary.dailyChange >= 0 ? "text-profit" : "text-loss"}`}
             >
               {summary.dailyChange >= 0 ? "+" : ""}
               {summary.dailyChangeRate.toFixed(2)}%

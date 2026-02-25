@@ -139,7 +139,7 @@ export default function WatchlistSidebar({
             key={tab.key}
             onClick={() => setActiveTab(tab.key as any)}
             className={`flex-1 py-3 text-sm font-medium transition ${activeTab === tab.key
-              ? "border-b-2 border-green-400 text-green-400"
+              ? "border-b-2 border-profit-soft text-profit"
               : "text-gray-400 hover:text-white"
               }`}
           >
@@ -151,7 +151,7 @@ export default function WatchlistSidebar({
       {/* Loading State */}
       {loading && (
         <div className="flex-1 flex items-center justify-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-400"></div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-profit-soft"></div>
         </div>
       )}
 
@@ -177,7 +177,7 @@ export default function WatchlistSidebar({
                 </div>
                 <div className="text-right">
                   <div
-                    className={`text-sm font-medium ${item.changePercent >= 0 ? "text-red-500" : "text-blue-500"
+                    className={`text-sm font-medium ${item.changePercent >= 0 ? "text-profit" : "text-loss"
                       }`}
                   >
                     {item.changePercent >= 0 ? "+" : ""}
@@ -205,7 +205,7 @@ export default function WatchlistSidebar({
                 {formatPrice(selectedItem.price, selectedItem.symbol)}
               </span>
               <span
-                className={`text-sm font-medium ${selectedItem.changePercent >= 0 ? "text-red-500" : "text-blue-500"
+                className={`text-sm font-medium ${selectedItem.changePercent >= 0 ? "text-profit" : "text-loss"
                   }`}
               >
                 {selectedItem.changePercent >= 0 ? "+" : ""}
@@ -226,13 +226,13 @@ export default function WatchlistSidebar({
             </div>
             <div className="flex justify-between">
               <span className="text-gray-400">고가 (추정)</span>
-              <span className="text-red-400">
+              <span className="text-profit">
                 {formatPrice(selectedItem.price * 1.02, selectedItem.symbol)}
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-400">저가 (추정)</span>
-              <span className="text-blue-400">
+              <span className="text-loss">
                 {formatPrice(selectedItem.price * 0.96, selectedItem.symbol)}
               </span>
             </div>

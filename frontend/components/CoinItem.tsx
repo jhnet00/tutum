@@ -63,8 +63,8 @@ export default function CoinItem({ coin }: CoinItemProps) {
           <p
             className={`text-sm font-medium ${
               isPositive
-                ? "text-green-600 dark:text-green-400"
-                : "text-red-600 dark:text-red-400"
+                ? "text-profit"
+                : "text-loss"
             }`}
           >
             {isPositive ? "+" : ""}

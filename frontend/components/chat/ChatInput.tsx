@@ -79,7 +79,7 @@ export function ChatInput({ onSend, isLoading, onSuggestionClick }: ChatInputPro
                     onClick={handleSend}
                     disabled={!input.trim() || isLoading}
                     size="icon"
-                    className="h-10 w-10 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white flex-shrink-0"
+                    className="h-10 w-10 rounded-xl bg-gradient-to-br from-purple-500 to-fuchsia-500 hover:from-purple-400 hover:to-fuchsia-400 text-white flex-shrink-0"
                 >
                     {isLoading ? (
                         <Loader2 className="h-4 w-4 animate-spin" />

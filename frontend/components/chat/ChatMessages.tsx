@@ -28,7 +28,7 @@ interface AssistantMessageProps {
 export function AssistantMessage({ content, sources, isStreaming }: AssistantMessageProps) {
     return (
         <div className="flex gap-3 px-4 py-3">
-            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 text-xs font-bold text-white shadow-lg">
+            <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-500 text-xs font-bold text-white shadow-lg">
                 AI
             </div>
 
@@ -51,7 +51,7 @@ export function AssistantMessage({ content, sources, isStreaming }: AssistantMes
                     )}
 
                     {isStreaming && (
-                        <span className="ml-1 inline-block h-4 w-2 animate-pulse rounded-sm bg-emerald-500" />
+                        <span className="ml-1 inline-block h-4 w-2 animate-pulse rounded-sm bg-purple-500" />
                     )}
                 </div>
 
@@ -99,7 +99,7 @@ export function ChatMessages({ messages, onSuggestionClick }: ChatMessagesProps)
 
         return (
             <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
-                <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 text-2xl font-bold text-white shadow-xl">
+                <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-500 text-2xl font-bold text-white shadow-xl">
                     AI
                 </div>
                 <h2 className="mb-2 text-xl font-bold text-zinc-900 dark:text-white">tutum AI에게 물어보세요</h2>

@@ -8,7 +8,6 @@ metadata:
   name: tutum-ingress
   namespace: tutum-app
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
@@ -20,9 +19,17 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    # Backend API 라우팅: /api/* → backend-svc:8000
     - http:
         paths:
+          # Next.js API Route 경유: /api/proxy -> frontend-svc
+          - path: /api/proxy
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-svc
+                port:
+                  number: 80
+          # Backend API 라우팅: /api/* → backend-svc:8000
           - path: /api
             pathType: Prefix
             backend:

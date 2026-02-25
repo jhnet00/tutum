@@ -128,12 +128,13 @@ export default function Sparkline({ data, color, isPositive = true, currency }: 
     // Update Series Options (Theme/Color)
     useEffect(() => {
         if (!lineSeriesRef.current) return;
+        const resolvedSeriesColor = theme === "dark"
+            ? (isPositive ? "rgb(75, 170, 161)" : "rgb(171, 92, 105)")
+            : (isPositive ? "rgb(32, 123, 112)" : "rgb(108, 52, 60)");
 
         const seriesColor = color
             ? color
-            : isPositive
-                ? "#ef4444"
-                : "#3b82f6";
+            : resolvedSeriesColor;
 
         lineSeriesRef.current.applyOptions({
             color: seriesColor,

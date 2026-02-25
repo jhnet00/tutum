@@ -20,6 +20,7 @@ RUN npm ci --ignore-scripts
 FROM node:20-alpine AS builder
 
 WORKDIR /app
+ENV NEXT_PUBLIC_API_URL="/api/proxy"
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

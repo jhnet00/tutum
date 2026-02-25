@@ -50,8 +50,8 @@ export default function KeywordBlocks() {
                   {item.name}
                 </span>
                 <div className="flex gap-4">
-                  <span className="text-zinc-500">{item.price}</span>
-                  <span className={item.change.startsWith("+") ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
+                <span className="text-zinc-500">{item.price}</span>
+                  <span className={item.change.startsWith("+") ? "text-profit" : "text-loss"}>
                     {item.change}
                   </span>
                 </div>

@@ -100,7 +100,7 @@ export default function MarketSnapshot() {
     const formatChange = (change: number | undefined) => {
         if (change === undefined) return null;
         const isPositive = change > 0;
-        const colorClass = isPositive ? "text-blue-500 dark:text-blue-400" : (change < 0 ? "text-fuchsia-500 dark:text-fuchsia-400" : "text-zinc-500"); // User Custom: Blue=Up, Pink=Down
+        const colorClass = isPositive ? "text-profit" : (change < 0 ? "text-loss" : "text-zinc-500"); // User Custom: Mint=Up, Burgundy=Down
         const Icon = isPositive ? ArrowUp : (change < 0 ? ArrowDown : null);
 
         return (

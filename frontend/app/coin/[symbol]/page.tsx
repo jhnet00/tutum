@@ -181,8 +181,8 @@ export default function CoinDetailPage() {
             <p
               className={`text-2xl font-semibold ${
                 isPositive
-                  ? "text-green-600 dark:text-green-400"
-                  : "text-red-600 dark:text-red-400"
+                  ? "text-profit"
+                  : "text-loss"
               }`}
             >
               {isPositive ? "+" : ""}
@@ -217,8 +217,8 @@ export default function CoinDetailPage() {
           <p
             className={`text-2xl font-bold ${
               isPositive
-                ? "text-green-600 dark:text-green-400"
-                : "text-red-600 dark:text-red-400"
+                ? "text-profit"
+                : "text-loss"
             }`}
           >
             {isPositive ? "+" : ""}

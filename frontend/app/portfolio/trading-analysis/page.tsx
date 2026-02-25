@@ -205,7 +205,7 @@ ${JSON.stringify(txData, null, 2)}
                     <CardContent>
                         <p
                             className={`text-3xl font-black ${
-                                stats.realized_return >= 0 ? "text-emerald-500" : "text-rose-500"
+                                stats.realized_return >= 0 ? "text-profit" : "text-loss"
                             }`}
                         >
                             {stats.realized_return >= 0 ? "+" : ""}
@@ -240,7 +240,7 @@ ${JSON.stringify(txData, null, 2)}
                 <Card>
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
-                            <TrendingUp className="h-5 w-5 text-emerald-500" />
+                            <TrendingUp className="h-5 w-5 text-profit" />
                             매수 패턴 분석
                         </CardTitle>
                     </CardHeader>
@@ -279,7 +279,7 @@ ${JSON.stringify(txData, null, 2)}
                 <Card>
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
-                            <TrendingDown className="h-5 w-5 text-rose-500" />
+                            <TrendingDown className="h-5 w-5 text-loss" />
                             매도 패턴 분석
                         </CardTitle>
                     </CardHeader>
@@ -288,7 +288,7 @@ ${JSON.stringify(txData, null, 2)}
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <p className="text-sm text-muted-foreground">승률</p>
-                                    <p className="text-2xl font-black text-emerald-500">
+                                    <p className="text-2xl font-black text-profit">
                                         {stats.win_rate.toFixed(1)}%
                                     </p>
                                 </div>
@@ -297,8 +297,8 @@ ${JSON.stringify(txData, null, 2)}
                                     <p
                                         className={`text-2xl font-black ${
                                             stats.total_realized_profit >= 0
-                                                ? "text-emerald-500"
-                                                : "text-rose-500"
+                                                ? "text-profit"
+                                                : "text-loss"
                                         }`}
                                     >
                                         {stats.total_realized_profit >= 0 ? "+" : ""}
@@ -354,8 +354,8 @@ ${JSON.stringify(txData, null, 2)}
                                     <div
                                         className={`font-bold ${
                                             tx.realized_profit >= 0
-                                                ? "text-emerald-500"
-                                                : "text-rose-500"
+                                                ? "text-profit"
+                                                : "text-loss"
                                         }`}
                                     >
                                         {tx.realized_profit >= 0 ? "+" : ""}

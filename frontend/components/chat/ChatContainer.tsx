@@ -14,13 +14,13 @@ export function ChatContainer() {
             {/* 헤더 */}
             <div className="border-b border-zinc-200 dark:border-zinc-800 px-6 py-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center text-white shadow-lg">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-fuchsia-500 flex items-center justify-center text-white shadow-lg">
                         <Sparkles className="h-5 w-5" />
                     </div>
                     <div>
                         <h1 className="text-lg font-bold text-zinc-900 dark:text-white flex items-center gap-2">
                             tutum AI
-                            <span className="text-[10px] font-medium px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-full uppercase tracking-wider">
+                            <span className="text-[10px] font-medium px-2 py-0.5 bg-fuchsia-100 dark:bg-fuchsia-900/30 text-fuchsia-600 dark:text-fuchsia-300 rounded-full uppercase tracking-wider">
                                 Beta
                             </span>
                         </h1>

@@ -10,7 +10,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TrendingUp, TrendingDown, PieChart, ArrowUpRight, BarChart3, ListChecks, Plus, Loader2, LayoutGrid, ChevronDown, Clock, Trophy, Settings2, GripVertical, Check, ChevronLeft, ChevronRight, Activity, ShieldAlert, PieChart as PieChartIcon, Lightbulb, Sparkles, Trash2, Pencil, X } from "lucide-react";
 import Footer from "@/components/Footer";
 import AssetAllocationChart from "@/components/AssetAllocationChart";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import AddAssetModal from "@/components/AddAssetModal";
 import { useAsset, HoldingAsset } from "@/contexts/AssetContext";
 import PersonalizedNewsCarousel from "@/components/PersonalizedNewsCarousel";
@@ -193,14 +192,14 @@ export default function PortfolioAssetPage() {
     const assetKeywords = useMemo(() => holdings.map(h => h.name || h.symbol), [holdings]);
 
     const streamMeta = {
-        connected: { label: "WS 연결", cls: "bg-emerald-500/10 text-emerald-600 border-emerald-300/40" },
+        connected: { label: "WS 연결", cls: "bg-profit-soft text-profit border-profit-soft" },
         reconnecting: { label: "재연결 중", cls: "bg-amber-500/10 text-amber-600 border-amber-300/40" },
         connecting: { label: "연결 중", cls: "bg-zinc-500/10 text-zinc-600 border-zinc-300/40" },
         fallback: { label: "REST 폴백", cls: "bg-sky-500/10 text-sky-600 border-sky-300/40" },
-    }[priceStreamStatus];
+      }[priceStreamStatus];
 
     return (
-        <ScrollArea className="h-full bg-background">
+        <>
             <main className="mx-auto w-full max-w-[1800px] px-4 py-4 md:py-8 sm:px-6 lg:px-8 mb-8 md:mb-12 pb-24 md:pb-32">
                 {/* Main Page Header (Shared) */}
                 <header className="mb-4 md:mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between border-b border-border pb-8">
@@ -231,7 +230,7 @@ export default function PortfolioAssetPage() {
                         </div>
                         <Button
                             onClick={() => setShowAddModal(true)}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 h-11 rounded-xl shadow-sm transition-all active:scale-95 flex items-center gap-2"
+                            className="bg-gradient-to-r from-zinc-700 to-zinc-800 hover:from-zinc-600 hover:to-zinc-700 dark:from-zinc-800 dark:to-zinc-900 dark:hover:from-zinc-700 dark:hover:to-zinc-800 text-white font-bold px-6 h-11 rounded-xl shadow-sm transition-all active:scale-95 flex items-center gap-2"
                         >
                             <Plus className="h-5 w-5" />
                             <span>자산 추가</span>
@@ -274,7 +273,7 @@ export default function PortfolioAssetPage() {
                                 <p className="text-zinc-500 font-medium">자산 정보를 불러오는 중입니다...</p>
                             </div>
                         ) : error ? (
-                            <div className="p-8 text-center bg-rose-50 dark:bg-rose-950/20 text-rose-600 rounded-2xl">
+                            <div className="p-8 text-center bg-loss-soft text-loss rounded-2xl">
                                 <p className="font-bold">에러 발생</p>
                                 <p className="text-sm">{error}</p>
                             </div>
@@ -298,7 +297,7 @@ export default function PortfolioAssetPage() {
                                                         <DropdownMenuItem onClick={() => setProfitPeriod('weekly')} className="text-sm font-bold py-2 px-3 rounded-lg">이번 주 수익</DropdownMenuItem>
                                                         <DropdownMenuItem onClick={() => setProfitPeriod('monthly')} className="text-sm font-bold py-2 px-3 rounded-lg">이번 달 수익</DropdownMenuItem>
                                                         <DropdownMenuItem onClick={() => setProfitPeriod('yearly')} className="text-sm font-bold py-2 px-3 rounded-lg">이번 년도 수익</DropdownMenuItem>
-                                                        <DropdownMenuItem onClick={() => setProfitPeriod('loss')} className="text-sm font-bold py-2 px-3 rounded-lg text-rose-500 hover:text-rose-600">총 손실 보기</DropdownMenuItem>
+                                                        <DropdownMenuItem onClick={() => setProfitPeriod('loss')} className="text-sm font-bold py-2 px-3 rounded-lg text-loss">총 손실 보기</DropdownMenuItem>
                                                     </DropdownMenuContent>
                                                 </DropdownMenu>
                                             </CardHeader>
@@ -311,11 +310,11 @@ export default function PortfolioAssetPage() {
                                                         exit={{ opacity: 0, x: 10 }}
                                                         transition={{ duration: 0.2 }}
                                                     >
-                                                        <div className={`text-3xl font-black ${currentProfit.value >= 0 ? "text-emerald-600 dark:text-emerald-500" : "text-rose-600 dark:text-rose-500"}`}>
+                                                        <div className={`text-3xl font-black ${currentProfit.value >= 0 ? "text-profit" : "text-loss"}`}>
                                                             {currentProfit.value >= 0 ? "+" : ""}{Math.floor(currentProfit.value).toLocaleString()}원
                                                         </div>
                                                         <p className="text-[12px] text-zinc-500 mt-1 font-bold">
-                                                            수익률 <span className={`${currentProfit.rate >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                                                            수익률 <span className={`${currentProfit.rate >= 0 ? "text-profit" : "text-loss"}`}>
                                                                 {currentProfit.rate >= 0 ? "+" : ""}{currentProfit.rate.toFixed(2)}%
                                                             </span>
                                                         </p>
@@ -351,7 +350,7 @@ export default function PortfolioAssetPage() {
                                                         <div className="text-xl font-black truncate text-foreground leading-tight">
                                                             {holdings.length > 0 ? (currentPerformanceAsset?.name || currentPerformanceAsset?.symbol) : "-"}
                                                         </div>
-                                                        <p className={`text-[10px] mt-1 font-black uppercase tracking-tight ${currentPerformanceAsset && currentPerformanceAsset.profitPercent >= 0 ? "text-primary" : "text-destructive"}`}>
+                                                        <p className={`text-[10px] mt-1 font-black uppercase tracking-tight ${currentPerformanceAsset && currentPerformanceAsset.profitPercent >= 0 ? "text-profit" : "text-loss"}`}>
                                                             {currentPerformanceAsset 
                                                                 ? (currentPerformanceAsset.profitPercent >= 0 ? "+" : "") + currentPerformanceAsset.profitPercent.toFixed(1) + "%" 
                                                                 : "-"}
@@ -361,7 +360,7 @@ export default function PortfolioAssetPage() {
                                                         <Sparkline 
                                                             data={[{ date: '2024-02-01', value: 10 }, { date: '2024-02-02', value: 15 }, { date: '2024-02-03', value: 12 }, { date: '2024-02-04', value: 18 }]}
                                                             isPositive={currentPerformanceAsset ? currentPerformanceAsset.profitPercent >= 0 : true}
-                                                            color={currentPerformanceAsset && currentPerformanceAsset.profitPercent >= 0 ? "#10B981" : "#F43F5E"}
+                                                            color={currentPerformanceAsset && currentPerformanceAsset.profitPercent >= 0 ? "#207b70" : "#6c343c"}
                                                         />
                                                     </div>
                                                 </div>
@@ -428,15 +427,15 @@ export default function PortfolioAssetPage() {
                                         </div>
                                     </div>
                                     <div className="md:col-span-2 lg:col-span-1 h-auto min-h-[240px]">
-                                        <Card className="h-full border-2 border-emerald-500/20 shadow-none bg-emerald-50/10 dark:bg-emerald-950/5 flex flex-col justify-center items-center text-center p-6 space-y-4">
-                                            <div className="p-3 bg-emerald-100 dark:bg-emerald-900/30 rounded-full text-emerald-600">
+                                        <Card className="h-full border-2 border-profit-soft shadow-none bg-profit-soft dark:bg-profit-soft flex flex-col justify-center items-center text-center p-6 space-y-4">
+                                            <div className="p-3 bg-profit-soft text-profit rounded-full">
                                                 <TrendingUp className="h-6 w-6" />
                                             </div>
                                              <div>
                                                 <h4 className="text-lg font-black text-foreground mb-2 uppercase tracking-tight">Market Health</h4>
                                                 <p className="text-base text-muted-foreground font-bold leading-tight">포트폴리오가 시장 수익률을<br/> 상회하고 있습니다.</p>
                                              </div>
-                                             <Badge className="bg-emerald-500 text-white font-black text-sm px-4 py-1">GOOD</Badge>
+                                             <Badge className="bg-profit-soft text-profit font-black text-sm px-4 py-1">GOOD</Badge>
                                         </Card>
                                     </div>
                                 </div>
@@ -569,7 +568,7 @@ export default function PortfolioAssetPage() {
                                                         <div className="relative flex items-center justify-center w-20 h-20 md:w-32 md:h-32 mb-4 md:mb-6">
                                                             <svg className="w-full h-full transform -rotate-90">
                                                                 <circle className="text-muted/20" strokeWidth="6 md:8" stroke="currentColor" fill="transparent" r="34 md:54" cx="40 md:64" cy="40 md:64" />
-                                                                <circle className="text-emerald-500 transition-all duration-1000" strokeWidth="6 md:8" strokeDasharray="213 md:339" strokeDashoffset={213 * (1 - 0.72)} strokeLinecap="round" stroke="currentColor" fill="transparent" r="34 md:54" cx="40 md:64" cy="40 md:64" />
+                                                                <circle className="text-profit transition-all duration-1000" strokeWidth="6 md:8" strokeDasharray="213 md:339" strokeDashoffset={213 * (1 - 0.72)} strokeLinecap="round" stroke="currentColor" fill="transparent" r="34 md:54" cx="40 md:64" cy="40 md:64" />
                                                             </svg>
                                                             <div className="absolute flex flex-col items-center">
                                                                 <span className="text-xl md:text-5xl font-black">72</span>
@@ -579,10 +578,10 @@ export default function PortfolioAssetPage() {
                                                         <div className="w-full space-y-2 md:space-y-4 px-2 md:px-4">
                                                             <div className="flex justify-between text-[8px] md:text-xs font-black uppercase tracking-wider">
                                                                 <span className="text-muted-foreground">Volatility</span>
-                                                                <span className="text-emerald-500">Low</span>
+                                                                <span className="text-profit">Low</span>
                                                             </div>
                                                             <div className="w-full h-1.5 md:h-2 bg-muted rounded-full overflow-hidden">
-                                                                <div className="h-full bg-emerald-500 w-[30%]" />
+                                                                <div className="h-full bg-profit-soft w-[30%]" />
                                                             </div>
                                                         </div>
                                                     </CardContent>
@@ -629,7 +628,7 @@ export default function PortfolioAssetPage() {
                                                         <div className="space-y-3 md:space-y-5">
                                                             {[
                                                                 { name: '기술/IT', value: 45, color: 'bg-indigo-500' },
-                                                                { name: '금융', value: 25, color: 'bg-emerald-500' },
+                                                                { name: '금융', value: 25, color: 'bg-profit-soft' },
                                                                 { name: '소비재', value: 15, color: 'bg-amber-500' },
                                                                 { name: '기타', value: 15, color: 'bg-zinc-400' },
                                                             ].map(sector => (
@@ -724,7 +723,7 @@ export default function PortfolioAssetPage() {
                                                     <TableRow key={asset.id || asset.symbol} className="border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors">
                                                         <TableCell className="py-4 pl-6">
                                                             <div className="flex items-center gap-3">
-                                                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold ${asset.profit >= 0 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-500" : "bg-rose-500/10 text-rose-600 dark:text-rose-500"}`}>
+                                                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold ${asset.profit >= 0 ? "bg-profit-soft text-profit" : "bg-loss-soft text-loss"}`}>
                                                                     {asset.symbol[0]}
                                                                 </div>
                                                                 <div>
@@ -767,10 +766,10 @@ export default function PortfolioAssetPage() {
                                                             <div className="text-sm font-medium text-zinc-900 dark:text-zinc-200">{Math.floor(asset.currentPrice).toLocaleString()}원</div>
                                                         </TableCell>
                                                          <TableCell className="text-right py-6">
-                                                            <div className={`font-black text-base ${asset.change >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                                                            <div className={`font-black text-base ${asset.change >= 0 ? "text-profit" : "text-loss"}`}>
                                                                 {asset.change > 0 ? "+" : ""}{Math.floor(asset.change * asset.amount).toLocaleString()}원
                                                             </div>
-                                                            <div className={`text-sm font-bold ${asset.changePercent >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                                                            <div className={`text-sm font-bold ${asset.changePercent >= 0 ? "text-profit" : "text-loss"}`}>
                                                                 {asset.changePercent > 0 ? "+" : ""}{asset.changePercent.toFixed(2)}%
                                                             </div>
                                                         </TableCell>
@@ -790,7 +789,7 @@ export default function PortfolioAssetPage() {
                                                                         <Button
                                                                             variant="ghost"
                                                                             size="icon"
-                                                                            className="h-8 w-8 text-emerald-500 hover:text-emerald-600 hover:bg-emerald-500/10"
+                                                                            className="h-8 w-8 text-profit hover:text-profit hover:bg-profit-soft"
                                                                             onClick={handleSaveEdit}
                                                                         >
                                                                             <Check className="h-4 w-4" />
@@ -798,7 +797,7 @@ export default function PortfolioAssetPage() {
                                                                         <Button
                                                                             variant="ghost"
                                                                             size="icon"
-                                                                            className="h-8 w-8 text-rose-500 hover:text-rose-600 hover:bg-rose-500/10"
+                                                                            className="h-8 w-8 text-loss hover:text-loss hover:bg-loss-soft"
                                                                             onClick={() => setEditingAssetId(null)}
                                                                         >
                                                                             <X className="h-4 w-4" />
@@ -817,7 +816,7 @@ export default function PortfolioAssetPage() {
                                                                         <Button
                                                                             variant="ghost"
                                                                             size="icon"
-                                                                            className="h-8 w-8 text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 transition-colors"
+                                                                            className="h-8 w-8 text-loss hover:text-loss hover:bg-loss-soft transition-colors"
                                                                             onClick={() => setSellAsset(asset)}
                                                                             title="매도"
                                                                         >
@@ -860,7 +859,7 @@ export default function PortfolioAssetPage() {
                                     <Card key={asset.id || asset.symbol} className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-sm overflow-hidden p-4">
                                         <div className="flex justify-between items-start mb-4">
                                             <div className="flex items-center gap-3">
-                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold ${asset.profit >= 0 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-500" : "bg-rose-500/10 text-rose-600 dark:text-rose-500"}`}>
+                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold ${asset.profit >= 0 ? "bg-profit-soft text-profit" : "bg-loss-soft text-loss"}`}>
                                                     {asset.symbol[0]}
                                                 </div>
                                                 <div>
@@ -895,7 +894,7 @@ export default function PortfolioAssetPage() {
                                             </div>
                                             <div className="text-right">
                                                 <p className="text-[10px] text-zinc-500 uppercase font-black tracking-widest mb-1">수익 / 수익률</p>
-                                                <p className={`font-bold text-sm ${asset.change >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                                                <p className={`font-bold text-sm ${asset.change >= 0 ? "text-profit" : "text-loss"}`}>
                                                     {asset.change > 0 ? "+" : ""}{Math.floor(asset.change * asset.amount).toLocaleString()}원
                                                     <span className="ml-1 text-[10px]">({asset.changePercent > 0 ? "+" : ""}{asset.changePercent.toFixed(1)}%)</span>
                                                 </p>
@@ -1081,6 +1080,6 @@ export default function PortfolioAssetPage() {
                 open={showAIInsights}
                 onOpenChange={setShowAIInsights}
             />
-        </ScrollArea>
+        </>
     );
 }

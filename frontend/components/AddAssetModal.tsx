@@ -39,13 +39,13 @@ export default function AddAssetModal({ isOpen, onClose }: AddAssetModalProps) {
             {/* Direct Registration */}
             <Link
               href="/direct-input"
-              className="group relative flex items-start gap-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 p-6 transition-all hover:border-emerald-500/50 hover:bg-white dark:hover:bg-zinc-900"
+              className="group relative flex items-start gap-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 p-6 transition-all hover:border-zinc-400 hover:bg-white dark:hover:bg-zinc-900"
             >
-              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 group-hover:bg-emerald-500 group-hover:text-white transition-all duration-300">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-zinc-200 text-zinc-700 border border-zinc-300/70 transition-all duration-300 dark:bg-zinc-800 dark:text-zinc-200 dark:border-zinc-700/70">
                 <Plus className="h-7 w-7" />
               </div>
               <div className="flex-1 pt-1">
-                <h3 className="text-lg font-bold text-zinc-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">직접 등록</h3>
+                <h3 className="text-lg font-bold text-zinc-900 dark:text-white group-hover:text-zinc-950 dark:group-hover:text-white transition-colors">직접 등록</h3>
                 <p className="mt-1 text-sm text-zinc-500 leading-relaxed font-medium">
                   일반 주식, 예금 등 자산 정보를<br />하나씩 직접 입력하여 등록합니다.
                 </p>
@@ -55,13 +55,13 @@ export default function AddAssetModal({ isOpen, onClose }: AddAssetModalProps) {
             {/* Bulk Registration (CSV) */}
             <Link
               href="/asset-upload/csv"
-              className="group relative flex items-start gap-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 p-6 transition-all hover:border-emerald-500/50 hover:bg-white dark:hover:bg-zinc-900"
+              className="group relative flex items-start gap-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 p-6 transition-all hover:border-zinc-400 hover:bg-white dark:hover:bg-zinc-900"
             >
-              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 group-hover:bg-emerald-500 group-hover:text-white transition-all duration-300">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-zinc-200 text-zinc-700 border border-zinc-300/70 transition-all duration-300 dark:bg-zinc-800 dark:text-zinc-200 dark:border-zinc-700/70">
                 <FileUp className="h-7 w-7" />
               </div>
               <div className="flex-1 pt-1">
-                <h3 className="text-lg font-bold text-zinc-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">대량 등록</h3>
+                <h3 className="text-lg font-bold text-zinc-900 dark:text-white group-hover:text-zinc-950 dark:group-hover:text-white transition-colors">대량 등록</h3>
                 <p className="mt-1 text-sm text-zinc-500 leading-relaxed font-medium">
                   CSV 파일을 업로드하여<br />여러 자산을 한꺼번에 등록합니다.
                 </p>
@@ -71,13 +71,13 @@ export default function AddAssetModal({ isOpen, onClose }: AddAssetModalProps) {
             {/* OCR Registration (Image) */}
             <Link
               href="/asset-upload/ocr"
-              className="group relative flex items-start gap-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 p-6 transition-all hover:border-emerald-500/50 hover:bg-white dark:hover:bg-zinc-900"
+              className="group relative flex items-start gap-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-900/50 p-6 transition-all hover:border-zinc-400 hover:bg-white dark:hover:bg-zinc-900"
             >
-              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 group-hover:bg-emerald-500 group-hover:text-white transition-all duration-300">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-zinc-200 text-zinc-700 border border-zinc-300/70 transition-all duration-300 dark:bg-zinc-800 dark:text-zinc-200 dark:border-zinc-700/70">
                 <Scan className="h-7 w-7" />
               </div>
               <div className="flex-1 pt-1">
-                <h3 className="text-lg font-bold text-zinc-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">OCR 자동 등록</h3>
+                <h3 className="text-lg font-bold text-zinc-900 dark:text-white group-hover:text-zinc-950 dark:group-hover:text-white transition-colors">OCR 자동 등록</h3>
                 <p className="mt-1 text-sm text-zinc-500 leading-relaxed font-medium">
                   보유 자산 캡처 이미지를 업로드하면<br />AI가 자동으로 정보를 추출합니다.
                 </p>

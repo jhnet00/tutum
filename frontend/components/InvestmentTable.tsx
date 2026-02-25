@@ -63,7 +63,7 @@ export default function InvestmentTable({ holdings }: InvestmentTableProps) {
                   </td>
                   <td className="px-4 py-4">
                     <div
-                      className={`${dailyProfit >= 0 ? "text-red-500" : "text-blue-500"
+                      className={`${dailyProfit >= 0 ? "text-profit" : "text-loss"
                         }`}
                     >
                       <div>
@@ -78,7 +78,7 @@ export default function InvestmentTable({ holdings }: InvestmentTableProps) {
                   </td>
                   <td className="px-4 py-4">
                     <div
-                      className={`${profit >= 0 ? "text-red-500" : "text-blue-500"
+                      className={`${profit >= 0 ? "text-profit" : "text-loss"
                         }`}
                     >
                       <div>

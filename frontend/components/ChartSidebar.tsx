@@ -265,7 +265,7 @@ export default function ChartSidebar({ onSelectAsset, currentAsset }: ChartSideb
                                         <div className="flex-1 px-4 h-6 flex items-center opacity-60 group-hover:opacity-100 transition-opacity">
                                             <svg width="50" height="15" viewBox="0 0 70 20" className={cn(
                                                 "fill-none stroke-2",
-                                                getChange(asset).isPositive ? "stroke-emerald-500" : "stroke-blue-500"
+                                                getChange(asset).isPositive ? "stroke-profit" : "stroke-loss"
                                             )}>
                                                 <path d={miniChartPath} strokeLinecap="round" strokeLinejoin="round" />
                                             </svg>
@@ -277,7 +277,7 @@ export default function ChartSidebar({ onSelectAsset, currentAsset }: ChartSideb
                                             </div>
                                             <div className={cn(
                                                 "text-[10px] font-bold",
-                                                getChange(asset).isPositive ? "text-emerald-500" : "text-blue-500"
+                                                getChange(asset).isPositive ? "text-profit" : "text-loss"
                                             )}>
                                                 {getChange(asset).change}
                                             </div>
@@ -353,12 +353,12 @@ export default function ChartSidebar({ onSelectAsset, currentAsset }: ChartSideb
                                     </div>
                                     <div className={cn(
                                         "flex items-center gap-2 text-base font-black",
-                                        getChange(currentAsset).isPositive ? "text-emerald-500" : "text-blue-500"
+                                        getChange(currentAsset).isPositive ? "text-profit" : "text-loss"
                                     )}>
                                         <span>{getChange(currentAsset).change}</span>
                                         <span className="text-zinc-400 font-bold text-sm">전일 대비</span>
                                     </div>
-                                    <div className="text-[11px] text-rose-500 font-black pt-1">폐장 <span className="text-zinc-400 font-bold">프리장 개장까지 51분</span></div>
+                                    <div className="text-[11px] text-loss font-black pt-1">폐장 <span className="text-zinc-400 font-bold">프리장 개장까지 51분</span></div>
                                 </div>
 
                                 {/* Statistics Grid */}
@@ -367,8 +367,8 @@ export default function ChartSidebar({ onSelectAsset, currentAsset }: ChartSideb
                                     <div className="grid grid-cols-3 gap-x-2 gap-y-6 text-[11px]">
                                         {[
                                             { label: "시가", value: currentAsset.stats?.open },
-                                            { label: "고가", value: currentAsset.stats?.high, color: "text-rose-500" },
-                                            { label: "저가", value: currentAsset.stats?.low, color: "text-blue-500" },
+                                            { label: "고가", value: currentAsset.stats?.high, color: "text-loss" },
+                                            { label: "저가", value: currentAsset.stats?.low, color: "text-profit" },
                                             { label: "52주 최고", value: currentAsset.stats?.high52W },
                                             { label: "52주 최저", value: currentAsset.stats?.low52W },
                                             { label: "거래량", value: currentAsset.stats?.volume },
@@ -393,7 +393,7 @@ export default function ChartSidebar({ onSelectAsset, currentAsset }: ChartSideb
                                         <Info className="h-3 w-3" />
                                     </div>
                                     {currentAsset.stats?.dividendYield ? (
-                                        <div className="mt-2 text-sm font-bold text-emerald-500">
+                                        <div className="mt-2 text-sm font-bold text-profit">
                                             연 {currentAsset.stats.dividendYield}
                                         </div>
                                     ) : (

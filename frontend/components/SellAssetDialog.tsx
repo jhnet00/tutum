@@ -206,8 +206,8 @@ export default function SellAssetDialog({
                         <Card
                             className={`${
                                 realizedProfit >= 0
-                                    ? "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800"
-                                    : "bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800"
+                                    ? "bg-profit-soft border-profit-soft"
+                                    : "bg-loss-soft border-loss-soft"
                             }`}
                         >
                             <CardContent className="pt-4">
@@ -216,15 +216,15 @@ export default function SellAssetDialog({
                                         <span className="text-sm font-medium">예상 실현손익</span>
                                         <div className="flex items-center gap-1">
                                             {realizedProfit >= 0 ? (
-                                                <TrendingUp className="h-4 w-4 text-emerald-500" />
+                                                <TrendingUp className="h-4 w-4 text-profit" />
                                             ) : (
-                                                <TrendingDown className="h-4 w-4 text-rose-500" />
+                                                <TrendingDown className="h-4 w-4 text-loss" />
                                             )}
                                             <span
                                                 className={`text-lg font-black ${
                                                     realizedProfit >= 0
-                                                        ? "text-emerald-600 dark:text-emerald-400"
-                                                        : "text-rose-600 dark:text-rose-400"
+                                                        ? "text-profit"
+                                                        : "text-loss"
                                                 }`}
                                             >
                                                 {realizedProfit >= 0 ? "+" : ""}
@@ -237,8 +237,8 @@ export default function SellAssetDialog({
                                         <span
                                             className={`text-sm font-bold ${
                                                 profitRate >= 0
-                                                    ? "text-emerald-600 dark:text-emerald-400"
-                                                    : "text-rose-600 dark:text-rose-400"
+                                                    ? "text-profit"
+                                                    : "text-loss"
                                             }`}
                                         >
                                             {profitRate >= 0 ? "+" : ""}
@@ -258,7 +258,7 @@ export default function SellAssetDialog({
                     <Button
                         onClick={handleSell}
                         disabled={isSubmitting || quantity <= 0 || price <= 0}
-                        className="bg-rose-500 hover:bg-rose-600 text-white"
+                        className="bg-loss-solid text-white hover:brightness-110"
                     >
                         {isSubmitting ? (
                             <>

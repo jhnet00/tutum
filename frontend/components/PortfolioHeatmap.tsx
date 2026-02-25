@@ -14,11 +14,11 @@ const CustomizedContent = (props: any) => {
     const safeChangePercent = changePercent ?? 0;
 
     // Determine color based on changePercent
-    let fillColor = "#3f3f46"; // Default Zinc-700
-    if (safeChangePercent > 3) fillColor = "#059669"; // Emerald-600
-    else if (safeChangePercent > 0) fillColor = "#10b981"; // Emerald-500
-    else if (safeChangePercent < -3) fillColor = "#e11d48"; // Rose-600
-    else if (safeChangePercent < 0) fillColor = "#f43f5e"; // Rose-500
+    let fillColor = "#52525b"; // Neutral Zinc-600
+    if (safeChangePercent > 3) fillColor = "#145d56"; // Profit strong
+    else if (safeChangePercent > 0) fillColor = "#207b70"; // Profit
+    else if (safeChangePercent < -3) fillColor = "#682c35"; // Loss strong
+    else if (safeChangePercent < 0) fillColor = "#6c343c"; // Loss
     else fillColor = "#52525b"; // Zinc-600 (Zero change)
 
     return (
@@ -65,7 +65,7 @@ const CustomTooltip = ({ active, payload }: any) => {
                     </div>
                      <div>
                         <span className="text-muted-foreground block">변동률</span>
-                        <span className={`font-bold ${safeChangePercent >= 0 ? "text-emerald-500" : "text-rose-500"}`}>
+                        <span className={`font-bold ${safeChangePercent >= 0 ? "text-profit" : "text-loss"}`}>
                             {safeChangePercent > 0 ? "+" : ""}{safeChangePercent.toFixed(2)}%
                         </span>
                     </div>
@@ -106,11 +106,11 @@ export default function PortfolioHeatmap() {
                     </CardTitle>
                     <div className="flex items-center gap-2">
                          <div className="flex items-center gap-1.5 px-3 py-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg">
-                             <div className="w-3 h-3 bg-emerald-500 rounded-sm" />
+                             <div className="w-3 h-3 bg-profit-soft rounded-sm" />
                              <span className="text-[10px] font-bold text-zinc-500">상승</span>
                          </div>
                          <div className="flex items-center gap-1.5 px-3 py-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg">
-                             <div className="w-3 h-3 bg-rose-500 rounded-sm" />
+                             <div className="w-3 h-3 bg-loss-soft rounded-sm" />
                              <span className="text-[10px] font-bold text-zinc-500">하락</span>
                          </div>
                     </div>
