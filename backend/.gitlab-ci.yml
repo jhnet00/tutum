@@ -353,9 +353,10 @@ deploy:production:
 notify:slack_on_failure:
   stage: notify
   image: curlimages/curl:8.7.1
+  allow_failure: true
   script:
     - |
-      curl -sS -X POST -H "Content-type: application/json" \
+      curl -fsS -X POST -H "Content-type: application/json" \
       --data "{\"text\":\"[CI FAIL] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\n${CI_PIPELINE_URL}\"}" \
       "${SLACK_WEBHOOK_URL}"
   when: on_failure
@@ -366,9 +367,10 @@ notify:slack_on_failure:
 notify:jira_on_failure:
   stage: notify
   image: curlimages/curl:8.7.1
+  allow_failure: true
   script:
     - |
-      curl -sS -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+      curl -fsS -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
         -H "Content-Type: application/json" \
         -X POST "${JIRA_BASE_URL}/rest/api/3/issue" \
         -d '{
