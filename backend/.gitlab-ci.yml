@@ -305,16 +305,14 @@ deploy:staging:
   stage: deploy
   image: alpine:3.20
   before_script:
-    - apk add --no-cache git curl
+    - apk add --no-cache git
   script:
-    - git clone ${K8S_MANIFESTS_REPO} /tmp/k8s-manifests
-    - cd /tmp/k8s-manifests
-    - git config user.email "ci@tutum.dev"
+    - git clone ${K8S_MANIFESTS_REPO} /tmp/manifests && cd /tmp/manifests
+    - git config user.email ci@tutum.dev
     - git config user.name "GitLab CI"
-    # staging overlay 이미지 태그 업데이트
-    - sed -i "s/newTag:.*/newTag:\ ${CI_COMMIT_SHORT_SHA}/g" overlays/staging/kustomization.yaml
+    - 'sed -i "s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/" overlays/staging/kustomization.yaml'
     - git add -A
-    - git diff --cached --quiet || git commit -m "deploy(staging): update images to ${CI_COMMIT_SHORT_SHA}"
+    - 'git diff --cached --quiet || git commit -m "deploy: staging ${CI_COMMIT_SHORT_SHA}"'
     - git push origin main
   environment:
     name: staging
@@ -325,16 +323,14 @@ deploy:production:
   stage: deploy
   image: alpine:3.20
   before_script:
-    - apk add --no-cache git curl
+    - apk add --no-cache git
   script:
-    - git clone ${K8S_MANIFESTS_REPO} /tmp/k8s-manifests
-    - cd /tmp/k8s-manifests
-    - git config user.email "ci@tutum.dev"
+    - git clone ${K8S_MANIFESTS_REPO} /tmp/manifests && cd /tmp/manifests
+    - git config user.email ci@tutum.dev
     - git config user.name "GitLab CI"
-    # production overlay 이미지 태그 업데이트
-    - sed -i "s/newTag:.*/newTag:\ ${CI_COMMIT_SHORT_SHA}/g" overlays/production/kustomization.yaml
+    - 'sed -i "s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/" overlays/production/kustomization.yaml'
     - git add -A
-    - git diff --cached --quiet || git commit -m "deploy(production): update images to ${CI_COMMIT_SHORT_SHA}"
+    - 'git diff --cached --quiet || git commit -m "deploy: production ${CI_COMMIT_SHORT_SHA}"'
     - git push origin main
   environment:
     name: production
