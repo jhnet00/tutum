@@ -1,0 +1,8 @@
+# ============================================
+# Tutum CI/CD Pipeline - Root Entry Point
+# ============================================
+# Delegates to backend/.gitlab-ci.yml which contains
+# all stage and job definitions.
+
+include:
+  - local: 'backend/.gitlab-ci.yml'
