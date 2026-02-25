@@ -19,6 +19,8 @@ spec:
         app: frontend
         version: v1
     spec:
+      nodeSelector:
+        workload: app
       containers:
         - name: frontend
           image: registry.gitlab.com/tutum-project/tutum-app/backend/frontend:latest
@@ -26,10 +28,6 @@ spec:
             - containerPort: 3000
               name: http
           env:
-            - name: BACKEND_INTERNAL_URL
-              value: "http://backend-svc:8000"
-            - name: API_BASE_URL
-              value: "http://backend-svc:8000"
             - name: NEXT_PUBLIC_API_URL
               value: "http://backend-svc:8000"
             - name: NODE_ENV
@@ -56,4 +54,5 @@ spec:
             periodSeconds: 15
             failureThreshold: 3
       imagePullSecrets:
+        - name: harbor-secret
         - name: gitlab-registry-secret

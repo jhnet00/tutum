@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: elastic-consumer
     app.kubernetes.io/part-of: tutum
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: elastic-consumer
@@ -20,11 +20,12 @@ spec:
       nodeSelector:
         workload: app
       imagePullSecrets:
+        - name: harbor-secret
         - name: gitlab-registry-secret
       containers:
         - name: elastic-consumer
-          image: 192.168.56.12:8080/tutum/node3-elastic_consumer:v1
-          imagePullPolicy: IfNotPresent
+          image: registry.gitlab.com/tutum-project/tutum-app/backend/workers:latest
+          imagePullPolicy: Always
           command: ["python", "-u", "elastic_consumer.py"]
           envFrom:
             - configMapRef:

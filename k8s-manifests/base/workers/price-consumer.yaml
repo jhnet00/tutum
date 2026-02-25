@@ -17,6 +17,11 @@ spec:
       labels:
         app: price-consumer
     spec:
+      nodeSelector:
+        workload: app
+      imagePullSecrets:
+        - name: harbor-secret
+        - name: gitlab-registry-secret
       containers:
         - name: price-consumer
           image: registry.gitlab.com/tutum-project/tutum-app/backend/workers:latest
@@ -24,8 +29,8 @@ spec:
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka.tutum-data.svc.cluster.local:9092"
-            - name: MONGODB_URL
-              value: "mongodb://mongodb.tutum-data.svc.cluster.local:27017"
+            - name: REDIS_URL
+              value: "redis://redis.tutum-data.svc.cluster.local:6379"
           resources:
             requests:
               cpu: 200m
@@ -33,5 +38,3 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
-      imagePullSecrets:
-        - name: gitlab-registry-secret

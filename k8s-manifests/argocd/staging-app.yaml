@@ -12,7 +12,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: http://192.168.56.12:8929/root/k8s-manifests.git
+    repoURL: https://gitlab.com/tutum-project/k8s-manifests.git
     targetRevision: main
     path: overlays/staging
   destination:

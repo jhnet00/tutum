@@ -1,20 +1,40 @@
 ﻿# ============================================
-# Tutum CI/CD Pipeline (Template)
+# Tutum CI/CD Pipeline
 # ============================================
 #
-# This template assumes:
-#   - GitLab Runner variables
-#   - Harbor credentials: HARBOR_URL, HARBOR_USER, HARBOR_PASSWORD
-#   - SonarQube variables: SONAR_HOST_URL, SONAR_TOKEN
-#   - Cosign settings: COSIGN_KEY (signing key)
-#   - ArgoCD settings: ARGOCD_SERVER, ARGOCD_AUTH_TOKEN
+# 인프라 구성:
+#   - GitLab Runner: K8s Helm (gitlab-runner ns)
+#   - Container Registry: GitLab CR (registry.gitlab.com)
+#   - SonarQube: K8s Helm (sonarqube ns, ClusterIP)
+#   - Cosign: 이미지 서명 (키: COSIGN_PRIVATE_KEY CI/CD Variable)
+#   - ArgoCD: K8s (argocd ns, ClusterIP)
+#   - k8s-manifests: GitLab repo (ArgoCD GitOps 대상)
+#
+# 필수 CI/CD Variables (GitLab > Settings > CI/CD > Variables):
+#   - SONAR_HOST_URL: http://sonarqube-sonarqube.sonarqube.svc.cluster.local:9000
+#   - SONAR_TOKEN: sqp_9de5141851326abaf90f2e97b6feb65fd4d5d802
+#   - COSIGN_PRIVATE_KEY: (cosign.key 파일 내용, Type: File)
+#   - COSIGN_PASSWORD: tutum123
+#   - ARGOCD_AUTH_TOKEN: (argocd account generate-token)
+#   - K8S_MANIFESTS_TOKEN: (GitLab PAT, tutum-app/backend repo push 권한)
 # ============================================
 
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
 variables:
-  # GitLab Container Registry (CI_REGISTRY_IMAGE = registry.gitlab.com/tutum-project/tutum-app/backend)
-  BACKEND_IMAGE: "${CI_REGISTRY_IMAGE}"
+  # GitLab Container Registry (CI_REGISTRY_IMAGE 자동 제공)
   FRONTEND_IMAGE: "${CI_REGISTRY_IMAGE}/frontend"
+  BACKEND_IMAGE: "${CI_REGISTRY_IMAGE}"
   WORKERS_IMAGE: "${CI_REGISTRY_IMAGE}/workers"
+  # K8s 내부 서비스 주소
+  ARGOCD_SERVER: "argocd-server.argocd.svc.cluster.local"
+  # monorepo 내부 k8s-manifests 디렉터리 업데이트용 remote
+  K8S_MANIFESTS_REPO: "https://oauth2:${K8S_MANIFESTS_TOKEN}@gitlab.com/tutum-project/tutum-app/backend.git"
 
 stages:
   - guard
@@ -25,10 +45,12 @@ stages:
   - security
   - sign
   - deploy
+  - notify
 
 # ============================================
 # Stage 0: Commit Policy Guard
 # ============================================
+
 guard:commit-policy:
   stage: guard
   image: alpine:3.20
@@ -43,18 +65,14 @@ guard:commit-policy:
       if [ "$BEFORE" != "$ZERO_SHA" ] && git rev-parse "$BEFORE" >/dev/null 2>&1; then
         git diff --name-only "$BEFORE" "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
       else
-        echo "INFO: No valid before SHA (API trigger or new branch) - checking all files in commit"
+        echo "INFO: No valid before SHA - checking all files"
         git ls-tree -r --name-only "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
       fi
 
       bad=0
       while IFS= read -r f; do
         [ -z "$f" ] && continue
-        if [ "$f" = ".env.example" ] || [ "$f" = "backend/.env" ]; then
-          echo "INFO: Skipping known dev file: $f"
-          continue
-        fi
-
+        case "$f" in .env.example|backend/.env) echo "INFO: Skipping known dev file: $f"; continue;; esac
         if git check-ignore -q -- "$f"; then
           echo "WARNING: gitignore-matched file detected: $f"
           bad=1
@@ -62,9 +80,11 @@ guard:commit-policy:
       done < /tmp/changed_files.txt
 
       if [ "$bad" -ne 0 ]; then
-        echo "WARNING: Some files match .gitignore patterns. Review and remove before production."
+        echo "WARNING: Some files match .gitignore patterns."
         exit 1
       fi
+
+# ============================================
 # Stage 1: Lint
 # ============================================
 
@@ -75,9 +95,9 @@ lint:frontend:
     - cd frontend
     - npm ci
     - npm run lint
-  only:
-    changes:
-      - frontend/**/*
+  rules:
+    - changes:
+        - frontend/**/*
 
 lint:backend:
   stage: lint
@@ -103,9 +123,9 @@ test:frontend:
     - cd frontend
     - npm ci
     - npm run build
-  only:
-    changes:
-      - frontend/**/*
+  rules:
+    - changes:
+        - frontend/**/*
 
 test:backend:
   stage: test
@@ -126,26 +146,46 @@ test:backend:
 
 sonar:frontend:
   stage: scan
+  tags: [k8s]
   image: sonarsource/sonar-scanner-cli:latest
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
   script:
-    - sonar-scanner -Dproject.settings=frontend/sonar-project.properties
+    - >
+      sonar-scanner
+      -Dsonar.projectKey=tutum-frontend
+      -Dsonar.projectName="Tutum Frontend"
+      -Dsonar.sources=frontend/app,frontend/components,frontend/hooks,frontend/lib,frontend/contexts,frontend/context
+      -Dsonar.exclusions=node_modules/**,**/*.test.*,**/*.spec.*,.next/**,public/**
+      -Dsonar.host.url=${SONAR_HOST_URL}
+      -Dsonar.token=${SONAR_TOKEN}
   allow_failure: true
-  only:
-    changes:
-      - frontend/**/*
+  rules:
+    - changes:
+        - frontend/**/*
 
 sonar:backend:
   stage: scan
+  tags: [k8s]
   image: sonarsource/sonar-scanner-cli:latest
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
   script:
-    - sonar-scanner -Dproject.settings=backend/sonar-project.properties
+    - >
+      sonar-scanner
+      -Dsonar.projectKey=tutum-backend
+      -Dsonar.projectName="Tutum Backend"
+      -Dsonar.sources=backend/app
+      -Dsonar.exclusions=**/__pycache__/**,**/tests/**,.venv/**,workers/**
+      -Dsonar.host.url=${SONAR_HOST_URL}
+      -Dsonar.token=${SONAR_TOKEN}
   allow_failure: true
-  only:
-    changes:
-      - backend/**/*
+  rules:
+    - changes:
+        - backend/**/*
 
 # ============================================
-# Stage 4: Docker Build & Push to GitLab Registry
+# Stage 4: Docker Build & Push to GitLab CR
 # ============================================
 
 build:frontend:
@@ -158,9 +198,9 @@ build:frontend:
     - docker build -t ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${FRONTEND_IMAGE}:latest ./frontend
     - docker push ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
     - docker push ${FRONTEND_IMAGE}:latest
-  only:
-    changes:
-      - frontend/**/*
+  rules:
+    - changes:
+        - frontend/**/*
 
 build:backend:
   stage: build
@@ -187,79 +227,227 @@ build:workers:
     - docker build -t ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${WORKERS_IMAGE}:latest ./backend/workers
     - docker push ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
     - docker push ${WORKERS_IMAGE}:latest
-  only:
-    changes:
-      - backend/workers/**/*
+  rules:
+    - changes:
+        - backend/workers/**/*
 
 # ============================================
-# Stage 5: Trivy security scan
+# Stage 5: Trivy 이미지 취약점 스캔
 # ============================================
 
 security:frontend:
   stage: security
+  tags: [k8s]
   image: aquasec/trivy:latest
+  variables:
+    TRIVY_USERNAME: ${CI_REGISTRY_USER}
+    TRIVY_PASSWORD: ${CI_REGISTRY_PASSWORD}
   script:
-    - trivy image --severity HIGH,CRITICAL --exit-code 0 ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
-    - build:frontend
+    - job: build:frontend
+      optional: true
+  rules:
+    - changes:
+        - frontend/**/*
 
 security:backend:
   stage: security
+  tags: [k8s]
   image: aquasec/trivy:latest
+  variables:
+    TRIVY_USERNAME: ${CI_REGISTRY_USER}
+    TRIVY_PASSWORD: ${CI_REGISTRY_PASSWORD}
   script:
-    - trivy image --severity HIGH,CRITICAL --exit-code 0 ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
-    - build:backend
+    - job: build:backend
+      optional: true
+  rules:
+    - changes:
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+
+security:workers:
+  stage: security
+  tags: [k8s]
+  image: aquasec/trivy:latest
+  variables:
+    TRIVY_USERNAME: ${CI_REGISTRY_USER}
+    TRIVY_PASSWORD: ${CI_REGISTRY_PASSWORD}
+  script:
+    - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
+  allow_failure: true
+  needs:
+    - job: build:workers
+      optional: true
+  rules:
+    - changes:
+        - backend/workers/**/*
 
 # ============================================
-# Stage 6: Cosign image signing
+# Stage 6: Cosign 이미지 서명
 # ============================================
 
 sign:frontend:
   stage: sign
+  tags: [k8s]
   image: bitnami/cosign:latest
+  variables:
+    COSIGN_YES: "true"
   script:
-    - cosign sign --key env://COSIGN_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
+    - cosign sign --key env://COSIGN_PRIVATE_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
-    - security:frontend
+    - job: security:frontend
+      optional: true
+  rules:
+    - changes:
+        - frontend/**/*
 
 sign:backend:
   stage: sign
+  tags: [k8s]
   image: bitnami/cosign:latest
+  variables:
+    COSIGN_YES: "true"
   script:
-    - cosign sign --key env://COSIGN_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
+    - cosign sign --key env://COSIGN_PRIVATE_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
-    - security:backend
+    - job: security:backend
+      optional: true
+  rules:
+    - changes:
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+
+sign:workers:
+  stage: sign
+  tags: [k8s]
+  image: bitnami/cosign:latest
+  variables:
+    COSIGN_YES: "true"
+  script:
+    - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
+    - cosign sign --key env://COSIGN_PRIVATE_KEY ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
+  allow_failure: true
+  needs:
+    - job: security:workers
+      optional: true
+  rules:
+    - changes:
+        - backend/workers/**/*
 
 # ============================================
-# Stage 7: ArgoCD deployment sync
+# Stage 7: GitOps 배포 (k8s-manifests 이미지 태그 업데이트)
 # ============================================
+# ArgoCD auto-sync가 k8s-manifests repo 변경을 감지하여 자동 배포
+# staging: automated sync, production: manual sync
 
 deploy:staging:
   stage: deploy
-  image: argoproj/argocd:latest
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache git
   script:
-    - argocd login ${ARGOCD_SERVER} --auth-token ${ARGOCD_AUTH_TOKEN} --insecure
-    - argocd app sync tutum-staging
+    - |
+      git clone "${K8S_MANIFESTS_REPO}" /tmp/manifests
+      cd /tmp/manifests
+      git checkout develop
+      git pull --rebase origin develop
+      git config user.email ci@tutum.dev
+      git config user.name "GitLab CI"
+      sed -i "s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/" k8s-manifests/overlays/staging/kustomization.yaml
+      git add k8s-manifests/overlays/staging/kustomization.yaml
+      if git diff --cached --quiet; then
+        echo "No staging manifest change."
+        exit 0
+      fi
+      git commit -m "deploy: staging ${CI_COMMIT_SHORT_SHA} [skip ci]"
+      git push origin HEAD:develop
   environment:
     name: staging
-  allow_failure: true
-  only:
-    - develop
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop" && $K8S_MANIFESTS_TOKEN'
+      changes:
+        - backend/**/*
+        - frontend/**/*
 
 deploy:production:
   stage: deploy
-  image: argoproj/argocd:latest
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache git
   script:
-    - argocd login ${ARGOCD_SERVER} --auth-token ${ARGOCD_AUTH_TOKEN} --insecure
-    - argocd app sync tutum-production
+    - |
+      git clone "${K8S_MANIFESTS_REPO}" /tmp/manifests
+      cd /tmp/manifests
+      git checkout main
+      git pull --rebase origin main
+      git config user.email ci@tutum.dev
+      git config user.name "GitLab CI"
+      sed -i "s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/" k8s-manifests/overlays/production/kustomization.yaml
+      git add k8s-manifests/overlays/production/kustomization.yaml
+      if git diff --cached --quiet; then
+        echo "No production manifest change."
+        exit 0
+      fi
+      git commit -m "deploy: production ${CI_COMMIT_SHORT_SHA} [skip ci]"
+      git push origin HEAD:main
   environment:
     name: production
   when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $K8S_MANIFESTS_TOKEN'
+      changes:
+        - backend/**/*
+        - frontend/**/*
+
+# ============================================
+# Slack, Jira
+# ============================================
+
+notify:slack_on_failure:
+  stage: notify
+  image: curlimages/curl:8.7.1
   allow_failure: true
-  only:
-    - main
+  script:
+    - |
+      if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+        echo "SLACK_WEBHOOK_URL not set. Skip Slack notification."
+        exit 0
+      fi
+      payload=$(printf '{"text":"[CI FAIL] %s #%s\n%s"}' "${CI_PROJECT_PATH}" "${CI_PIPELINE_ID}" "${CI_PIPELINE_URL}")
+      curl -fsS -X POST -H "Content-type: application/json" --data "${payload}" "${SLACK_WEBHOOK_URL}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: on_failure
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_failure
+
+notify:jira_on_failure:
+  stage: notify
+  image: curlimages/curl:8.7.1
+  allow_failure: true
+  script:
+    - |
+      for v in JIRA_BASE_URL JIRA_EMAIL JIRA_API_TOKEN JIRA_PROJECT_KEY; do
+        if [ -z "$(eval echo \${$v:-})" ]; then
+          echo "$v not set. Skip Jira notification."
+          exit 0
+        fi
+      done
+      curl -fsS -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -X POST "${JIRA_BASE_URL}/rest/api/3/issue" \
+        -d "{\"fields\":{\"project\":{\"key\":\"${JIRA_PROJECT_KEY}\"},\"summary\":\"[CI FAIL] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\",\"description\":{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Pipeline URL: ${CI_PIPELINE_URL}\"}]}]},\"issuetype\":{\"name\":\"Task\"}}}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: on_failure
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_failure

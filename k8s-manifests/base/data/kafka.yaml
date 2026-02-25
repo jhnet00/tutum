@@ -59,6 +59,8 @@ spec:
       labels:
         app: kafka
     spec:
+      # Prevent service env injection (e.g., KAFKA_PORT) from breaking cp-kafka env parsing.
+      enableServiceLinks: false
       containers:
         - name: kafka
           image: confluentinc/cp-kafka:7.5.0
@@ -131,4 +133,3 @@ spec:
         resources:
           requests:
             storage: 20Gi
-

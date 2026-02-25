@@ -17,13 +17,23 @@ spec:
       labels:
         app: price-producer
     spec:
+      nodeSelector:
+        workload: app
+      imagePullSecrets:
+        - name: harbor-secret
+        - name: gitlab-registry-secret
       containers:
         - name: price-producer
           image: registry.gitlab.com/tutum-project/tutum-app/backend/workers:latest
           command: ["python", "-u", "price_producer.py"]
+          envFrom:
+            - secretRef:
+                name: backend-secret
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka.tutum-data.svc.cluster.local:9092"
+            - name: KIS_DOMESTIC_SYMBOLS
+              value: ""
           resources:
             requests:
               cpu: 200m

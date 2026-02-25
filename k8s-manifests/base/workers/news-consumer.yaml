@@ -20,12 +20,13 @@ spec:
       nodeSelector:
         workload: app
       imagePullSecrets:
+        - name: harbor-secret
         - name: gitlab-registry-secret
       containers:
         - name: news-consumer
-          image: 192.168.56.12:8080/tutum/node3-consumer:v1
-          imagePullPolicy: IfNotPresent
-          command: ["python", "-u", "consumer.py"]
+          image: registry.gitlab.com/tutum-project/tutum-app/backend/workers:latest
+          imagePullPolicy: Always
+          command: ["python", "-u", "consumer_news.py"]
           envFrom:
             - configMapRef:
                 name: news-pipeline-config

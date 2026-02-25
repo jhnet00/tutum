@@ -75,10 +75,6 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=tutum2026!
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
-      # 임베딩 및 익명 접속 설정 (프론트엔드 통합용)
-      - GF_SECURITY_ALLOW_EMBEDDING=true
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
     depends_on:
       loki:
         condition: service_healthy
