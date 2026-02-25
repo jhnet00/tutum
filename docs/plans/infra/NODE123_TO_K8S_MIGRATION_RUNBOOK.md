@@ -378,3 +378,23 @@ kubectl -n tutum-storage get sts,pod,svc,pvc -o wide
 6. 매니페스트 반영
    - `k8s-manifests/base/kustomization.yaml`에 `backend/secret.yaml` 포함(재적용 시 `backend-secret/harbor-secret` 자동 생성).
    - `news-producer`, `news-consumer`, `elastic-consumer`는 기본 `replicas: 0`으로 조정(레지스트리 접근 복구 전까지 비활성).
+
+## 12. 2026-02-25 Phase 6 선행 점검
+
+1. 점검 목적
+   - 기존 node1/2/3 방식 잔여 워크로드(Docker Compose) 잔존 여부 확인
+
+2. 수행 내용
+   - `kubectl debug node/worker1|2|3 -- chroot /host ...`로 호스트 레벨 점검
+   - 확인 항목:
+     - `/usr/bin/docker` 존재 여부
+     - `/home/kafka/docker-compose.yml` 존재 여부
+
+3. 점검 결과
+   - `worker1/2/3` 모두 `no_docker_bin` 확인
+   - `worker1/2/3` 모두 `no_compose_file` 확인
+   - 결론: K8s worker 호스트 기준으로 기존 Docker Compose 런타임/실행 파일 잔존 징후 없음
+
+4. 후속
+   - 운영 관점에서는 Phase 6의 "기존 방식 병행 실행 중단" 조건을 상당 부분 충족
+   - 다만 문서상 최종 완료 표기는 24~48시간 안정화 모니터링 종료 후 확정 권장

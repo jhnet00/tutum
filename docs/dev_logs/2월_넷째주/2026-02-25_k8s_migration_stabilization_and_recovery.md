@@ -56,3 +56,12 @@ git log --oneline --since="2026-02-25" --until="2026-02-25 23:59:59"
   1. `192.168.56.12:8080` 이미지를 GitLab Registry 기준으로 이관
   2. `news/*`, `elastic-consumer` 재배포(`replicas` 복원)
   3. Runbook Phase 6(기존 node1/2/3 축소/종료) 단계 진행
+
+## 7. 후속 진행 (푸시 이후)
+- Phase 6 선행 점검 수행 (`kubectl debug node/worker1|2|3`)
+- 호스트 점검 결과
+  - `/usr/bin/docker`: 없음
+  - `/home/kafka/docker-compose.yml`: 없음
+- 해석
+  - 현재 worker 호스트 기준으로 기존 Docker Compose 런타임 잔존 징후 없음
+  - 병행 실행 리스크는 낮으나, Phase 6 최종 완료 표기는 안정화 모니터링 종료 후 확정 예정
