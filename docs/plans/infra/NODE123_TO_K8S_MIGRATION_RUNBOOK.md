@@ -398,3 +398,26 @@ kubectl -n tutum-storage get sts,pod,svc,pvc -o wide
 4. 후속
    - 운영 관점에서는 Phase 6의 "기존 방식 병행 실행 중단" 조건을 상당 부분 충족
    - 다만 문서상 최종 완료 표기는 24~48시간 안정화 모니터링 종료 후 확정 권장
+
+## 13. 2026-02-25 재발 이슈 조치 (stg 자동 재생성)
+
+1. 증상
+   - `tutum-staging` Application이 다시 생성되며 `stg-*` 리소스(Deployment/STS/PVC)가 재발.
+
+2. 원인 단서
+   - `metadata.managedFields.manager = kubectl-client-side-apply`
+   - 즉, 외부에서 `kubectl apply`로 `tutum-staging`이 재생성되는 경로 존재.
+
+3. 안전 조치
+   - `tutum-staging` 삭제 전 finalizer 제거(네임스페이스 prune 사고 방지):
+     - `kubectl -n argocd patch app tutum-staging --type json -p='[{"op":"remove","path":"/metadata/finalizers"}]'`
+   - 이후 Application 삭제 및 `stg-*` 리소스/PVC 수동 정리 완료.
+
+4. 재발 방지(클러스터 가드)
+   - Kyverno `ClusterPolicy` 추가: `block-tutum-staging-application`
+   - `argocd` 네임스페이스의 `Application/tutum-staging` `CREATE/UPDATE`를 Enforce로 차단.
+   - 검증: `kubectl apply -f k8s-manifests/argocd/staging-app.yaml` 시 정책 거부 확인.
+
+5. 안정화 스모크체크
+   - 스크립트: `scripts/k8s-migration-smoke.sh` 추가
+   - cp-1 실행 결과: Core workload / namespace health / stg-cleanup / ingress smoke 전체 PASS.

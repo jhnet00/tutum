@@ -65,3 +65,14 @@ git log --oneline --since="2026-02-25" --until="2026-02-25 23:59:59"
 - 해석
   - 현재 worker 호스트 기준으로 기존 Docker Compose 런타임 잔존 징후 없음
   - 병행 실행 리스크는 낮으나, Phase 6 최종 완료 표기는 안정화 모니터링 종료 후 확정 예정
+
+## 8. 재발 대응 (stg 자동 생성 루프 차단)
+- 증상: `tutum-staging` Application이 재생성되며 `stg-*` 리소스 재발
+- 조치:
+  - `tutum-staging` finalizer 제거 후 삭제(네임스페이스 prune 방지)
+  - `stg-*` Deployment/STS/Service/Pod/PVC/Secret/Job 정리
+  - Kyverno 정책 `block-tutum-staging-application` 적용
+    - `Application/tutum-staging` CREATE/UPDATE 차단(Enforce)
+- 검증:
+  - `kubectl apply -f k8s-manifests/argocd/staging-app.yaml` -> 정책 거부 확인
+  - `k8s-migration-smoke.sh` 재실행 -> All checks passed
