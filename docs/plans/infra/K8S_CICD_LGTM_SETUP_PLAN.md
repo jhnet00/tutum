@@ -1283,6 +1283,28 @@ bash scripts/ha-verify.sh
 
 ### 2-1. 코드 Push (로컬 → gitlab.com)
 
+**경로 통일 규칙 (팀 공통, 필수):**
+
+- 앱 소스 레포: `~/clouddx-project`
+- GitOps 매니페스트 레포: `~/k8s-manifests`
+- ArgoCD는 `k8s-manifests` 레포만 바라본다.
+- `~/clouddx-project/k8s-manifests` 경로는 사용 금지(중복 경로로 드리프트 발생).
+
+**cp-1/cp-2/cp-3 공통 초기화(1회):**
+
+```bash
+cd ~
+test -d k8s-manifests/.git || git clone https://gitlab.com/tutum-project/k8s-manifests.git
+cd ~/k8s-manifests && git checkout main && git pull --ff-only origin main
+```
+
+**중복 경로 정리(선택, 권장):**
+
+```bash
+mv ~/clouddx-project/k8s-manifests ~/clouddx-project/k8s-manifests.bak-$(date +%F-%H%M) 2>/dev/null || true
+ln -s ~/k8s-manifests ~/clouddx-project/k8s-manifests 2>/dev/null || true
+```
+
 **개발 PC(Windows)에서 실행:**
 
 ```bash
