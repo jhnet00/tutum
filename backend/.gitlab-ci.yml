@@ -11,10 +11,11 @@
 # ============================================
 
 variables:
-  # GitLab Container Registry (CI_REGISTRY_IMAGE = registry.gitlab.com/tutum-project/tutum-app/backend)
-  BACKEND_IMAGE: "${CI_REGISTRY_IMAGE}"
-  FRONTEND_IMAGE: "${CI_REGISTRY_IMAGE}/frontend"
-  WORKERS_IMAGE: "${CI_REGISTRY_IMAGE}/workers"
+  HARBOR_REGISTRY: "192.168.56.12:8080"
+  HARBOR_PROJECT: "tutum"
+  FRONTEND_IMAGE: "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/frontend"
+  BACKEND_IMAGE: "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/backend"
+  WORKERS_IMAGE: "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/workers"
 
 stages:
   - guard
@@ -32,37 +33,36 @@ stages:
 guard:commit-policy:
   stage: guard
   image: alpine:3.20
-  allow_failure: true
   before_script:
     - apk add --no-cache git
   script:
     - |
-      ZERO_SHA="0000000000000000000000000000000000000000"
-      BEFORE="${CI_COMMIT_BEFORE_SHA:-$ZERO_SHA}"
+      set -eu
+      set -o pipefail
 
-      if [ "$BEFORE" != "$ZERO_SHA" ] && git rev-parse "$BEFORE" >/dev/null 2>&1; then
-        git diff --name-only "$BEFORE" "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
+      if [ -n "${CI_COMMIT_BEFORE_SHA:-}" ] && git rev-parse "${CI_COMMIT_BEFORE_SHA}^" >/dev/null 2>&1; then
+        git diff --name-only "${CI_COMMIT_BEFORE_SHA}" "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
+      elif [ -n "${CI_COMMIT_BEFORE_SHA:-}" ] && git rev-parse "${CI_COMMIT_BEFORE_SHA}" >/dev/null 2>&1; then
+        git diff --name-only "${CI_COMMIT_BEFORE_SHA}" "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
       else
-        echo "INFO: No valid before SHA (API trigger or new branch) - checking all files in commit"
         git ls-tree -r --name-only "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
       fi
 
       bad=0
       while IFS= read -r f; do
         [ -z "$f" ] && continue
-        if [ "$f" = ".env.example" ] || [ "$f" = "backend/.env" ]; then
-          echo "INFO: Skipping known dev file: $f"
+        if [ "$f" = ".env.example" ]; then
           continue
         fi
 
         if git check-ignore -q -- "$f"; then
-          echo "WARNING: gitignore-matched file detected: $f"
+          echo "Forbidden file detected (matched .gitignore): $f"
           bad=1
         fi
       done < /tmp/changed_files.txt
 
       if [ "$bad" -ne 0 ]; then
-        echo "WARNING: Some files match .gitignore patterns. Review and remove before production."
+        echo "Forbidden files detected. Remove ignored files before commit/push."
         exit 1
       fi
 # Stage 1: Lint
@@ -86,11 +86,9 @@ lint:backend:
     - cd backend
     - pip install flake8
     - flake8 app/ --max-line-length=120
-  allow_failure: true
-  rules:
-    - changes:
-        - backend/**/*
-    - if: '$CI_PIPELINE_SOURCE == "api"'
+  only:
+    changes:
+      - backend/**/*
 
 # ============================================
 # Stage 2: Test
@@ -115,10 +113,9 @@ test:backend:
     - pip install -r requirements.txt
     - pip install pytest
     - pytest tests/ -v || true
-  rules:
-    - changes:
-        - backend/**/*
-    - if: '$CI_PIPELINE_SOURCE == "api"'
+  only:
+    changes:
+      - backend/**/*
 
 # ============================================
 # Stage 3: SonarQube Scan
@@ -145,7 +142,7 @@ sonar:backend:
       - backend/**/*
 
 # ============================================
-# Stage 4: Docker Build & Push to GitLab Registry
+# Stage 4: Docker Build & Push to Harbor
 # ============================================
 
 build:frontend:
@@ -154,7 +151,7 @@ build:frontend:
   services:
     - docker:24-dind
   script:
-    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+    - docker login -u ${HARBOR_USER} -p ${HARBOR_PASSWORD} ${HARBOR_REGISTRY}
     - docker build -t ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${FRONTEND_IMAGE}:latest ./frontend
     - docker push ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
     - docker push ${FRONTEND_IMAGE}:latest
@@ -168,14 +165,13 @@ build:backend:
   services:
     - docker:24-dind
   script:
-    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+    - docker login -u ${HARBOR_USER} -p ${HARBOR_PASSWORD} ${HARBOR_REGISTRY}
     - docker build -t ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${BACKEND_IMAGE}:latest ./backend
     - docker push ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
     - docker push ${BACKEND_IMAGE}:latest
-  rules:
-    - changes:
-        - backend/**/*
-    - if: '$CI_PIPELINE_SOURCE == "api"'
+  only:
+    changes:
+      - backend/**/*
 
 build:workers:
   stage: build
@@ -183,7 +179,7 @@ build:workers:
   services:
     - docker:24-dind
   script:
-    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+    - docker login -u ${HARBOR_USER} -p ${HARBOR_PASSWORD} ${HARBOR_REGISTRY}
     - docker build -t ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${WORKERS_IMAGE}:latest ./backend/workers
     - docker push ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
     - docker push ${WORKERS_IMAGE}:latest
@@ -247,7 +243,6 @@ deploy:staging:
     - argocd app sync tutum-staging
   environment:
     name: staging
-  allow_failure: true
   only:
     - develop
 
@@ -260,6 +255,5 @@ deploy:production:
   environment:
     name: production
   when: manual
-  allow_failure: true
   only:
     - main

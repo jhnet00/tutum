@@ -1,0 +1,108 @@
+# Step 2-3: Grafana 및 MinIO 콘솔 Ingress (monitoring VM 연결)
+# Grafana: http://admin.tutum.my → monitoring VM (192.168.0.230:3000) 외부 Service
+# MinIO Console: http://minio.tutum.my → minio.tutum-storage:9001
+# 실행: kubectl apply -f 04-grafana-minio-ingress.yaml
+
+---
+# ExternalName Service: K8s 외부 monitoring VM의 Grafana를 클러스터 내로 proxying
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-external
+  namespace: tutum-app
+spec:
+  type: ExternalName
+  externalName: "192.168.0.230" # clouddx-monitoring VM 브릿지 IP
+  ports:
+    - name: grafana
+      port: 3000
+      targetPort: 3000
+---
+# Endpoints: ExternalName이 IP 기반이라 Endpoints를 직접 지정
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana-vm
+  namespace: tutum-app
+spec:
+  ports:
+    - name: grafana
+      port: 3000
+      protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: grafana-vm
+  namespace: tutum-app
+subsets:
+  - addresses:
+      - ip: "192.168.0.230" # clouddx-monitoring VM
+    ports:
+      - name: grafana
+        port: 3000
+        protocol: TCP
+---
+# Ingress: 도메인 기반 라우팅 추가
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: tutum-domain-ingress
+  namespace: tutum-app
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+spec:
+  ingressClassName: nginx
+  rules:
+    # 메인 앱: tutum.my
+    - host: tutum.my
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-svc
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-svc
+                port:
+                  number: 80
+    # www.tutum.my → 동일 처리
+    - host: www.tutum.my
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-svc
+                port:
+                  number: 80
+    # Grafana 관리 대시보드: admin.tutum.my
+    - host: admin.tutum.my
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana-vm
+                port:
+                  number: 3000
+    # MinIO 콘솔: minio.tutum.my
+    - host: minio.tutum.my
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio
+                port:
+                  number: 9001

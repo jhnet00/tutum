@@ -65,6 +65,101 @@ spec:
                 secretKeyRef:
                   name: backend-secret
                   key: SECRET_KEY
+            # AWS (SQS enqueue + SES sender)
+            - name: AWS_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: AWS_REGION
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: SQS_QUEUE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: SQS_QUEUE_NAME
+            - name: SQS_DLQ_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: SQS_DLQ_NAME
+            - name: SES_SENDER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: SES_SENDER_EMAIL
+            - name: SES_SENDER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: SES_SENDER_NAME
+            - name: FRONTEND_URL
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: FRONTEND_URL
+            # MinIO
+            - name: MINIO_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MINIO_ENDPOINT
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MINIO_ACCESS_KEY
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MINIO_SECRET_KEY
+            # KIS
+            - name: KIS_APP_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: KIS_APP_KEY
+            - name: KIS_APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: KIS_APP_SECRET
+            - name: KIS_MODE
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: KIS_MODE
+            # Upbit
+            - name: UPBIT_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: UPBIT_ACCESS_KEY
+            - name: UPBIT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: UPBIT_SECRET_KEY
+            # Google OAuth
+            - name: GOOGLE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: GOOGLE_CLIENT_ID
+            - name: GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: GOOGLE_CLIENT_SECRET
           resources:
             requests:
               cpu: 300m
@@ -87,4 +182,4 @@ spec:
             periodSeconds: 15
             failureThreshold: 3
       imagePullSecrets:
-        - name: harbor-secret
+        - name: gitlab-registry-secret

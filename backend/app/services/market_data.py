@@ -614,36 +614,6 @@ class CryptoClient:
         ticker_formatted = ticker.replace("/", "-")
         if "-" not in ticker_formatted:
             ticker_formatted = f"KRW-{ticker_formatted}"
-        base_symbol = ticker_formatted.split("-", 1)[-1].upper()
-
-        # 1) 공용 실시간 캐시(WS -> Kafka -> Redis price:{symbol})를 최우선 사용
-        #    이 경로가 살아있으면 Upbit REST를 호출하지 않는다.
-        shared_cache_key = f"price:{base_symbol}"
-        try:
-            shared_cached = await cache_get(shared_cache_key)
-            if shared_cached:
-                row = json.loads(shared_cached)
-                price = float(row.get("price", 0))
-                if price > 0:
-                    return {
-                        "ticker": ticker_formatted,
-                        "price": price,
-                        "change_percent": float(row.get("change_percent", 0) or 0),
-                        "volume": float(row.get("volume", 0) or 0),
-                        "updated_at": row.get("timestamp") or row.get("cached_at"),
-                        "source": "redis_price_cache",
-                    }
-        except Exception:
-            pass
-
-        # 2) API 응답 캐시 확인 (짧은 TTL)
-        cache_key = f"market:crypto:price:{ticker_formatted}"
-        try:
-            cached = await cache_get(cache_key)
-            if cached:
-                return json.loads(cached)
-        except Exception:
-            pass
 
         url = f"{self.base_url}/ticker"
         params = {"markets": ticker_formatted}
@@ -659,7 +629,7 @@ class CryptoClient:
                         raise ValueError(f"No data for ticker: {ticker_formatted}")
 
                     ticker_data = data[0]
-                    result = {
+                    return {
                         "ticker": ticker_formatted,
                         "price": float(ticker_data["trade_price"]),
                         "change_percent": float(ticker_data["signed_change_rate"])
@@ -669,11 +639,6 @@ class CryptoClient:
                             ticker_data["timestamp"] / 1000
                         ).isoformat(),
                     }
-                    try:
-                        await cache_set(cache_key, json.dumps(result), expire_seconds=5)
-                    except Exception:
-                        pass
-                    return result
                 else:
                     error_data = response.json()
                     raise Exception(f"Upbit API Error: {error_data}")
@@ -700,16 +665,6 @@ class CryptoClient:
         if "-" not in ticker_formatted:
             ticker_formatted = f"KRW-{ticker_formatted}"
 
-        # Redis 캐시 확인 (분봉: 30초, 일봉 이상: 5분)
-        cache_key = f"market:crypto:history:{ticker_formatted}:{timeframe}:{count}"
-        ttl = 30 if timeframe.startswith("minutes") else 300
-        try:
-            cached = await cache_get(cache_key)
-            if cached:
-                return json.loads(cached)
-        except Exception:
-            pass
-
         # timeframe: days, minutes/1, minutes/60 ??
         path = f"/candles/{timeframe}"
         url = f"{self.base_url}{path}"
@@ -732,12 +687,7 @@ class CryptoClient:
                                 "volume": float(item["candle_acc_trade_volume"]),
                             }
                         )
-                    result = {"ticker": ticker_formatted, "history": history[::-1]}
-                    try:
-                        await cache_set(cache_key, json.dumps(result), expire_seconds=ttl)
-                    except Exception:
-                        pass
-                    return result
+                    return {"ticker": ticker_formatted, "history": history[::-1]}
                 else:
                     return {
                         "ticker": ticker_formatted,

@@ -20,7 +20,7 @@ spec:
       nodeSelector:
         workload: app
       imagePullSecrets:
-        - name: harbor-secret
+        - name: gitlab-registry-secret
       containers:
         - name: news-producer
           image: 192.168.56.12:8080/tutum/node3-producer:v1

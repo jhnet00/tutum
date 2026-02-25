@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useCallback, useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,22 +23,7 @@ function VerifyEmailContent() {
 
     const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-    useEffect(() => {
-        if (status === "success") {
-            setState("success");
-            setMessage("이메일 인증이 완료되었습니다!");
-        } else if (token) {
-            handleTokenVerification(token);
-        } else if (paramEmail) {
-            setEmail(paramEmail);
-            setState("awaiting");
-        } else {
-            setState("error");
-            setMessage("인증 토큰 또는 이메일 정보가 없습니다.");
-        }
-    }, [token, paramEmail, status]);
-
-    const handleTokenVerification = async (verifyToken: string) => {
+    const handleTokenVerification = useCallback(async (verifyToken: string) => {
         setState("verifying");
         try {
             const resp = await fetch(`${API_BASE}/api/v1/auth/verify?token=${verifyToken}`);
@@ -55,7 +40,22 @@ function VerifyEmailContent() {
             setState("error");
             setMessage("서버와 통신하는 도중 오류가 발생했습니다.");
         }
-    };
+    }, [API_BASE]);
+
+    useEffect(() => {
+        if (status === "success") {
+            setState("success");
+            setMessage("이메일 인증이 완료되었습니다!");
+        } else if (token) {
+            handleTokenVerification(token);
+        } else if (paramEmail) {
+            setEmail(paramEmail);
+            setState("awaiting");
+        } else {
+            setState("error");
+            setMessage("인증 토큰 또는 이메일 정보가 없습니다.");
+        }
+    }, [handleTokenVerification, paramEmail, status, token]);
 
     const handleResend = async () => {
         const targetEmail = email || paramEmail;

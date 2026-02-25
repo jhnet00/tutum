@@ -807,7 +807,9 @@ async def _oauth_find_or_create(email: str, nickname: str, login_type: str) -> s
     return str(user.id)
 
 
-async def _oauth_issue_token_and_redirect(user_id: str, email: str) -> RedirectResponse:
+async def _oauth_issue_token_and_redirect(
+    user_id: str, email: str, state: str | None = None
+) -> RedirectResponse:
     """Issue JWT and return OAuth redirect response."""
     app_token = create_access_token({"sub": user_id, "email": email})
     refresh_token = create_refresh_token({"sub": user_id, "email": email})
@@ -827,8 +829,14 @@ async def _oauth_issue_token_and_redirect(user_id: str, email: str) -> RedirectR
         except Exception:
             pass
 
-    frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
-    response = RedirectResponse(url=f"{frontend_url}/auth/callback")
+    frontend_url = (
+        getattr(settings, "FRONTEND_URL", "http://localhost:3000") or "http://localhost:3000"
+    ).rstrip("/")
+    callback_url = f"{frontend_url}/auth/callback"
+    if state:
+        callback_url = f"{callback_url}?token={app_token}"
+
+    response = RedirectResponse(url=callback_url)
     _issue_auth_cookies(response, app_token, refresh_token)
     return response
 
@@ -881,6 +889,7 @@ async def social_sync(data: SocialSync, response: Response):
 
 
 @router.get("/google/login")
+@router.get("/google/login/")
 async def google_login(
     state: str | None = Query(default=None, min_length=8, max_length=128),
 ):
@@ -905,7 +914,16 @@ async def google_login(
     return response
 
 
+@router.get("/google")
+@router.get("/google/")
+async def google_login_alias() -> Response:
+    # Prevent 404 from legacy frontend routes or stale caches requesting /google or /google/.
+    # Keep compatibility with legacy or bookmark URLs.
+    return RedirectResponse("/api/v1/auth/google/login")
+
+
 @router.get("/google/callback")
+@router.get("/google/callback/")
 async def google_callback(code: str, state: str, request: Request):
     """Google ??"""
     # 1. Access Token ?
@@ -922,7 +940,12 @@ async def google_callback(code: str, state: str, request: Request):
     async with httpx.AsyncClient(timeout=10.0) as client:
         token_res = await client.post(token_url, data=data)
         if token_res.status_code != 200:
-            raise HTTPException(status_code=400, detail="Google ??? (Token)")
+            try:
+                token_error = token_res.json()
+            except Exception:
+                token_error = token_res.text
+            logger.error("Google token exchange failed state=%s status=%s body=%r", state, token_res.status_code, token_error)
+            raise HTTPException(status_code=400, detail="Google token exchange failed")
         token_json = token_res.json()
         access_token = token_json.get("access_token")
 
@@ -932,7 +955,17 @@ async def google_callback(code: str, state: str, request: Request):
             headers={"Authorization": f"Bearer {access_token}"},
         )
         if user_info_res.status_code != 200:
-            raise HTTPException(status_code=400, detail="Google ??? (UserInfo)")
+            try:
+                info_error = user_info_res.json()
+            except Exception:
+                info_error = user_info_res.text
+            logger.error(
+                "Google userinfo failed state=%s status=%s body=%r",
+                state,
+                user_info_res.status_code,
+                info_error,
+            )
+            raise HTTPException(status_code=400, detail="Google userinfo failed")
         user_info = user_info_res.json()
 
     # 3. MariaDB? ? ???
@@ -941,7 +974,7 @@ async def google_callback(code: str, state: str, request: Request):
     user_id = await _oauth_find_or_create(email, nickname, "google")
 
     # 4. JWT  + ???
-    response = await _oauth_issue_token_and_redirect(user_id, email)
+    response = await _oauth_issue_token_and_redirect(user_id, email, state)
     _clear_oauth_state_cookie(response, "google")
     await _clear_oauth_state_cache("google", state)
     return response
@@ -1017,7 +1050,7 @@ async def kakao_callback(code: str, state: str, request: Request):
     user_id = await _oauth_find_or_create(email, nickname, "kakao")
 
     # 4. JWT  + ???
-    response = await _oauth_issue_token_and_redirect(user_id, email)
+    response = await _oauth_issue_token_and_redirect(user_id, email, state)
     _clear_oauth_state_cookie(response, "kakao")
     await _clear_oauth_state_cache("kakao", state)
     return response
@@ -1180,7 +1213,7 @@ async def naver_callback(code: str, state: str, request: Request):
     user_id = await _oauth_find_or_create(email, nickname, "naver")
 
     # 4. JWT  + ???
-    response = await _oauth_issue_token_and_redirect(user_id, email)
+    response = await _oauth_issue_token_and_redirect(user_id, email, state)
     _clear_oauth_state_cookie(response, "naver")
     await _clear_oauth_state_cache("naver", state)
     return response

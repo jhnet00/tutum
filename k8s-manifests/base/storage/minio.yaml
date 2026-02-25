@@ -99,4 +99,44 @@ spec:
         resources:
           requests:
             storage: 20Gi
-
+---
+# MinIO 버킷 초기화 Job (최초 1회 실행 - mc로 버킷 생성)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-init
+  namespace: tutum-storage
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/part-of: tutum
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: minio-init
+          image: minio/mc:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              sleep 10
+              /usr/bin/mc alias set tutum http://minio.tutum-storage.svc.cluster.local:9000 \
+                $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+              /usr/bin/mc mb tutum/ocr-images --ignore-existing
+              /usr/bin/mc mb tutum/profile-images --ignore-existing
+              /usr/bin/mc anonymous set none tutum/ocr-images
+              /usr/bin/mc anonymous set none tutum/profile-images
+              echo "MinIO buckets initialized"
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: MINIO_ROOT_PASSWORD

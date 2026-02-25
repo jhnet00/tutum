@@ -104,7 +104,7 @@ function LogLevel({ level }: { level: string }) {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState<"overview" | "pods" | "logs">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "pods" | "logs" | "monitoring">("overview");
   const [nsFilter, setNsFilter] = useState("all");
   const [logs, setLogs] = useState(MOCK_LOGS);
   const [tick, setTick] = useState(0);
@@ -182,7 +182,7 @@ export default function AdminDashboard() {
 
         {/* ── Tabs ── */}
         <div className="flex gap-1 bg-white/[0.03] border border-white/5 rounded-xl p-1 w-fit">
-          {(["overview", "pods", "logs"] as const).map((tab) => (
+          {(["overview", "pods", "logs", "monitoring"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -190,7 +190,7 @@ export default function AdminDashboard() {
                 activeTab === tab ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20" : "text-white/40 hover:text-white/70"
               }`}
             >
-              {tab === "overview" ? "📊 Overview" : tab === "pods" ? "🫛 Pods" : "📋 Logs"}
+              {tab === "overview" ? "📊 Overview" : tab === "pods" ? "🫛 Pods" : tab === "logs" ? "📋 Logs" : "📈 Monitoring"}
             </button>
           ))}
         </div>
@@ -229,17 +229,25 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* Metrics Charts */}
+            {/* Metrics Charts (LGTM Integration) */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {[
-                { label: "API Requests/s", values: MOCK_METRICS.rps, color: "#60a5fa", unit: "" },
-                { label: "P95 Latency (ms)", values: MOCK_METRICS.latencyP95, color: "#a78bfa", unit: "" },
-                { label: "Error Rate (%)", values: MOCK_METRICS.errorRate.map((v) => +(v * 100).toFixed(1)), color: "#f87171", unit: "" },
-                { label: "Kafka Lag", values: MOCK_METRICS.kafkaLag, color: "#34d399", unit: "" },
+                { label: "API Requests/s", panelId: "14", color: "#60a5fa" },
+                { label: "P95 Latency (ms)", panelId: "15", color: "#a78bfa" },
+                { label: "Error Rate (%)", panelId: "16", color: "#f87171" },
+                { label: "Kafka Lag", panelId: "17", color: "#34d399" },
               ].map((m) => (
-                <div key={m.label} className="bg-white/[0.03] border border-white/5 rounded-xl p-4">
-                  <div className="text-xs text-white/40 font-medium mb-3">{m.label}</div>
-                  <MiniChart values={m.values} color={m.color} unit={m.unit} />
+                <div key={m.label} className="bg-white/[0.03] border border-white/5 rounded-xl p-0 overflow-hidden h-32 relative group">
+                  <div className="absolute top-3 left-4 text-[10px] text-white/40 font-bold uppercase tracking-widest z-10 pointer-events-none group-hover:text-white/70 transition-colors">
+                    {m.label}
+                  </div>
+                  <iframe
+                    src={`https://admin.tutum.my/d-solo/rYdd6i9Zz/tutum-cluster-overview?orgId=1&refresh=5s&theme=dark&panelId=${m.panelId}`}
+                    width="100%"
+                    height="100%"
+                    frameBorder="0"
+                    className="opacity-80 hover:opacity-100 transition-opacity"
+                  ></iframe>
                 </div>
               ))}
             </div>
@@ -342,6 +350,43 @@ export default function AdminDashboard() {
                   </span>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Monitoring Tab (Grafana Integration) ── */}
+        {activeTab === "monitoring" && (
+          <div className="space-y-6">
+            <div className="bg-white/[0.03] border border-white/5 rounded-xl overflow-hidden p-1">
+              <iframe
+                src="https://admin.tutum.my/d-solo/rYdd6i9Zz/tutum-cluster-overview?orgId=1&refresh=5s&theme=dark&panelId=1"
+                width="100%"
+                height="800"
+                frameBorder="0"
+                className="rounded-lg"
+                title="Grafana Dashboard"
+              ></iframe>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-white/[0.03] border border-white/5 rounded-xl overflow-hidden p-1">
+                <iframe
+                  src="https://admin.tutum.my/d-solo/rYdd6i9Zz/tutum-cluster-overview?orgId=1&refresh=5s&theme=dark&panelId=2"
+                  width="100%"
+                  height="400"
+                  frameBorder="0"
+                  className="rounded-lg"
+                ></iframe>
+              </div>
+              <div className="bg-white/[0.03] border border-white/5 rounded-xl overflow-hidden p-1">
+                <iframe
+                  src="https://admin.tutum.my/d-solo/rYdd6i9Zz/tutum-cluster-overview?orgId=1&refresh=5s&theme=dark&panelId=3"
+                  width="100%"
+                  height="400"
+                  frameBorder="0"
+                  className="rounded-lg"
+                ></iframe>
+              </div>
             </div>
           </div>
         )}

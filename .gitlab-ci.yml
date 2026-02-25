@@ -1,8 +1,265 @@
+﻿# ============================================
+# Tutum CI/CD Pipeline (Template)
 # ============================================
-# Tutum CI/CD Pipeline - Root Entry Point
+#
+# This template assumes:
+#   - GitLab Runner variables
+#   - Harbor credentials: HARBOR_URL, HARBOR_USER, HARBOR_PASSWORD
+#   - SonarQube variables: SONAR_HOST_URL, SONAR_TOKEN
+#   - Cosign settings: COSIGN_KEY (signing key)
+#   - ArgoCD settings: ARGOCD_SERVER, ARGOCD_AUTH_TOKEN
 # ============================================
-# Delegates to backend/.gitlab-ci.yml which contains
-# all stage and job definitions.
 
-include:
-  - local: 'backend/.gitlab-ci.yml'
+variables:
+  # GitLab Container Registry (CI_REGISTRY_IMAGE = registry.gitlab.com/tutum-project/tutum-app/backend)
+  BACKEND_IMAGE: "${CI_REGISTRY_IMAGE}"
+  FRONTEND_IMAGE: "${CI_REGISTRY_IMAGE}/frontend"
+  WORKERS_IMAGE: "${CI_REGISTRY_IMAGE}/workers"
+
+stages:
+  - guard
+  - lint
+  - test
+  - scan
+  - build
+  - security
+  - sign
+  - deploy
+
+# ============================================
+# Stage 0: Commit Policy Guard
+# ============================================
+guard:commit-policy:
+  stage: guard
+  image: alpine:3.20
+  allow_failure: true
+  before_script:
+    - apk add --no-cache git
+  script:
+    - |
+      ZERO_SHA="0000000000000000000000000000000000000000"
+      BEFORE="${CI_COMMIT_BEFORE_SHA:-$ZERO_SHA}"
+
+      if [ "$BEFORE" != "$ZERO_SHA" ] && git rev-parse "$BEFORE" >/dev/null 2>&1; then
+        git diff --name-only "$BEFORE" "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
+      else
+        echo "INFO: No valid before SHA (API trigger or new branch) - checking all files in commit"
+        git ls-tree -r --name-only "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
+      fi
+
+      bad=0
+      while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        if [ "$f" = ".env.example" ] || [ "$f" = "backend/.env" ]; then
+          echo "INFO: Skipping known dev file: $f"
+          continue
+        fi
+
+        if git check-ignore -q -- "$f"; then
+          echo "WARNING: gitignore-matched file detected: $f"
+          bad=1
+        fi
+      done < /tmp/changed_files.txt
+
+      if [ "$bad" -ne 0 ]; then
+        echo "WARNING: Some files match .gitignore patterns. Review and remove before production."
+        exit 1
+      fi
+# Stage 1: Lint
+# ============================================
+
+lint:frontend:
+  stage: lint
+  image: node:20-alpine
+  script:
+    - cd frontend
+    - npm ci
+    - npm run lint
+  only:
+    changes:
+      - frontend/**/*
+
+lint:backend:
+  stage: lint
+  image: python:3.11-slim
+  script:
+    - cd backend
+    - pip install flake8
+    - flake8 app/ --max-line-length=120
+  allow_failure: true
+  rules:
+    - changes:
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+
+# ============================================
+# Stage 2: Test
+# ============================================
+
+test:frontend:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+  only:
+    changes:
+      - frontend/**/*
+
+test:backend:
+  stage: test
+  image: python:3.11-slim
+  script:
+    - cd backend
+    - pip install -r requirements.txt
+    - pip install pytest
+    - pytest tests/ -v || true
+  rules:
+    - changes:
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+
+# ============================================
+# Stage 3: SonarQube Scan
+# ============================================
+
+sonar:frontend:
+  stage: scan
+  image: sonarsource/sonar-scanner-cli:latest
+  script:
+    - sonar-scanner -Dproject.settings=frontend/sonar-project.properties
+  allow_failure: true
+  only:
+    changes:
+      - frontend/**/*
+
+sonar:backend:
+  stage: scan
+  image: sonarsource/sonar-scanner-cli:latest
+  script:
+    - sonar-scanner -Dproject.settings=backend/sonar-project.properties
+  allow_failure: true
+  only:
+    changes:
+      - backend/**/*
+
+# ============================================
+# Stage 4: Docker Build & Push to GitLab Registry
+# ============================================
+
+build:frontend:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  script:
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+    - docker build -t ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${FRONTEND_IMAGE}:latest ./frontend
+    - docker push ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - docker push ${FRONTEND_IMAGE}:latest
+  only:
+    changes:
+      - frontend/**/*
+
+build:backend:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  script:
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+    - docker build -t ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${BACKEND_IMAGE}:latest ./backend
+    - docker push ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - docker push ${BACKEND_IMAGE}:latest
+  rules:
+    - changes:
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+
+build:workers:
+  stage: build
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  script:
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+    - docker build -t ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${WORKERS_IMAGE}:latest ./backend/workers
+    - docker push ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - docker push ${WORKERS_IMAGE}:latest
+  only:
+    changes:
+      - backend/workers/**/*
+
+# ============================================
+# Stage 5: Trivy security scan
+# ============================================
+
+security:frontend:
+  stage: security
+  image: aquasec/trivy:latest
+  script:
+    - trivy image --severity HIGH,CRITICAL --exit-code 0 ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+  allow_failure: true
+  needs:
+    - build:frontend
+
+security:backend:
+  stage: security
+  image: aquasec/trivy:latest
+  script:
+    - trivy image --severity HIGH,CRITICAL --exit-code 0 ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+  allow_failure: true
+  needs:
+    - build:backend
+
+# ============================================
+# Stage 6: Cosign image signing
+# ============================================
+
+sign:frontend:
+  stage: sign
+  image: bitnami/cosign:latest
+  script:
+    - cosign sign --key env://COSIGN_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+  allow_failure: true
+  needs:
+    - security:frontend
+
+sign:backend:
+  stage: sign
+  image: bitnami/cosign:latest
+  script:
+    - cosign sign --key env://COSIGN_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+  allow_failure: true
+  needs:
+    - security:backend
+
+# ============================================
+# Stage 7: ArgoCD deployment sync
+# ============================================
+
+deploy:staging:
+  stage: deploy
+  image: argoproj/argocd:latest
+  script:
+    - argocd login ${ARGOCD_SERVER} --auth-token ${ARGOCD_AUTH_TOKEN} --insecure
+    - argocd app sync tutum-staging
+  environment:
+    name: staging
+  allow_failure: true
+  only:
+    - develop
+
+deploy:production:
+  stage: deploy
+  image: argoproj/argocd:latest
+  script:
+    - argocd login ${ARGOCD_SERVER} --auth-token ${ARGOCD_AUTH_TOKEN} --insecure
+    - argocd app sync tutum-production
+  environment:
+    name: production
+  when: manual
+  allow_failure: true
+  only:
+    - main
