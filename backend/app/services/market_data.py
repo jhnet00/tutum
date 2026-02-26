@@ -608,33 +608,74 @@ class CryptoClient:
         self.access_key = settings.UPBIT_ACCESS_KEY
         self.secret_key = settings.UPBIT_SECRET_KEY
 
+    async def _get_binance_current_price(self, ticker_formatted: str) -> dict:
+        """Fetch non-KRW crypto pairs from Binance public API (e.g. BTC-USDT)."""
+        left, right = ticker_formatted.split("-", 1)
+        left = left.upper()
+        right = right.upper()
+
+        # Accept both BASE-QUOTE and QUOTE-BASE input orders.
+        candidates = [(left, right)]
+        if left != right:
+            candidates.append((right, left))
+
+        url = "https://api.binance.com/api/v3/ticker/24hr"
+        last_error = "unknown"
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            for base_symbol, quote_symbol in candidates:
+                response = await client.get(url, params={"symbol": f"{base_symbol}{quote_symbol}"})
+                if response.status_code != 200:
+                    last_error = response.text
+                    continue
+
+                payload = response.json()
+                close_time = float(payload.get("closeTime", 0) or 0)
+                updated_at = datetime.now(timezone.utc).isoformat()
+                if close_time > 0:
+                    updated_at = datetime.fromtimestamp(close_time / 1000, tz=timezone.utc).isoformat()
+
+                return {
+                    "ticker": ticker_formatted,
+                    "price": float(payload.get("lastPrice", 0) or 0),
+                    "change_percent": float(payload.get("priceChangePercent", 0) or 0),
+                    "volume": float(payload.get("volume", 0) or 0),
+                    "updated_at": updated_at,
+                    "asset_type": "crypto",
+                    "currency": quote_symbol,
+                    "source": "binance",
+                }
+
+        raise ValueError(f"No Binance market for {ticker_formatted}: {last_error}")
+
     async def get_current_price(self, ticker: str = "KRW-BTC"):
         """Upbit ?쒖꽭 議고쉶 (Public API ?곗꽑)"""
         # ?곗빱 ?뺤떇 蹂댁젙 (BTC/KRW -> KRW-BTC)
-        ticker_formatted = ticker.replace("/", "-")
+        ticker_formatted = ticker.replace("/", "-").upper()
         if "-" not in ticker_formatted:
             ticker_formatted = f"KRW-{ticker_formatted}"
-        base_symbol = ticker_formatted.split("-", 1)[-1].upper()
+        market_symbol, base_symbol = ticker_formatted.split("-", 1)
 
-        # 1) 공용 실시간 캐시(WS -> Kafka -> Redis price:{symbol})를 최우선 사용
-        #    이 경로가 살아있으면 Upbit REST를 호출하지 않는다.
-        shared_cache_key = f"price:{base_symbol}"
-        try:
-            shared_cached = await cache_get(shared_cache_key)
-            if shared_cached:
-                row = json.loads(shared_cached)
-                price = float(row.get("price", 0))
-                if price > 0:
-                    return {
-                        "ticker": ticker_formatted,
-                        "price": price,
-                        "change_percent": float(row.get("change_percent", 0) or 0),
-                        "volume": float(row.get("volume", 0) or 0),
-                        "updated_at": row.get("timestamp") or row.get("cached_at"),
-                        "source": "redis_price_cache",
-                    }
-        except Exception:
-            pass
+        if market_symbol == "KRW":
+            # 1) 공용 실시간 캐시(WS -> Kafka -> Redis price:{symbol})를 최우선 사용
+            #    이 경로가 살아있으면 Upbit REST를 호출하지 않는다.
+            shared_cache_key = f"price:{base_symbol}"
+            try:
+                shared_cached = await cache_get(shared_cache_key)
+                if shared_cached:
+                    row = json.loads(shared_cached)
+                    price = float(row.get("price", 0))
+                    if price > 0:
+                        return {
+                            "ticker": ticker_formatted,
+                            "price": price,
+                            "change_percent": float(row.get("change_percent", 0) or 0),
+                            "volume": float(row.get("volume", 0) or 0),
+                            "updated_at": row.get("timestamp") or row.get("cached_at"),
+                            "source": "redis_price_cache",
+                        }
+            except Exception:
+                pass
 
         # 2) API 응답 캐시 확인 (짧은 TTL)
         cache_key = f"market:crypto:price:{ticker_formatted}"
@@ -644,6 +685,28 @@ class CryptoClient:
                 return json.loads(cached)
         except Exception:
             pass
+
+        if market_symbol != "KRW":
+            try:
+                result = await self._get_binance_current_price(ticker_formatted)
+                try:
+                    await cache_set(cache_key, json.dumps(result), expire_seconds=5)
+                except Exception:
+                    pass
+                return result
+            except Exception as e:
+                logger.error("Binance API Error Details: %s", e)
+                if settings.DEBUG:
+                    return {
+                        "ticker": ticker_formatted,
+                        "price": 100000.0 if "BTC" in ticker_formatted else 100.0,
+                        "mock": True,
+                        "note": "Binance API unavailable in debug mode",
+                        "currency": "USDT",
+                    }
+                raise HTTPException(
+                    status_code=500, detail=f"Binance Service Unavailable: {str(e)}"
+                )
 
         url = f"{self.base_url}/ticker"
         params = {"markets": ticker_formatted}
