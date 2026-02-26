@@ -743,6 +743,30 @@ class CryptoClient:
 
             except Exception as e:
                 logger.error("Upbit API Error Details: %s", e)
+                if market_symbol == "KRW":
+                    # Upbit 오류 시 Binance USDT + 환율로 KRW 가격을 추정한다.
+                    try:
+                        usdt_result = await self._get_binance_current_price(f"{base_symbol}-USDT")
+                        fx_rates = await get_exchange_rates()
+                        usd_to_krw = float(fx_rates.get("USD", 1450.0) or 1450.0)
+                        converted = {
+                            "ticker": ticker_formatted,
+                            "price": float(usdt_result.get("price", 0) or 0) * usd_to_krw,
+                            "change_percent": float(usdt_result.get("change_percent", 0) or 0),
+                            "volume": float(usdt_result.get("volume", 0) or 0),
+                            "updated_at": usdt_result.get("updated_at"),
+                            "asset_type": "crypto",
+                            "currency": "KRW",
+                            "source": "binance_usdt_x_usdkrw",
+                        }
+                        try:
+                            await cache_set(cache_key, json.dumps(converted), expire_seconds=5)
+                        except Exception:
+                            pass
+                        return converted
+                    except Exception as binance_e:
+                        logger.error("Binance KRW fallback error: %s", binance_e)
+
                 # Fallback: API ?ㅺ? ?녿뒗 媛쒕컻 ?섍꼍??紐⑥쓽 ?곗씠??
                 if not self.access_key or settings.DEBUG:
                     return {
