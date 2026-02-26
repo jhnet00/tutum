@@ -5,10 +5,22 @@ metadata:
   namespace: tutum-app
 spec:
   hosts:
-    - "*"
+    - "tutum.my"
+    - "www.tutum.my"
   gateways:
     - tutum-gateway
   http:
+    # WebSocket: /api/v1/market/ws
+    - match:
+        - uri:
+            prefix: /api/v1/market/ws
+      route:
+        - destination:
+            host: backend.tutum-app.svc.cluster.local
+            port:
+              number: 8000
+      websocketUpgrade: true
+    # Backend API: /api/*
     - match:
         - uri:
             prefix: /api
@@ -17,6 +29,7 @@ spec:
             host: backend.tutum-app.svc.cluster.local
             port:
               number: 8000
+    # Frontend: /*
     - match:
         - uri:
             prefix: /

@@ -7,9 +7,12 @@ spec:
   selector:
     istio: ingressgateway
   servers:
+    # Cloudflare Flexible 모드: CF에서 HTTPS 종료 후 origin으로 HTTP 전달
+    # Cloudflare SSL 설정: Dashboard → SSL/TLS → Flexible 로 변경 필요
     - port:
         number: 80
         name: http
         protocol: HTTP
       hosts:
-        - "*"
+        - "tutum.my"
+        - "www.tutum.my"
