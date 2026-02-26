@@ -69,6 +69,11 @@ async function handler(request: NextRequest, path: string[]) {
         responseHeaders.set(key, value);
       }
     }
+    // FastAPI는 charset 미명시 → 브라우저가 Latin-1 해석 → 한글 깨짐 방지
+    const ct = responseHeaders.get("content-type");
+    if (ct && ct.includes("application/json") && !ct.includes("charset")) {
+      responseHeaders.set("content-type", ct + "; charset=utf-8");
+    }
     const setCookies = (upstream.headers as any).getSetCookie?.() ?? [];
     for (const cookie of setCookies) {
       responseHeaders.append("set-cookie", cookie);
