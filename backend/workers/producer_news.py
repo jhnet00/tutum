@@ -38,30 +38,55 @@ HEADERS = {
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 TOPIC = os.getenv("KAFKA_TOPIC", "news.raw")
 
+
+def _env_raw(*keys: str) -> str | None:
+    for key in keys:
+        value = os.getenv(key)
+        if value is not None and str(value).strip() != "":
+            return str(value).strip()
+    return None
+
+
+def env_bool(*keys: str, default: bool = False) -> bool:
+    value = _env_raw(*keys)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "y", "on"}
+
+
+def env_int(*keys: str, default: int) -> int:
+    value = _env_raw(*keys)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except Exception:
+        return default
+
 # 하위 호환용 기본값: source별 limit이 없으면 LIMIT 사용
-LIMIT = int(os.getenv("LIMIT", "5"))
-PAGES = int(os.getenv("PAGES", "3"))        # ✅ 여러 페이지 훑기
+LIMIT = env_int("LIMIT", "PRODUCER_LIMIT", default=5)
+PAGES = env_int("PAGES", "PRODUCER_PAGES", default=3)        # ✅ 여러 페이지 훑기
 SEEN_FILE = os.getenv("SEEN_FILE", "/home/kafka/seen_finance_mainnews.json")
-ENABLE_NAVER = os.getenv("ENABLE_NAVER", "1") == "1"
-ENABLE_COINNESS = os.getenv("ENABLE_COINNESS", "1") == "1"
-COINNESS_PAGES = int(os.getenv("COINNESS_PAGES", "3"))
-COINNESS_SITEMAP_LIMIT = int(os.getenv("COINNESS_SITEMAP_LIMIT", "120"))
+ENABLE_NAVER = env_bool("ENABLE_NAVER", default=True)
+ENABLE_COINNESS = env_bool("ENABLE_COINNESS", default=True)
+COINNESS_PAGES = env_int("COINNESS_PAGES", default=3)
+COINNESS_SITEMAP_LIMIT = env_int("COINNESS_SITEMAP_LIMIT", default=120)
 COINNESS_API_SECTION = os.getenv("COINNESS_API_SECTION", "latest")
 COINNESS_API_CATEGORY_ID = os.getenv("COINNESS_API_CATEGORY_ID", "0")
 COINNESS_API_LANGUAGE_CODE = os.getenv("COINNESS_API_LANGUAGE_CODE", "ko")
-COINNESS_API_PAGE_LIMIT = int(os.getenv("COINNESS_API_PAGE_LIMIT", "20"))
-NAVER_LIMIT = int(os.getenv("NAVER_LIMIT", str(LIMIT)))
-COINNESS_LIMIT = int(os.getenv("COINNESS_LIMIT", str(LIMIT)))
-EINFOMAX_LIMIT = int(os.getenv("EINFOMAX_LIMIT", str(LIMIT)))
-ENABLE_COIN_FALLBACK = os.getenv("ENABLE_COIN_FALLBACK", "0") == "1"
-COIN_FALLBACK_LIMIT = int(os.getenv("COIN_FALLBACK_LIMIT", str(COINNESS_LIMIT)))
-COIN_FALLBACK_PAGES = int(os.getenv("COIN_FALLBACK_PAGES", "2"))
-ENABLE_EINFOMAX = os.getenv("ENABLE_EINFOMAX", "0") == "1"
-EINFOMAX_PAGES = int(os.getenv("EINFOMAX_PAGES", "3"))
+COINNESS_API_PAGE_LIMIT = env_int("COINNESS_API_PAGE_LIMIT", default=20)
+NAVER_LIMIT = env_int("NAVER_LIMIT", default=LIMIT)
+COINNESS_LIMIT = env_int("COINNESS_LIMIT", default=LIMIT)
+EINFOMAX_LIMIT = env_int("EINFOMAX_LIMIT", default=LIMIT)
+ENABLE_COIN_FALLBACK = env_bool("ENABLE_COIN_FALLBACK", default=False)
+COIN_FALLBACK_LIMIT = env_int("COIN_FALLBACK_LIMIT", default=COINNESS_LIMIT)
+COIN_FALLBACK_PAGES = env_int("COIN_FALLBACK_PAGES", default=2)
+ENABLE_EINFOMAX = env_bool("ENABLE_EINFOMAX", default=False)
+EINFOMAX_PAGES = env_int("EINFOMAX_PAGES", default=3)
 EINFOMAX_QUERY = os.getenv("EINFOMAX_QUERY", "가상자산")
-EINFOMAX_FILTER_COINS = os.getenv("EINFOMAX_FILTER_COINS", "1") == "1"
-RUN_FOREVER = os.getenv("RUN_FOREVER", "0") == "1"
-POLL_INTERVAL_SEC = int(os.getenv("POLL_INTERVAL_SEC", "60"))
+EINFOMAX_FILTER_COINS = env_bool("EINFOMAX_FILTER_COINS", default=True)
+RUN_FOREVER = env_bool("RUN_FOREVER", "PRODUCER_RUN_FOREVER", default=False)
+POLL_INTERVAL_SEC = env_int("POLL_INTERVAL_SEC", "PRODUCER_POLL_INTERVAL_SEC", default=60)
 COIN_KEYWORDS = [
     kw.strip()
     for kw in os.getenv("COIN_KEYWORDS", "비트코인,이더리움,암호화폐,가상자산").split(",")
