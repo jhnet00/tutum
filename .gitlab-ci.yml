@@ -146,6 +146,7 @@ test:backend:
 
 sonar:frontend:
   stage: scan
+  tags: [k8s]
   image: sonarsource/sonar-scanner-cli:latest
   variables:
     SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
@@ -165,6 +166,7 @@ sonar:frontend:
 
 sonar:backend:
   stage: scan
+  tags: [k8s]
   image: sonarsource/sonar-scanner-cli:latest
   variables:
     SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
@@ -235,6 +237,7 @@ build:workers:
 
 security:frontend:
   stage: security
+  tags: [k8s]
   image: aquasec/trivy:latest
   variables:
     TRIVY_USERNAME: ${CI_REGISTRY_USER}
@@ -243,10 +246,12 @@ security:frontend:
     - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
-    - build:frontend
+    - job: build:frontend
+      optional: true
 
 security:backend:
   stage: security
+  tags: [k8s]
   image: aquasec/trivy:latest
   variables:
     TRIVY_USERNAME: ${CI_REGISTRY_USER}
@@ -255,10 +260,12 @@ security:backend:
     - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
-    - build:backend
+    - job: build:backend
+      optional: true
 
 security:workers:
   stage: security
+  tags: [k8s]
   image: aquasec/trivy:latest
   variables:
     TRIVY_USERNAME: ${CI_REGISTRY_USER}
@@ -267,7 +274,8 @@ security:workers:
     - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
-    - build:workers
+    - job: build:workers
+      optional: true
 
 # ============================================
 # Stage 6: Cosign 이미지 서명
@@ -275,33 +283,45 @@ security:workers:
 
 sign:frontend:
   stage: sign
+  tags: [k8s]
   image: bitnami/cosign:latest
+  variables:
+    COSIGN_YES: "true"
   script:
-    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
-    - cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
+    - cosign sign --key env://COSIGN_PRIVATE_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
-    - security:frontend
+    - job: security:frontend
+      optional: true
 
 sign:backend:
   stage: sign
+  tags: [k8s]
   image: bitnami/cosign:latest
+  variables:
+    COSIGN_YES: "true"
   script:
-    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
-    - cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
+    - cosign sign --key env://COSIGN_PRIVATE_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
-    - security:backend
+    - job: security:backend
+      optional: true
 
 sign:workers:
   stage: sign
+  tags: [k8s]
   image: bitnami/cosign:latest
+  variables:
+    COSIGN_YES: "true"
   script:
-    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
-    - cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
+    - cosign sign --key env://COSIGN_PRIVATE_KEY ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
-    - security:workers
+    - job: security:workers
+      optional: true
 
 # ============================================
 # Stage 7: GitOps 배포 (k8s-manifests 이미지 태그 업데이트)
