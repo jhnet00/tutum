@@ -373,7 +373,7 @@ deploy:staging:
   environment:
     name: staging
   rules:
-    - if: '$CI_COMMIT_BRANCH == "develop" && $K8S_MANIFESTS_TOKEN'
+    - if: '($CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "ruby-backup0225") && $K8S_MANIFESTS_TOKEN'
       changes:
         - backend/**/*
         - frontend/**/*
