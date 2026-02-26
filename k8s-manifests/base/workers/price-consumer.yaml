@@ -20,7 +20,7 @@ spec:
       nodeSelector:
         workload: app
       imagePullSecrets:
-        - name: gitlab-registry-secret
+        - name: harbor-secret
         - name: gitlab-registry-secret
       containers:
         - name: price-consumer

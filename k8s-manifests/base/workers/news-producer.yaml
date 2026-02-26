@@ -20,7 +20,7 @@ spec:
       nodeSelector:
         workload: app
       imagePullSecrets:
-        - name: gitlab-registry-secret
+        - name: harbor-secret
         - name: gitlab-registry-secret
       containers:
         - name: news-producer
@@ -30,6 +30,27 @@ spec:
           envFrom:
             - configMapRef:
                 name: news-pipeline-config
+          env:
+            - name: RUN_FOREVER
+              valueFrom:
+                configMapKeyRef:
+                  name: news-pipeline-config
+                  key: RUN_FOREVER
+            - name: POLL_INTERVAL_SEC
+              valueFrom:
+                configMapKeyRef:
+                  name: news-pipeline-config
+                  key: POLL_INTERVAL_SEC
+            - name: LIMIT
+              valueFrom:
+                configMapKeyRef:
+                  name: news-pipeline-config
+                  key: LIMIT
+            - name: PAGES
+              valueFrom:
+                configMapKeyRef:
+                  name: news-pipeline-config
+                  key: PAGES
           resources:
             requests:
               cpu: 200m

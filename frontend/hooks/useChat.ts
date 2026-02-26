@@ -42,6 +42,7 @@ export function useChat() {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    'Accept': 'text/event-stream',
                     ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 },
                 body: JSON.stringify({
@@ -61,6 +62,7 @@ export function useChat() {
             }
 
             let buffer = '';
+            let eventType = 'message';
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -71,39 +73,54 @@ export function useChat() {
                 buffer = lines.pop() || '';
 
                 for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        try {
-                            const data = JSON.parse(line.slice(6));
+                    if (!line) {
+                        eventType = 'message';
+                        continue;
+                    }
 
-                            // delta 이벤트: 스트리밍 텍스트
-                            if (data.content) {
-                                setMessages(prev => prev.map(msg =>
-                                    msg.id === assistantId
-                                        ? { ...msg, content: msg.content + data.content }
-                                        : msg
-                                ));
-                            }
+                    if (line.startsWith('event: ')) {
+                        eventType = line.slice(7).trim();
+                        continue;
+                    }
 
-                            // sources 이벤트: 출처 정보
-                            if (data.sources) {
-                                setMessages(prev => prev.map(msg =>
-                                    msg.id === assistantId
-                                        ? { ...msg, sources: data.sources as Source[] }
-                                        : msg
-                                ));
-                            }
+                    if (!line.startsWith('data: ')) continue;
 
-                            // error 이벤트: 에러 처리
-                            if (data.message && line.includes('error')) {
-                                setMessages(prev => prev.map(msg =>
-                                    msg.id === assistantId
-                                        ? { ...msg, content: data.message, isStreaming: false }
-                                        : msg
-                                ));
-                            }
-                        } catch {
-                            // JSON 파싱 에러 무시 (불완전한 청크)
+                    try {
+                        const data = JSON.parse(line.slice(6));
+
+                        if (eventType === 'delta' && data.content) {
+                            setMessages(prev => prev.map(msg =>
+                                msg.id === assistantId
+                                    ? { ...msg, content: msg.content + data.content }
+                                    : msg
+                            ));
                         }
+
+                        if (eventType === 'sources' && data.sources) {
+                            setMessages(prev => prev.map(msg =>
+                                msg.id === assistantId
+                                    ? { ...msg, sources: data.sources as Source[] }
+                                    : msg
+                            ));
+                        }
+
+                        if (eventType === 'error') {
+                            setMessages(prev => prev.map(msg =>
+                                msg.id === assistantId
+                                    ? { ...msg, content: data.message || '채팅 처리 중 오류가 발생했습니다.', isStreaming: false }
+                                    : msg
+                            ));
+                        }
+
+                        if (eventType === 'done') {
+                            setMessages(prev => prev.map(msg =>
+                                msg.id === assistantId
+                                    ? { ...msg, isStreaming: false }
+                                    : msg
+                            ));
+                        }
+                    } catch {
+                        // JSON 파싱 에러 무시 (불완전한 청크)
                     }
                 }
             }

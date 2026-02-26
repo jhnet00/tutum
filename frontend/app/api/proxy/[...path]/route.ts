@@ -19,7 +19,14 @@ async function handler(request: NextRequest, path: string[]) {
     });
   }
 
-  const targetUrl = new URL(`${baseUrl.replace(/\/$/, "")}/${path.join("/")}`);
+  let targetUrl: URL;
+  if (path[0] === "import") {
+    // OCR 전용 서비스로 라우팅
+    const ocrBaseUrl = process.env.OCR_SERVICE_URL || "http://ocr.tutum-app.svc.cluster.local:8002";
+    targetUrl = new URL(`${ocrBaseUrl.replace(/\/$/, "")}/${path.join("/")}`);
+  } else {
+    targetUrl = new URL(`${baseUrl.replace(/\/$/, "")}/${path.join("/")}`);
+  }
   targetUrl.search = request.nextUrl.search;
 
   console.log(`[Proxy] ${request.method} ${targetUrl.toString()}`);

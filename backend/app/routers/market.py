@@ -26,6 +26,10 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# /market/ws 캐시 전용 모드: true 시 cache miss → no_data 반환 (REST fallback 금지)
+# KIS WS 안정화 확인 후 true로 전환 권장
+MARKET_WS_CACHE_ONLY = os.getenv("MARKET_WS_CACHE_ONLY", "false").lower() in {"1", "true", "yes", "on"}
+
 # 통화(현금) 코드 목록 - 주식/코인 시세 조회에서 제외
 CURRENCY_CODES = {"USD", "EUR", "JPY", "GBP", "CNY", "CHF", "CAD", "AUD", "HKD", "SGD", "NZD", "TWD", "THB", "VND", "KRW"}
 KST = timezone(timedelta(hours=9))
@@ -360,6 +364,15 @@ async def get_price_snapshot(symbol: str) -> dict:
         cached["symbol"] = normalized
         return cached
 
+    # Cache miss: MARKET_WS_CACHE_ONLY=true 시 REST fallback 금지
+    if MARKET_WS_CACHE_ONLY:
+        return {
+            "symbol": normalized,
+            "status": "no_data",
+            "reason": "cache_miss",
+            "source": "ws_cache_only",
+        }
+
     # Cache miss fallback: stock(KIS) / crypto(Upbit)
     try:
         is_overseas = _is_overseas_stock(normalized)
@@ -518,7 +531,28 @@ async def get_multiple_crypto_prices(tickers: str = Query(..., description="?쇳
 
     for ticker in ticker_list:
         try:
-            data = await crypto_client.get_current_price(ticker)
+            symbol = normalize_symbol(ticker)
+            cached = await get_cached_price(symbol)
+            if cached:
+                cached_asset_type = str(cached.get("asset_type", "")).lower()
+                cached_currency = str(cached.get("currency", "")).upper()
+                is_crypto_cache = cached_asset_type in ("", "crypto")
+                is_krw_or_unknown = cached_currency in ("", "KRW")
+                if is_crypto_cache and is_krw_or_unknown:
+                    data = {
+                        "ticker": f"KRW-{symbol}",
+                        "price": cached.get("price"),
+                        "change_percent": cached.get("change_percent", 0),
+                        "volume": cached.get("volume", 0),
+                        "updated_at": cached.get("timestamp") or cached.get("cached_at"),
+                        "asset_type": "crypto",
+                        "currency": "KRW",
+                        "source": "cache",
+                    }
+                else:
+                    data = await crypto_client.get_current_price(ticker)
+            else:
+                data = await crypto_client.get_current_price(ticker)
             data.setdefault("asset_type", "crypto")
             data.setdefault("currency", "KRW")
             results.append(data)
