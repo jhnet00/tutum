@@ -146,7 +146,6 @@ test:backend:
 
 sonar:frontend:
   stage: scan
-  tags: [k8s]
   image: sonarsource/sonar-scanner-cli:latest
   variables:
     SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
@@ -166,7 +165,6 @@ sonar:frontend:
 
 sonar:backend:
   stage: scan
-  tags: [k8s]
   image: sonarsource/sonar-scanner-cli:latest
   variables:
     SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
@@ -237,7 +235,6 @@ build:workers:
 
 security:frontend:
   stage: security
-  tags: [k8s]
   image: aquasec/trivy:latest
   variables:
     TRIVY_USERNAME: ${CI_REGISTRY_USER}
@@ -250,7 +247,6 @@ security:frontend:
 
 security:backend:
   stage: security
-  tags: [k8s]
   image: aquasec/trivy:latest
   variables:
     TRIVY_USERNAME: ${CI_REGISTRY_USER}
@@ -263,7 +259,6 @@ security:backend:
 
 security:workers:
   stage: security
-  tags: [k8s]
   image: aquasec/trivy:latest
   variables:
     TRIVY_USERNAME: ${CI_REGISTRY_USER}
@@ -280,39 +275,30 @@ security:workers:
 
 sign:frontend:
   stage: sign
-  tags: [k8s]
   image: bitnami/cosign:latest
-  variables:
-    COSIGN_YES: "true"
   script:
-    - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
-    - cosign sign --key env://COSIGN_PRIVATE_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+    - cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
     - security:frontend
 
 sign:backend:
   stage: sign
-  tags: [k8s]
   image: bitnami/cosign:latest
-  variables:
-    COSIGN_YES: "true"
   script:
-    - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
-    - cosign sign --key env://COSIGN_PRIVATE_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+    - cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
     - security:backend
 
 sign:workers:
   stage: sign
-  tags: [k8s]
   image: bitnami/cosign:latest
-  variables:
-    COSIGN_YES: "true"
   script:
-    - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
-    - cosign sign --key env://COSIGN_PRIVATE_KEY ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+    - cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
     - security:workers

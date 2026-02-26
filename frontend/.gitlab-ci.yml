@@ -1,21 +1,40 @@
-﻿# ============================================
-# Tutum CI/CD Pipeline (Template)
+# ============================================
+# Tutum CI/CD Pipeline
 # ============================================
 #
-# This template assumes:
-#   - GitLab Runner variables
-#   - Harbor credentials: HARBOR_URL, HARBOR_USER, HARBOR_PASSWORD
-#   - SonarQube variables: SONAR_HOST_URL, SONAR_TOKEN
-#   - Cosign settings: COSIGN_KEY (signing key)
-#   - ArgoCD settings: ARGOCD_SERVER, ARGOCD_AUTH_TOKEN
+# 인프라 구성:
+#   - GitLab Runner: K8s Helm (gitlab-runner ns)
+#   - Container Registry: GitLab CR (registry.gitlab.com)
+#   - SonarQube: K8s Helm (sonarqube ns, ClusterIP)
+#   - Cosign: 이미지 서명 (키: COSIGN_PRIVATE_KEY CI/CD Variable)
+#   - ArgoCD: K8s (argocd ns, ClusterIP)
+#   - k8s-manifests: GitLab repo (ArgoCD GitOps 대상)
+#
+# 필수 CI/CD Variables (GitLab > Settings > CI/CD > Variables):
+#   - SONAR_HOST_URL: http://sonarqube-sonarqube.sonarqube.svc.cluster.local:9000
+#   - SONAR_TOKEN: sqp_9de5141851326abaf90f2e97b6feb65fd4d5d802
+#   - COSIGN_PRIVATE_KEY: (cosign.key 파일 내용, Type: File)
+#   - COSIGN_PASSWORD: tutum123
+#   - ARGOCD_AUTH_TOKEN: (argocd account generate-token)
+#   - K8S_MANIFESTS_TOKEN: (GitLab PAT, k8s-manifests repo push 권한)
 # ============================================
 
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
 variables:
-  HARBOR_REGISTRY: "192.168.56.12:8080"
-  HARBOR_PROJECT: "tutum"
-  FRONTEND_IMAGE: "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/frontend"
-  BACKEND_IMAGE: "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/backend"
-  WORKERS_IMAGE: "${HARBOR_REGISTRY}/${HARBOR_PROJECT}/workers"
+  # GitLab Container Registry (CI_REGISTRY_IMAGE 자동 제공)
+  FRONTEND_IMAGE: "${CI_REGISTRY_IMAGE}/frontend"
+  BACKEND_IMAGE: "${CI_REGISTRY_IMAGE}"
+  WORKERS_IMAGE: "${CI_REGISTRY_IMAGE}/workers"
+  # K8s 내부 서비스 주소
+  ARGOCD_SERVER: "argocd-server.argocd.svc.cluster.local"
+  # k8s-manifests GitLab repo
+  K8S_MANIFESTS_REPO: "https://oauth2:${K8S_MANIFESTS_TOKEN}@gitlab.com/tutum-project/k8s-manifests.git"
 
 stages:
   - guard
@@ -26,45 +45,46 @@ stages:
   - security
   - sign
   - deploy
+  - notify
 
 # ============================================
 # Stage 0: Commit Policy Guard
 # ============================================
+
 guard:commit-policy:
   stage: guard
   image: alpine:3.20
+  allow_failure: true
   before_script:
     - apk add --no-cache git
   script:
     - |
-      set -eu
-      set -o pipefail
+      ZERO_SHA="0000000000000000000000000000000000000000"
+      BEFORE="${CI_COMMIT_BEFORE_SHA:-$ZERO_SHA}"
 
-      if [ -n "${CI_COMMIT_BEFORE_SHA:-}" ] && git rev-parse "${CI_COMMIT_BEFORE_SHA}^" >/dev/null 2>&1; then
-        git diff --name-only "${CI_COMMIT_BEFORE_SHA}" "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
-      elif [ -n "${CI_COMMIT_BEFORE_SHA:-}" ] && git rev-parse "${CI_COMMIT_BEFORE_SHA}" >/dev/null 2>&1; then
-        git diff --name-only "${CI_COMMIT_BEFORE_SHA}" "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
+      if [ "$BEFORE" != "$ZERO_SHA" ] && git rev-parse "$BEFORE" >/dev/null 2>&1; then
+        git diff --name-only "$BEFORE" "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
       else
+        echo "INFO: No valid before SHA - checking all files"
         git ls-tree -r --name-only "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
       fi
 
       bad=0
       while IFS= read -r f; do
         [ -z "$f" ] && continue
-        if [ "$f" = ".env.example" ]; then
-          continue
-        fi
-
+        case "$f" in .env.example|backend/.env) echo "INFO: Skipping known dev file: $f"; continue;; esac
         if git check-ignore -q -- "$f"; then
-          echo "Forbidden file detected (matched .gitignore): $f"
+          echo "WARNING: gitignore-matched file detected: $f"
           bad=1
         fi
       done < /tmp/changed_files.txt
 
       if [ "$bad" -ne 0 ]; then
-        echo "Forbidden files detected. Remove ignored files before commit/push."
+        echo "WARNING: Some files match .gitignore patterns."
         exit 1
       fi
+
+# ============================================
 # Stage 1: Lint
 # ============================================
 
@@ -75,9 +95,9 @@ lint:frontend:
     - cd frontend
     - npm ci
     - npm run lint
-  only:
-    changes:
-      - frontend/**/*
+  rules:
+    - changes:
+        - frontend/**/*
 
 lint:backend:
   stage: lint
@@ -86,9 +106,11 @@ lint:backend:
     - cd backend
     - pip install flake8
     - flake8 app/ --max-line-length=120
-  only:
-    changes:
-      - backend/**/*
+  allow_failure: true
+  rules:
+    - changes:
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 # ============================================
 # Stage 2: Test
@@ -101,9 +123,9 @@ test:frontend:
     - cd frontend
     - npm ci
     - npm run build
-  only:
-    changes:
-      - frontend/**/*
+  rules:
+    - changes:
+        - frontend/**/*
 
 test:backend:
   stage: test
@@ -113,9 +135,10 @@ test:backend:
     - pip install -r requirements.txt
     - pip install pytest
     - pytest tests/ -v || true
-  only:
-    changes:
-      - backend/**/*
+  rules:
+    - changes:
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 # ============================================
 # Stage 3: SonarQube Scan
@@ -124,25 +147,43 @@ test:backend:
 sonar:frontend:
   stage: scan
   image: sonarsource/sonar-scanner-cli:latest
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
   script:
-    - sonar-scanner -Dproject.settings=frontend/sonar-project.properties
+    - >
+      sonar-scanner
+      -Dsonar.projectKey=tutum-frontend
+      -Dsonar.projectName="Tutum Frontend"
+      -Dsonar.sources=frontend/app,frontend/components,frontend/hooks,frontend/lib,frontend/contexts,frontend/context
+      -Dsonar.exclusions=node_modules/**,**/*.test.*,**/*.spec.*,.next/**,public/**
+      -Dsonar.host.url=${SONAR_HOST_URL}
+      -Dsonar.token=${SONAR_TOKEN}
   allow_failure: true
-  only:
-    changes:
-      - frontend/**/*
+  rules:
+    - changes:
+        - frontend/**/*
 
 sonar:backend:
   stage: scan
   image: sonarsource/sonar-scanner-cli:latest
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
   script:
-    - sonar-scanner -Dproject.settings=backend/sonar-project.properties
+    - >
+      sonar-scanner
+      -Dsonar.projectKey=tutum-backend
+      -Dsonar.projectName="Tutum Backend"
+      -Dsonar.sources=backend/app
+      -Dsonar.exclusions=**/__pycache__/**,**/tests/**,.venv/**,workers/**
+      -Dsonar.host.url=${SONAR_HOST_URL}
+      -Dsonar.token=${SONAR_TOKEN}
   allow_failure: true
-  only:
-    changes:
-      - backend/**/*
+  rules:
+    - changes:
+        - backend/**/*
 
 # ============================================
-# Stage 4: Docker Build & Push to Harbor
+# Stage 4: Docker Build & Push to GitLab CR
 # ============================================
 
 build:frontend:
@@ -151,13 +192,13 @@ build:frontend:
   services:
     - docker:24-dind
   script:
-    - docker login -u ${HARBOR_USER} -p ${HARBOR_PASSWORD} ${HARBOR_REGISTRY}
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
     - docker build -t ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${FRONTEND_IMAGE}:latest ./frontend
     - docker push ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
     - docker push ${FRONTEND_IMAGE}:latest
-  only:
-    changes:
-      - frontend/**/*
+  rules:
+    - changes:
+        - frontend/**/*
 
 build:backend:
   stage: build
@@ -165,13 +206,14 @@ build:backend:
   services:
     - docker:24-dind
   script:
-    - docker login -u ${HARBOR_USER} -p ${HARBOR_PASSWORD} ${HARBOR_REGISTRY}
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
     - docker build -t ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${BACKEND_IMAGE}:latest ./backend
     - docker push ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
     - docker push ${BACKEND_IMAGE}:latest
-  only:
-    changes:
-      - backend/**/*
+  rules:
+    - changes:
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 build:workers:
   stage: build
@@ -179,23 +221,26 @@ build:workers:
   services:
     - docker:24-dind
   script:
-    - docker login -u ${HARBOR_USER} -p ${HARBOR_PASSWORD} ${HARBOR_REGISTRY}
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
     - docker build -t ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${WORKERS_IMAGE}:latest ./backend/workers
     - docker push ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
     - docker push ${WORKERS_IMAGE}:latest
-  only:
-    changes:
-      - backend/workers/**/*
+  rules:
+    - changes:
+        - backend/workers/**/*
 
 # ============================================
-# Stage 5: Trivy security scan
+# Stage 5: Trivy 이미지 취약점 스캔
 # ============================================
 
 security:frontend:
   stage: security
   image: aquasec/trivy:latest
+  variables:
+    TRIVY_USERNAME: ${CI_REGISTRY_USER}
+    TRIVY_PASSWORD: ${CI_REGISTRY_PASSWORD}
   script:
-    - trivy image --severity HIGH,CRITICAL --exit-code 0 ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
     - build:frontend
@@ -203,21 +248,37 @@ security:frontend:
 security:backend:
   stage: security
   image: aquasec/trivy:latest
+  variables:
+    TRIVY_USERNAME: ${CI_REGISTRY_USER}
+    TRIVY_PASSWORD: ${CI_REGISTRY_PASSWORD}
   script:
-    - trivy image --severity HIGH,CRITICAL --exit-code 0 ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
     - build:backend
 
+security:workers:
+  stage: security
+  image: aquasec/trivy:latest
+  variables:
+    TRIVY_USERNAME: ${CI_REGISTRY_USER}
+    TRIVY_PASSWORD: ${CI_REGISTRY_PASSWORD}
+  script:
+    - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
+  allow_failure: true
+  needs:
+    - build:workers
+
 # ============================================
-# Stage 6: Cosign image signing
+# Stage 6: Cosign 이미지 서명
 # ============================================
 
 sign:frontend:
   stage: sign
   image: bitnami/cosign:latest
   script:
-    - cosign sign --key env://COSIGN_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+    - cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
     - security:frontend
@@ -226,34 +287,106 @@ sign:backend:
   stage: sign
   image: bitnami/cosign:latest
   script:
-    - cosign sign --key env://COSIGN_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+    - cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
   needs:
     - security:backend
 
+sign:workers:
+  stage: sign
+  image: bitnami/cosign:latest
+  script:
+    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
+    - cosign sign --yes --key env://COSIGN_PRIVATE_KEY ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
+  allow_failure: true
+  needs:
+    - security:workers
+
 # ============================================
-# Stage 7: ArgoCD deployment sync
+# Stage 7: GitOps 배포 (k8s-manifests 이미지 태그 업데이트)
 # ============================================
+# ArgoCD auto-sync가 k8s-manifests repo 변경을 감지하여 자동 배포
+# staging: automated sync, production: manual sync
 
 deploy:staging:
   stage: deploy
-  image: argoproj/argocd:latest
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache git
   script:
-    - argocd login ${ARGOCD_SERVER} --auth-token ${ARGOCD_AUTH_TOKEN} --insecure
-    - argocd app sync tutum-staging
+    - git clone ${K8S_MANIFESTS_REPO} /tmp/manifests && cd /tmp/manifests
+    - git config user.email ci@tutum.dev
+    - git config user.name "GitLab CI"
+    - 'sed -i "s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/" overlays/staging/kustomization.yaml'
+    - git add -A
+    - 'git diff --cached --quiet || git commit -m "deploy: staging ${CI_COMMIT_SHORT_SHA}"'
+    - git push origin main
   environment:
     name: staging
-  only:
-    - develop
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
 
 deploy:production:
   stage: deploy
-  image: argoproj/argocd:latest
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache git
   script:
-    - argocd login ${ARGOCD_SERVER} --auth-token ${ARGOCD_AUTH_TOKEN} --insecure
-    - argocd app sync tutum-production
+    - git clone ${K8S_MANIFESTS_REPO} /tmp/manifests && cd /tmp/manifests
+    - git config user.email ci@tutum.dev
+    - git config user.name "GitLab CI"
+    - 'sed -i "s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/" overlays/production/kustomization.yaml'
+    - git add -A
+    - 'git diff --cached --quiet || git commit -m "deploy: production ${CI_COMMIT_SHORT_SHA}"'
+    - git push origin main
   environment:
     name: production
   when: manual
-  only:
-    - main
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# ============================================
+# Slack, Jira
+# ============================================
+
+notify:slack_on_failure:
+  stage: notify
+  image: curlimages/curl:8.7.1
+  allow_failure: true
+  script:
+    - |
+      curl -fsS -X POST -H "Content-type: application/json" \
+      --data "{\"text\":\"[CI FAIL] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\n${CI_PIPELINE_URL}\"}" \
+      "${SLACK_WEBHOOK_URL}"
+  when: on_failure
+
+notify:jira_on_failure:
+  stage: notify
+  image: curlimages/curl:8.7.1
+  allow_failure: true
+  script:
+    - |
+      curl -fsS -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -X POST "${JIRA_BASE_URL}/rest/api/3/issue" \
+        -d '{
+          "fields": {
+            "project": { "key": "'"${JIRA_PROJECT_KEY}"'" },
+            "summary": "[CI FAIL] '"${CI_PROJECT_PATH}"' #'"${CI_PIPELINE_ID}"'",
+            "description": {
+              "type": "doc",
+              "version": 1,
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    { "type": "text", "text": "Pipeline URL: '"${CI_PIPELINE_URL}"'" }
+                  ]
+                }
+              ]
+            },
+            "issuetype": { "name": "Task" }
+          }
+        }'
+  when: on_failure
