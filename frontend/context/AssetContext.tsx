@@ -5,7 +5,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { withCsrfHeader } from "@/lib/csrf";
 
 const API_BASE_URL = "/api/proxy";
-const WS_BASE_URL = API_BASE_URL.replace(/^http/i, "ws").replace(/\/$/, "");
+const WS_BASE_URL =
+    typeof window !== "undefined"
+        ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`
+        : "ws://localhost:8000";
 
 export interface HoldingAsset {
     id?: string;
