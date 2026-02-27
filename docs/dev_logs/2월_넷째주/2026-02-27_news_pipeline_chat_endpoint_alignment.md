@@ -55,7 +55,7 @@ git log --oneline --since="2026-02-27" --until="2026-02-27 23:59:59"
 
 ## 6. 후속 작업/리스크
 - 후속 작업:
-  - ArgoCD sync 또는 `kubectl apply -k k8s-manifests/base`
+  - ArgoCD sync 또는 `kubectl apply -k k8s-manifests /base`
   - `kubectl -n tutum-app rollout status deploy/news-producer deploy/elastic-consumer`
   - `kubectl -n tutum-app logs deploy/news-producer --tail=200`
   - `kubectl -n tutum-app logs deploy/elastic-consumer --tail=200`
