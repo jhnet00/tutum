@@ -1,0 +1,119 @@
+# ============================================
+# KEDA ScaledObjects
+# ============================================
+#
+# backend/frontend: CPU 기반 (metrics-server 필요)
+# price-consumer / news-consumer / elastic-consumer: Kafka consumer lag 기반
+#
+# Kafka 접속: kafka.tutum-data.svc.cluster.local:9092 (인증 없음)
+# ============================================
+
+---
+# backend: CPU 70% 초과 시 2→5 파드로 자동 증가
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: backend-scaledobject
+  namespace: tutum-app
+spec:
+  scaleTargetRef:
+    name: backend
+  minReplicaCount: 2
+  maxReplicaCount: 5
+  cooldownPeriod: 120
+  pollingInterval: 30
+  triggers:
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "70"
+
+---
+# frontend: CPU 70% 초과 시 2→4 파드로 자동 증가
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: frontend-scaledobject
+  namespace: tutum-app
+spec:
+  scaleTargetRef:
+    name: frontend
+  minReplicaCount: 2
+  maxReplicaCount: 4
+  cooldownPeriod: 120
+  pollingInterval: 30
+  triggers:
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "70"
+
+---
+# price-consumer: Kafka prices 토픽 lag 50 초과 시 1→5 파드로 자동 증가
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: price-consumer-scaledobject
+  namespace: tutum-app
+spec:
+  scaleTargetRef:
+    name: price-consumer
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  cooldownPeriod: 60
+  pollingInterval: 15
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.tutum-data.svc.cluster.local:9092
+        consumerGroup: price-consumer-group
+        topic: prices
+        lagThreshold: "50"
+        offsetResetPolicy: latest
+
+---
+# news-consumer: Kafka news 토픽 lag 30 초과 시 1→4 파드로 자동 증가
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: news-consumer-scaledobject
+  namespace: tutum-app
+spec:
+  scaleTargetRef:
+    name: news-consumer
+  minReplicaCount: 1
+  maxReplicaCount: 4
+  cooldownPeriod: 60
+  pollingInterval: 15
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.tutum-data.svc.cluster.local:9092
+        consumerGroup: clouddx-news-consumer-v1
+        topic: news
+        lagThreshold: "30"
+        offsetResetPolicy: latest
+
+---
+# elastic-consumer: Kafka news.raw 토픽 lag 30 초과 시 0→3 파드로 자동 증가
+# minReplicaCount: 0 → 평소 유휴 상태 유지, lag 발생 시만 기동
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: elastic-consumer-scaledobject
+  namespace: tutum-app
+spec:
+  scaleTargetRef:
+    name: elastic-consumer
+  minReplicaCount: 0
+  maxReplicaCount: 3
+  cooldownPeriod: 120
+  pollingInterval: 15
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.tutum-data.svc.cluster.local:9092
+        consumerGroup: indexer-consumer-group
+        topic: news.raw
+        lagThreshold: "30"
+        offsetResetPolicy: latest

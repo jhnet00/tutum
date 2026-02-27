@@ -25,3 +25,4 @@ resources:
   - workers/news-producer.yaml
   - workers/news-consumer.yaml
   - workers/elastic-consumer.yaml
+  - autoscaling/keda-scaledobjects.yaml
