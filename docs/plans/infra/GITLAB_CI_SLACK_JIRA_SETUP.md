@@ -170,7 +170,7 @@ GitLab CI 파이프라인 실패
 
 1. [Slack API Apps 페이지](https://api.slack.com/apps) 접속
 2. 기존 앱 선택 (또는 새 앱 생성: `Create New App → From Scratch`)
-3. 앱 이름: `tutum-gitlab-ci` / 워크스페이스: Tutum Slack
+3. 앱 이름: `tutum-gitlab` / 워크스페이스: Infraforge
 4. **Incoming Webhooks** 메뉴 → `Activate Incoming Webhooks: ON`
 5. **Add New Webhook to Workspace** 클릭
 6. 채널 선택: `#tutum-gitlab`
@@ -186,7 +186,7 @@ GitLab CI 파이프라인 실패
 
 1. [Atlassian API Token 페이지](https://id.atlassian.com/manage-profile/security/api-tokens) 접속
 2. **Create API token** 클릭
-3. 이름: `tutum-gitlab-ci` → Create
+3. 이름: `tutum-gitlab` → Create
 4. 토큰 복사 (한 번만 표시됨)
 
 필요한 정보 정리:
@@ -270,8 +270,7 @@ notify:slack_on_failure:
 ```
 
 동작 조건:
-- `develop` 또는 `main` 브랜치에서 파이프라인이 **실패**했을 때만 실행
-- `allow_failure: true` → 이 잡 자체가 실패해도(Webhook URL 미설정 등) 파이프라인에 영향 없음
+- 모든 브랜치에서 파이프라인이 **성공/실패**했을 때 실행
 
 ---
 

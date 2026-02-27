@@ -410,3 +410,44 @@ notify:jira_on_failure:
           }
         }'
   when: on_failure
+
+notify:slack_on_success:
+  stage: notify
+  image: curlimages/curl:8.7.1
+  allow_failure: true
+  script:
+    - |
+      curl -fsS -X POST -H "Content-type: application/json" \
+      --data "{\"text\":\"[CI OK] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\n${CI_PIPELINE_URL}\"}" \
+      "${SLACK_WEBHOOK_URL}"
+  when: on_success
+
+notify:jira_on_success:
+  stage: notify
+  image: curlimages/curl:8.7.1
+  allow_failure: true
+  script:
+    - |
+      curl -fsS -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -X POST "${JIRA_BASE_URL}/rest/api/3/issue" \
+        -d '{
+          "fields": {
+            "project": { "key": "'"${JIRA_PROJECT_KEY}"'" },
+            "summary": "[CI OK] '"${CI_PROJECT_PATH}"' #'"${CI_PIPELINE_ID}"'",
+            "description": {
+              "type": "doc",
+              "version": 1,
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    { "type": "text", "text": "Pipeline URL: '"${CI_PIPELINE_URL}"'" }
+                  ]
+                }
+              ]
+            },
+            "issuetype": { "name": "Task" }
+          }
+        }'
+  when: on_success
