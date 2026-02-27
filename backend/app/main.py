@@ -96,6 +96,7 @@ app.add_middleware(
 
 
 @app.get("/health")
+@app.get("/api/health")
 async def liveness():
     """Liveness probe."""
     return {"status": "alive"}
