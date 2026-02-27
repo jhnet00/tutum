@@ -12,11 +12,15 @@ Admin 대시보드에 실시간 데이터를 제공합니다.
   - Loki:  http://192.168.0.230:3100 (로그)
 """
 
+import asyncio
+import json
 import logging
 import os
 from datetime import datetime, timezone, timedelta
 
+import boto3
 import httpx
+from botocore.config import Config
 from fastapi import APIRouter, HTTPException
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -24,6 +28,22 @@ logger = logging.getLogger(__name__)
 
 MIMIR_URL = os.getenv("MIMIR_URL", "http://192.168.0.230:9009/prometheus")
 LOKI_URL  = os.getenv("LOKI_URL",  "http://192.168.0.230:3100")
+
+# ─── Bedrock client (lazy init) ───────────────────────────────────────────────
+
+_bedrock_client = None
+
+def _get_bedrock_client():
+    global _bedrock_client
+    if _bedrock_client is None:
+        _bedrock_client = boto3.client(
+            "bedrock-runtime",
+            region_name=os.getenv("AWS_REGION", "ap-northeast-2"),
+            aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+            config=Config(connect_timeout=10, read_timeout=30, retries={"max_attempts": 2}),
+        )
+    return _bedrock_client
 
 
 # ─── K8s client (lazy init) ──────────────────────────────────────────────────
@@ -340,3 +360,161 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
     except Exception as e:
         logger.error("get_logs Loki 오류: %s", e)
         return {"logs": []}
+
+
+# ─── AI 진단 ───────────────────────────────────────────────────────────────────
+
+_DIAGNOSE_SYSTEM_PROMPT = """당신은 Kubernetes 클러스터 운영 전문가 AI입니다.
+주어진 클러스터 상태 데이터를 분석하여 다음 JSON 형식으로만 응답하세요.
+다른 텍스트나 마크다운 없이 순수 JSON만 반환하세요.
+
+{
+  "severity": "OK" | "WARN" | "CRITICAL",
+  "summary": "한 줄 전체 요약 (한국어, 50자 이내)",
+  "issues": [
+    {"level": "WARN" | "ERROR", "title": "이슈 제목", "detail": "상세 설명"}
+  ],
+  "recommendations": [
+    {"priority": "HIGH" | "MEDIUM" | "LOW", "action": "권장 조치 (한국어)"}
+  ]
+}
+
+severity 기준:
+- OK: 모든 파드 정상, 재시작 없음, 리소스 여유
+- WARN: 일부 파드 이슈 or 재시작 있음 or 리소스 70% 이상
+- CRITICAL: CrashLoopBackOff or 다수 파드 비정상 or 노드 NotReady"""
+
+
+@router.get("/diagnose")
+async def get_diagnose():
+    """
+    현재 클러스터 상태를 Bedrock Claude로 AI 진단.
+    nodes + pods 데이터를 수집해 이슈/권장조치를 JSON으로 반환.
+    """
+    # 1. 클러스터 현재 상태 수집
+    try:
+        core, metrics_api = _get_k8s_clients()
+
+        # 노드 수집
+        nodes_raw = core.list_node().items
+        usage_map = {}
+        try:
+            raw = metrics_api.list_cluster_custom_object(
+                group="metrics.k8s.io", version="v1beta1", plural="nodes"
+            )
+            for item in raw.get("items", []):
+                name = item["metadata"]["name"]
+                cpu_nano = int(item["usage"]["cpu"].rstrip("n"))
+                mem_ki   = int(item["usage"]["memory"].rstrip("Ki"))
+                usage_map[name] = {"cpu_nano": cpu_nano, "mem_ki": mem_ki}
+        except Exception:
+            pass
+
+        node_lines = []
+        for node in nodes_raw:
+            name = node.metadata.name
+            alloc = node.status.allocatable or {}
+            cpu_str = alloc.get("cpu", "0")
+            mem_str = alloc.get("memory", "0Ki")
+            cpu_m = int(float(cpu_str)) * 1000 if not cpu_str.endswith("m") else int(cpu_str[:-1])
+            mem_ki = int(mem_str[:-2]) if mem_str.endswith("Ki") else int(mem_str) // 1024
+
+            cpu_pct = mem_pct = 0
+            if name in usage_map:
+                u = usage_map[name]
+                cpu_pct = round(u["cpu_nano"] / 1_000_000 / cpu_m * 100) if cpu_m else 0
+                mem_pct = round(u["mem_ki"] / mem_ki * 100) if mem_ki else 0
+
+            status = _node_status(node)
+            role   = _node_role(node)
+            node_lines.append(f"  - {name} ({role}): {status}, CPU {cpu_pct}%, MEM {mem_pct}%")
+
+        # 파드 수집
+        TARGET_NS = {"tutum-app", "tutum-data", "monitoring", "keda"}
+        pods_raw = core.list_pod_for_all_namespaces().items
+        pod_lines = []
+        problem_pods = []
+        for pod in pods_raw:
+            if pod.metadata.namespace not in TARGET_NS:
+                continue
+            phase = pod.status.phase or "Unknown"
+            cs_list = pod.status.container_statuses or []
+            waiting_reason = None
+            for cs in cs_list:
+                if cs.state and cs.state.waiting:
+                    waiting_reason = cs.state.waiting.reason
+                    break
+            display_status = waiting_reason if waiting_reason else phase
+            restarts = sum(cs.restart_count for cs in cs_list)
+
+            line = f"  - {pod.metadata.namespace}/{pod.metadata.name}: {display_status}, restarts={restarts}"
+            pod_lines.append(line)
+            if display_status not in ("Running", "Succeeded") or restarts > 5:
+                problem_pods.append(line.strip())
+
+    except Exception as e:
+        logger.error("diagnose 데이터 수집 오류: %s", e)
+        raise HTTPException(status_code=500, detail=f"클러스터 데이터 수집 실패: {e}")
+
+    # 2. 프롬프트 구성
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    prompt = f"""클러스터 진단 요청 ({now_str})
+
+[노드 상태 ({len(nodes_raw)}개)]
+{chr(10).join(node_lines)}
+
+[파드 상태 ({len(pod_lines)}개)]
+{chr(10).join(pod_lines)}
+
+[요약]
+- 전체 파드: {len(pod_lines)}개
+- 문제 파드: {len(problem_pods)}개
+{chr(10).join(problem_pods) if problem_pods else "  (없음)"}
+
+위 데이터를 분석하여 지정된 JSON 형식으로 진단 결과를 반환하세요."""
+
+    # 3. Bedrock 호출
+    try:
+        bedrock = _get_bedrock_client()
+        model_id = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20240620-v1:0")
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 1024,
+            "temperature": 0.2,
+            "system": _DIAGNOSE_SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": prompt}],
+        })
+
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: bedrock.invoke_model(
+                modelId=model_id,
+                body=body,
+                contentType="application/json",
+                accept="application/json",
+            ),
+        )
+        raw_body = json.loads(response["body"].read())
+        text = raw_body["content"][0]["text"].strip()
+
+        # JSON 파싱 (코드블록 감싸져 있을 경우 제거)
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+        diagnosis = json.loads(text)
+
+    except Exception as e:
+        logger.error("Bedrock 진단 호출 오류: %s", e)
+        raise HTTPException(status_code=503, detail=f"AI 진단 서비스 오류: {e}")
+
+    return {
+        "diagnosis": diagnosis,
+        "context": {
+            "node_count": len(nodes_raw),
+            "pod_count": len(pod_lines),
+            "problem_count": len(problem_pods),
+        },
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }

@@ -9,6 +9,9 @@ type NodeInfo = { name: string; role: string; status: string; cpu_percent: numbe
 type PodInfo  = { name: string; namespace: string; status: string; restarts: number; node: string; age: string; ready: string };
 type Metrics  = { rps: number[]; latency_p95: number[]; error_rate: number[]; kafka_lag: number[] };
 type LogEntry = { time: string; timestamp: number; level: string; namespace: string; pod: string; msg: string };
+type DiagIssue = { level: "WARN" | "ERROR"; title: string; detail: string };
+type DiagRec   = { priority: "HIGH" | "MEDIUM" | "LOW"; action: string };
+type Diagnosis = { severity: "OK" | "WARN" | "CRITICAL"; summary: string; issues: DiagIssue[]; recommendations: DiagRec[] };
 
 // ─── Sub Components ───────────────────────────────────────────────────────────
 function MiniChart({ values, color, unit = "" }: { values: number[]; color: string; unit?: string }) {
@@ -87,6 +90,10 @@ export default function AdminDashboard() {
   const [loadingNodes, setLoadingNodes] = useState(true);
   const [loadingPods, setLoadingPods] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string>("");
+  const [diagnosis, setDiagnosis] = useState<Diagnosis | null>(null);
+  const [diagLoading, setDiagLoading] = useState(false);
+  const [diagError, setDiagError] = useState<string | null>(null);
+  const [diagAt, setDiagAt] = useState<string>("");
 
   const fetchNodes = async () => {
     try {
@@ -117,6 +124,26 @@ export default function AdminDashboard() {
       if (res.ok) { const d = await res.json(); setLogs(d.logs ?? []); }
     } catch { /* silent */ }
     finally { setLoadingLogs(false); }
+  };
+
+  const runDiagnose = async () => {
+    setDiagLoading(true);
+    setDiagnosis(null);
+    setDiagError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/admin/diagnose`);
+      if (res.ok) {
+        const d = await res.json();
+        setDiagnosis(d.diagnosis);
+        setDiagAt(new Date().toTimeString().slice(0, 8));
+      } else {
+        setDiagError("AI 진단 요청 실패");
+      }
+    } catch {
+      setDiagError("네트워크 오류");
+    } finally {
+      setDiagLoading(false);
+    }
   };
 
   // 최초 로드 + 30초마다 폴링
@@ -256,6 +283,102 @@ export default function AdminDashboard() {
                   )}
                 </div>
               ))}
+            </div>
+
+            {/* ── AI 진단 패널 ── */}
+            <div className="bg-white/[0.03] border border-white/5 rounded-xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-semibold text-white/70 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
+                  AI 클러스터 진단
+                  <span className="text-white/30 text-xs font-normal">Bedrock Claude</span>
+                </h2>
+                <div className="flex items-center gap-3">
+                  {diagAt && <span className="text-xs text-white/30 font-mono">분석 {diagAt}</span>}
+                  <button
+                    onClick={runDiagnose}
+                    disabled={diagLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600/20 border border-violet-500/30 text-violet-300 hover:bg-violet-600/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  >
+                    {diagLoading ? (
+                      <><span className="w-3 h-3 border border-violet-400/50 border-t-violet-300 rounded-full animate-spin" />분석 중...</>
+                    ) : (
+                      <>✦ 진단 실행</>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {!diagnosis && !diagLoading && !diagError && (
+                <div className="text-xs text-white/20 text-center py-6">
+                  버튼을 눌러 현재 클러스터 상태를 AI로 분석합니다
+                </div>
+              )}
+
+              {diagError && (
+                <div className="text-xs text-red-400/70 bg-red-500/5 border border-red-500/10 rounded-lg px-4 py-3">{diagError}</div>
+              )}
+
+              {diagnosis && !diagLoading && (() => {
+                const sevColor = diagnosis.severity === "CRITICAL" ? { bg: "bg-red-500/10", border: "border-red-500/20", text: "text-red-400", dot: "bg-red-400" }
+                  : diagnosis.severity === "WARN" ? { bg: "bg-amber-500/10", border: "border-amber-500/20", text: "text-amber-400", dot: "bg-amber-400" }
+                  : { bg: "bg-emerald-500/10", border: "border-emerald-500/20", text: "text-emerald-400", dot: "bg-emerald-400" };
+                return (
+                  <div className="space-y-4">
+                    {/* 요약 배너 */}
+                    <div className={`flex items-center gap-3 px-4 py-3 rounded-lg ${sevColor.bg} border ${sevColor.border}`}>
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${sevColor.dot}`} />
+                      <span className={`text-sm font-semibold ${sevColor.text}`}>{diagnosis.severity}</span>
+                      <span className="text-sm text-white/70">{diagnosis.summary}</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* 이슈 목록 */}
+                      {diagnosis.issues.length > 0 && (
+                        <div>
+                          <div className="text-xs text-white/40 font-bold uppercase tracking-widest mb-2">발견된 이슈</div>
+                          <div className="space-y-2">
+                            {diagnosis.issues.map((issue, i) => (
+                              <div key={i} className={`rounded-lg px-3 py-2.5 border ${issue.level === "ERROR" ? "bg-red-500/5 border-red-500/15" : "bg-amber-500/5 border-amber-500/15"}`}>
+                                <div className={`text-xs font-semibold mb-0.5 ${issue.level === "ERROR" ? "text-red-400" : "text-amber-400"}`}>
+                                  {issue.level === "ERROR" ? "● " : "◆ "}{issue.title}
+                                </div>
+                                <div className="text-xs text-white/50">{issue.detail}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 권장 조치 */}
+                      {diagnosis.recommendations.length > 0 && (
+                        <div>
+                          <div className="text-xs text-white/40 font-bold uppercase tracking-widest mb-2">권장 조치</div>
+                          <div className="space-y-2">
+                            {diagnosis.recommendations.map((rec, i) => {
+                              const p = rec.priority === "HIGH" ? "text-red-400 bg-red-500/5 border-red-500/15"
+                                : rec.priority === "MEDIUM" ? "text-amber-400 bg-amber-500/5 border-amber-500/15"
+                                : "text-sky-400 bg-sky-500/5 border-sky-500/15";
+                              return (
+                                <div key={i} className={`rounded-lg px-3 py-2.5 border ${p}`}>
+                                  <span className="text-xs font-mono opacity-60 mr-2">[{rec.priority}]</span>
+                                  <span className="text-xs text-white/60">{rec.action}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {diagnosis.issues.length === 0 && (
+                        <div className="col-span-2 text-xs text-emerald-400/70 text-center py-2">
+                          발견된 이슈 없음 — 클러스터 정상 운영 중
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Services Status */}
