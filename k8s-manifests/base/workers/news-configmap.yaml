@@ -27,5 +27,5 @@ data:
   ENABLE_NAVER: "true"
   ENABLE_COINNESS: "true"
   ENABLE_EINFOMAX: "true"
-  ENABLE_BEDROCK_EMBEDDING: "false"
+  ENABLE_BEDROCK_EMBEDDING: "true"
   BEDROCK_REGION: "ap-northeast-2"

@@ -11,6 +11,13 @@ import requests
 from kafka import KafkaConsumer
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS") or os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 TOPIC = os.getenv("KAFKA_NEWS_TOPIC") or os.getenv("KAFKA_TOPIC", "news.raw")
 GROUP_ID = os.getenv("KAFKA_INDEXER_GROUP_ID", "indexer-consumer-group")
@@ -20,7 +27,7 @@ ES_URL = ES_URL.rstrip("/")
 ES_INDEX = os.getenv("ES_INDEX", "news")
 ES_TIMEOUT_SEC = int(os.getenv("ES_TIMEOUT_SEC", "10"))
 
-ENABLE_BEDROCK_EMBEDDING = os.getenv("ENABLE_BEDROCK_EMBEDDING", "0") == "1"
+ENABLE_BEDROCK_EMBEDDING = env_bool("ENABLE_BEDROCK_EMBEDDING", default=False)
 BEDROCK_REGION = os.getenv("BEDROCK_REGION", os.getenv("AWS_REGION", "us-east-1"))
 BEDROCK_EMBED_MODEL_ID = os.getenv("BEDROCK_EMBED_MODEL_ID", "amazon.titan-embed-text-v2:0")
 BEDROCK_INPUT_MAX_CHARS = int(os.getenv("BEDROCK_INPUT_MAX_CHARS", "8000"))
