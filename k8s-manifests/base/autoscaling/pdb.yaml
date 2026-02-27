@@ -1,0 +1,64 @@
+# ============================================
+# PodDisruptionBudgets (PDB)
+# ============================================
+#
+# 노드 drain/점검 시 파드 동시 삭제를 방지하고
+# 최소 가용성을 보장합니다.
+#
+# backend/frontend: minAvailable → 최소 N개 항상 유지
+# 단일 인스턴스 워커: maxUnavailable → drain은 허용, 순차 처리
+# ============================================
+
+---
+# backend: 노드 drain 시에도 최소 2개 파드 유지
+# (worker2에 5개 집중된 상황에서 drain 시 전멸 방지)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend-pdb
+  namespace: tutum-app
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: backend
+
+---
+# frontend: 항상 최소 1개 유지 (서비스 무중단)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend-pdb
+  namespace: tutum-app
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: frontend
+
+---
+# news-consumer: drain 허용, 동시 중단 1개 이하
+# KEDA가 스케일 아웃 시 자동 복구
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: news-consumer-pdb
+  namespace: tutum-app
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: news-consumer
+
+---
+# price-consumer: drain 허용, 동시 중단 1개 이하
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: price-consumer-pdb
+  namespace: tutum-app
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: price-consumer

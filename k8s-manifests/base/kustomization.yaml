@@ -26,3 +26,4 @@ resources:
   - workers/news-consumer.yaml
   - workers/elastic-consumer.yaml
   - autoscaling/keda-scaledobjects.yaml
+  - autoscaling/pdb.yaml
