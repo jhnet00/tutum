@@ -59,8 +59,6 @@ guard:commit-policy:
     - apk add --no-cache git
   script:
     - |
-      echo "ALERT_TEST_FORCE_FAIL"
-      exit 1
       ZERO_SHA="0000000000000000000000000000000000000000"
       BEFORE="${CI_COMMIT_BEFORE_SHA:-$ZERO_SHA}"
 
