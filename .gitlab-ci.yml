@@ -157,7 +157,7 @@ sonar:frontend:
       -Dsonar.projectName="Tutum Frontend"
       -Dsonar.sources=frontend/app,frontend/components,frontend/hooks,frontend/lib,frontend/contexts,frontend/context
       -Dsonar.exclusions=node_modules/**,**/*.test.*,**/*.spec.*,.next/**,public/**
-      -Dsonar.host.url=${SONAR_HOST_URL}
+      -Dsonar.host.url=http://sonarqube-sonarqube.sonarqube.svc.cluster.local:9000
       -Dsonar.token=${SONAR_TOKEN}
   allow_failure: true
   rules:
@@ -177,7 +177,7 @@ sonar:backend:
       -Dsonar.projectName="Tutum Backend"
       -Dsonar.sources=backend/app
       -Dsonar.exclusions=**/__pycache__/**,**/tests/**,.venv/**,workers/**
-      -Dsonar.host.url=${SONAR_HOST_URL}
+      -Dsonar.host.url=http://sonarqube-sonarqube.sonarqube.svc.cluster.local:9000
       -Dsonar.token=${SONAR_TOKEN}
   allow_failure: true
   rules:
