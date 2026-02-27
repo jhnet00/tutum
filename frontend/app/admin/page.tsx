@@ -232,17 +232,17 @@ export default function AdminDashboard() {
             {/* Metrics Charts (LGTM Integration) */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {[
-                { label: "API Requests/s", panelId: "14", color: "#60a5fa" },
-                { label: "P95 Latency (ms)", panelId: "15", color: "#a78bfa" },
-                { label: "Error Rate (%)", panelId: "16", color: "#f87171" },
-                { label: "Kafka Lag", panelId: "17", color: "#34d399" },
+                { label: "API Requests/s", panelId: "1", color: "#60a5fa" },
+                { label: "P95 Latency (ms)", panelId: "3", color: "#a78bfa" },
+                { label: "Error Rate (%)", panelId: "2", color: "#f87171" },
+                { label: "Kafka Lag", panelId: "4", color: "#34d399" },
               ].map((m) => (
                 <div key={m.label} className="bg-white/[0.03] border border-white/5 rounded-xl p-0 overflow-hidden h-32 relative group">
                   <div className="absolute top-3 left-4 text-[10px] text-white/40 font-bold uppercase tracking-widest z-10 pointer-events-none group-hover:text-white/70 transition-colors">
                     {m.label}
                   </div>
                   <iframe
-                    src={`https://admin.tutum.my/d-solo/rYdd6i9Zz/tutum-cluster-overview?orgId=1&refresh=5s&theme=dark&panelId=${m.panelId}`}
+                    src={`http://admin.tutum.my/d-solo/cfe9hn687abk0e/clouddx-overview?orgId=1&refresh=5s&theme=dark&panelId=${m.panelId}`}
                     width="100%"
                     height="100%"
                     frameBorder="0"
@@ -359,32 +359,34 @@ export default function AdminDashboard() {
           <div className="space-y-6">
             <div className="bg-white/[0.03] border border-white/5 rounded-xl overflow-hidden p-1">
               <iframe
-                src="https://admin.tutum.my/d-solo/rYdd6i9Zz/tutum-cluster-overview?orgId=1&refresh=5s&theme=dark&panelId=1"
+                src="http://admin.tutum.my/d-solo/cfe9hn687abk0e/clouddx-overview?orgId=1&refresh=5s&theme=dark&panelId=1"
                 width="100%"
                 height="800"
                 frameBorder="0"
                 className="rounded-lg"
-                title="Grafana Dashboard"
+                title="Backend API RPS"
               ></iframe>
             </div>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-white/[0.03] border border-white/5 rounded-xl overflow-hidden p-1">
                 <iframe
-                  src="https://admin.tutum.my/d-solo/rYdd6i9Zz/tutum-cluster-overview?orgId=1&refresh=5s&theme=dark&panelId=2"
+                  src="http://admin.tutum.my/d-solo/cfe9hn687abk0e/clouddx-overview?orgId=1&refresh=5s&theme=dark&panelId=2"
                   width="100%"
                   height="400"
                   frameBorder="0"
                   className="rounded-lg"
+                  title="Error Rate"
                 ></iframe>
               </div>
               <div className="bg-white/[0.03] border border-white/5 rounded-xl overflow-hidden p-1">
                 <iframe
-                  src="https://admin.tutum.my/d-solo/rYdd6i9Zz/tutum-cluster-overview?orgId=1&refresh=5s&theme=dark&panelId=3"
+                  src="http://admin.tutum.my/d-solo/cfe9hn687abk0e/clouddx-overview?orgId=1&refresh=5s&theme=dark&panelId=3"
                   width="100%"
                   height="400"
                   frameBorder="0"
                   className="rounded-lg"
+                  title="P95 Latency"
                 ></iframe>
               </div>
             </div>
