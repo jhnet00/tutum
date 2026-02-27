@@ -17,6 +17,7 @@ from .mariadb import (
     merge_duplicate_portfolios,
 )
 from .routers import (
+    admin,
     assets,
     auth,
     chat,
@@ -169,6 +170,9 @@ app.include_router(
 app.include_router(chat.router, prefix=f"{settings.API_V1_PREFIX}/chat", tags=["chat"])
 app.include_router(
     exchange_rate.router, prefix=f"{settings.API_V1_PREFIX}", tags=["exchange-rate"]
+)
+app.include_router(
+    admin.router, prefix=f"{settings.API_V1_PREFIX}", tags=["admin"]
 )
 
 # Prometheus 메트릭 노출 (/metrics)

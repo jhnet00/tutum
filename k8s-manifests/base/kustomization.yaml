@@ -8,6 +8,7 @@ resources:
   - backend/deployment.yaml
   - backend/service.yaml
   - backend/secret.yaml
+  - backend/rbac.yaml
   - ingress/gateway.yaml
   - ingress/virtualservice.yaml
   - data/mongodb.yaml

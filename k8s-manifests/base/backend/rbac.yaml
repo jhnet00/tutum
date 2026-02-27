@@ -1,0 +1,45 @@
+# ============================================
+# Backend ServiceAccount + RBAC
+# ============================================
+#
+# backend 파드가 K8s API를 읽을 수 있도록
+# ServiceAccount와 ClusterRole을 부여합니다.
+#
+# 허용 권한:
+#   - nodes, nodes/metrics: get, list (노드 상태/자원 조회)
+#   - pods: get, list (전체 네임스페이스 파드 조회)
+# ============================================
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backend-sa
+  namespace: tutum-app
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backend-cluster-reader
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backend-cluster-reader-binding
+subjects:
+  - kind: ServiceAccount
+    name: backend-sa
+    namespace: tutum-app
+roleRef:
+  kind: ClusterRole
+  name: backend-cluster-reader
+  apiGroup: rbac.authorization.k8s.io

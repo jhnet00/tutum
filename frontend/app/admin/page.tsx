@@ -2,32 +2,14 @@
 
 import { useState, useEffect, useRef } from "react";
 
-// ─── Mock Data ───────────────────────────────────────────────────────────────
-const MOCK_NODES = [
-  { name: "k8s-master", role: "control-plane", status: "Ready", cpu: 34, mem: 52, ip: "192.168.56.20" },
-  { name: "k8s-worker1", role: "worker", status: "Ready", cpu: 61, mem: 73, ip: "192.168.56.21" },
-  { name: "k8s-worker2", role: "worker", status: "Ready", cpu: 48, mem: 65, ip: "192.168.56.22" },
-];
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const MOCK_PODS = [
-  { name: "frontend-7d9f8b-xk2p", namespace: "tutum-app", status: "Running", restarts: 0, node: "k8s-worker1", age: "2d" },
-  { name: "frontend-7d9f8b-mn4q", namespace: "tutum-app", status: "Running", restarts: 0, node: "k8s-worker2", age: "2d" },
-  { name: "backend-6c8d7f-p9rs", namespace: "tutum-app", status: "Running", restarts: 1, node: "k8s-worker1", age: "2d" },
-  { name: "backend-6c8d7f-t3uv", namespace: "tutum-app", status: "Running", restarts: 0, node: "k8s-worker2", age: "2d" },
-  { name: "redis-0", namespace: "tutum-data", status: "Running", restarts: 0, node: "k8s-worker1", age: "3d" },
-  { name: "kafka-0", namespace: "tutum-data", status: "Running", restarts: 2, node: "k8s-worker2", age: "3d" },
-  { name: "alloy-ds-xk2p", namespace: "monitoring", status: "Running", restarts: 0, node: "k8s-worker1", age: "1d" },
-  { name: "alloy-ds-mn4q", namespace: "monitoring", status: "Running", restarts: 0, node: "k8s-worker2", age: "1d" },
-  { name: "ingress-nginx-ctrl", namespace: "ingress-nginx", status: "Running", restarts: 0, node: "k8s-worker1", age: "2d" },
-];
+// ─── Types ────────────────────────────────────────────────────────────────────
+type NodeInfo = { name: string; role: string; status: string; cpu_percent: number; memory_percent: number; ip: string };
+type PodInfo  = { name: string; namespace: string; status: string; restarts: number; node: string; age: string; ready: string };
+type Metrics  = { rps: number[]; latency_p95: number[]; error_rate: number[]; kafka_lag: number[] };
 
-const MOCK_METRICS = {
-  rps: [12, 18, 24, 31, 28, 35, 42, 38, 45, 52, 48, 55],
-  latencyP95: [120, 135, 118, 142, 128, 155, 138, 162, 145, 170, 152, 148],
-  errorRate: [0.1, 0.0, 0.2, 0.1, 0.0, 0.3, 0.1, 0.0, 0.2, 0.1, 0.0, 0.1],
-  kafkaLag: [0, 2, 5, 3, 1, 0, 4, 2, 0, 1, 0, 0],
-};
-
+// ─── Mock Logs (Loki 미연동, 시뮬레이션 유지) ─────────────────────────────────
 const MOCK_LOGS = [
   { time: "07:18:42", level: "INFO", pod: "backend-6c8d7f-p9rs", msg: "GET /api/v1/market/prices 200 OK (45ms)" },
   { time: "07:18:41", level: "INFO", pod: "backend-6c8d7f-t3uv", msg: "WebSocket connected: user_id=u_8821" },
@@ -107,17 +89,59 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<"overview" | "pods" | "logs" | "monitoring">("overview");
   const [nsFilter, setNsFilter] = useState("all");
   const [logs, setLogs] = useState(MOCK_LOGS);
-  const [tick, setTick] = useState(0);
   const logRef = useRef<HTMLDivElement>(null);
 
-  // Simulate live log stream
+  // ── 실데이터 상태
+  const [nodes, setNodes] = useState<NodeInfo[]>([]);
+  const [pods, setPods] = useState<PodInfo[]>([]);
+  const [metrics, setMetrics] = useState<Metrics>({ rps: [], latency_p95: [], error_rate: [], kafka_lag: [] });
+  const [loadingNodes, setLoadingNodes] = useState(true);
+  const [loadingPods, setLoadingPods] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<string>("");
+
+  const fetchNodes = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/admin/nodes`);
+      if (res.ok) { const d = await res.json(); setNodes(d.nodes ?? []); }
+    } catch { /* 네트워크 오류 시 이전 데이터 유지 */ }
+    finally { setLoadingNodes(false); }
+  };
+
+  const fetchPods = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/admin/pods`);
+      if (res.ok) { const d = await res.json(); setPods(d.pods ?? []); }
+    } catch { /* silent */ }
+    finally { setLoadingPods(false); }
+  };
+
+  const fetchMetrics = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/admin/metrics`);
+      if (res.ok) { const d = await res.json(); setMetrics(d); }
+    } catch { /* silent */ }
+  };
+
+  // 최초 로드 + 30초마다 폴링
   useEffect(() => {
+    fetchNodes(); fetchPods(); fetchMetrics();
+    const poll = setInterval(() => {
+      fetchNodes(); fetchPods(); fetchMetrics();
+      setLastUpdated(new Date().toTimeString().slice(0, 8));
+    }, 30000);
+    return () => clearInterval(poll);
+  }, []);
+
+  // 로그 시뮬레이션 (Loki 미연동)
+  useEffect(() => {
+    const podNames = pods.length > 0
+      ? pods.map((p) => p.name)
+      : MOCK_LOGS.map((l) => l.pod);
     const interval = setInterval(() => {
-      setTick((t) => t + 1);
       const newLog = {
         time: new Date().toTimeString().slice(0, 8),
         level: ["INFO", "INFO", "INFO", "WARN", "ERROR"][Math.floor(Math.random() * 5)],
-        pod: MOCK_PODS[Math.floor(Math.random() * MOCK_PODS.length)].name,
+        pod: podNames[Math.floor(Math.random() * podNames.length)],
         msg: [
           "GET /api/v1/market/prices 200 OK",
           "Metrics scraped successfully",
@@ -131,12 +155,12 @@ export default function AdminDashboard() {
       setLogs((prev) => [newLog, ...prev.slice(0, 49)]);
     }, 3000);
     return () => clearInterval(interval);
-  }, []);
+  }, [pods]);
 
-  const filteredPods = nsFilter === "all" ? MOCK_PODS : MOCK_PODS.filter((p) => p.namespace === nsFilter);
-  const namespaces = ["all", ...Array.from(new Set(MOCK_PODS.map((p) => p.namespace)))];
-  const runningPods = MOCK_PODS.filter((p) => p.status === "Running").length;
-  const totalRestarts = MOCK_PODS.reduce((s, p) => s + p.restarts, 0);
+  const filteredPods = nsFilter === "all" ? pods : pods.filter((p) => p.namespace === nsFilter);
+  const namespaces = ["all", ...Array.from(new Set(pods.map((p) => p.namespace)))];
+  const runningPods = pods.filter((p) => p.status === "Running").length;
+  const totalRestarts = pods.reduce((s, p) => s + p.restarts, 0);
 
   return (
     <div className="min-h-screen bg-[#0a0e1a] text-white font-sans">
@@ -154,7 +178,7 @@ export default function AdminDashboard() {
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-xs text-white/50">Live</span>
             </div>
-            <span className="text-xs text-white/30 font-mono">192.168.56.20:6443</span>
+            {lastUpdated && <span className="text-xs text-white/30 font-mono">updated {lastUpdated}</span>}
           </div>
         </div>
       </header>
@@ -164,10 +188,10 @@ export default function AdminDashboard() {
         {/* ── Summary Cards ── */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { label: "Nodes", value: `${MOCK_NODES.length}`, sub: "All Ready", color: "#34d399", icon: "⬡" },
-            { label: "Running Pods", value: `${runningPods}/${MOCK_PODS.length}`, sub: "tutum-app + data", color: "#60a5fa", icon: "◉" },
-            { label: "Total Restarts", value: `${totalRestarts}`, sub: "Last 24h", color: totalRestarts > 3 ? "#f59e0b" : "#34d399", icon: "↺" },
-            { label: "Ingress IP", value: "192.168.56.100", sub: "MetalLB", color: "#a78bfa", icon: "⇄" },
+            { label: "Nodes", value: loadingNodes ? "..." : `${nodes.length}`, sub: nodes.every((n) => n.status === "Ready") ? "All Ready" : "Check Status", color: "#34d399", icon: "⬡" },
+            { label: "Running Pods", value: loadingPods ? "..." : `${runningPods}/${pods.length}`, sub: "tutum-app + data", color: "#60a5fa", icon: "◉" },
+            { label: "Total Restarts", value: loadingPods ? "..." : `${totalRestarts}`, sub: "현재 파드 기준", color: totalRestarts > 5 ? "#f59e0b" : "#34d399", icon: "↺" },
+            { label: "Ingress IP", value: "192.168.0.240", sub: "MetalLB / Istio", color: "#a78bfa", icon: "⇄" },
           ].map((c) => (
             <div key={c.label} className="bg-white/[0.03] border border-white/5 rounded-xl p-4 hover:border-white/10 transition-colors">
               <div className="flex items-start justify-between mb-3">
@@ -204,50 +228,52 @@ export default function AdminDashboard() {
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 Nodes
               </h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {MOCK_NODES.map((n) => (
-                  <div key={n.name} className="bg-white/[0.03] border border-white/5 rounded-lg p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="font-mono text-sm font-semibold">{n.name}</div>
-                        <div className="text-xs text-white/30">{n.ip} · {n.role}</div>
+              {loadingNodes ? (
+                <div className="text-xs text-white/30 py-4 text-center">노드 정보 로딩 중...</div>
+              ) : nodes.length === 0 ? (
+                <div className="text-xs text-red-400/70 py-4 text-center">노드 데이터를 가져올 수 없습니다</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {nodes.map((n) => (
+                    <div key={n.name} className="bg-white/[0.03] border border-white/5 rounded-lg p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="font-mono text-sm font-semibold">{n.name}</div>
+                          <div className="text-xs text-white/30">{n.ip} · {n.role}</div>
+                        </div>
+                        <StatusBadge status={n.status} />
                       </div>
-                      <StatusBadge status={n.status} />
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-xs text-white/40 mb-0.5">
+                          <span>CPU</span>
+                        </div>
+                        <GaugeBar value={n.cpu_percent} color="#60a5fa" />
+                        <div className="flex justify-between text-xs text-white/40 mb-0.5 mt-2">
+                          <span>Memory</span>
+                        </div>
+                        <GaugeBar value={n.memory_percent} color="#a78bfa" />
+                      </div>
                     </div>
-                    <div className="space-y-1.5">
-                      <div className="flex justify-between text-xs text-white/40 mb-0.5">
-                        <span>CPU</span>
-                      </div>
-                      <GaugeBar value={n.cpu} color="#60a5fa" />
-                      <div className="flex justify-between text-xs text-white/40 mb-0.5 mt-2">
-                        <span>Memory</span>
-                      </div>
-                      <GaugeBar value={n.mem} color="#a78bfa" />
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* Metrics Charts (LGTM Integration) */}
+            {/* Metrics Charts (Mimir 실데이터) */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               {[
-                { label: "API Requests/s", panelId: "1", color: "#60a5fa" },
-                { label: "P95 Latency (ms)", panelId: "3", color: "#a78bfa" },
-                { label: "Error Rate (%)", panelId: "2", color: "#f87171" },
-                { label: "Kafka Lag", panelId: "4", color: "#34d399" },
+                { label: "API Requests/s", values: metrics.rps, color: "#60a5fa", unit: "/s" },
+                { label: "P95 Latency (ms)", values: metrics.latency_p95, color: "#a78bfa", unit: "ms" },
+                { label: "Error Rate (%)", values: metrics.error_rate, color: "#f87171", unit: "%" },
+                { label: "Kafka Lag", values: metrics.kafka_lag, color: "#34d399", unit: "" },
               ].map((m) => (
-                <div key={m.label} className="bg-white/[0.03] border border-white/5 rounded-xl p-0 overflow-hidden h-32 relative group">
-                  <div className="absolute top-3 left-4 text-[10px] text-white/40 font-bold uppercase tracking-widest z-10 pointer-events-none group-hover:text-white/70 transition-colors">
-                    {m.label}
-                  </div>
-                  <iframe
-                    src={`http://admin.tutum.my/d-solo/cfe9hn687abk0e/clouddx-overview?orgId=1&refresh=5s&theme=dark&panelId=${m.panelId}`}
-                    width="100%"
-                    height="100%"
-                    frameBorder="0"
-                    className="opacity-80 hover:opacity-100 transition-opacity"
-                  ></iframe>
+                <div key={m.label} className="bg-white/[0.03] border border-white/5 rounded-xl p-4 space-y-2">
+                  <div className="text-[10px] text-white/40 font-bold uppercase tracking-widest">{m.label}</div>
+                  {m.values.length > 0 ? (
+                    <MiniChart values={m.values} color={m.color} unit={m.unit} />
+                  ) : (
+                    <div className="h-12 flex items-center justify-center text-xs text-white/20">데이터 없음</div>
+                  )}
                 </div>
               ))}
             </div>
@@ -286,7 +312,9 @@ export default function AdminDashboard() {
         {activeTab === "pods" && (
           <div className="bg-white/[0.03] border border-white/5 rounded-xl overflow-hidden">
             <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-white/70">Pods</h2>
+              <h2 className="text-sm font-semibold text-white/70">
+                Pods {!loadingPods && <span className="text-white/30 font-normal">({pods.length})</span>}
+              </h2>
               <div className="flex gap-1">
                 {namespaces.map((ns) => (
                   <button
@@ -301,10 +329,13 @@ export default function AdminDashboard() {
                 ))}
               </div>
             </div>
+            {loadingPods ? (
+              <div className="text-xs text-white/30 py-8 text-center">파드 목록 로딩 중...</div>
+            ) : (
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-white/5">
-                  {["Name", "Namespace", "Status", "Restarts", "Node", "Age"].map((h) => (
+                  {["Name", "Namespace", "Status", "Ready", "Restarts", "Node", "Age"].map((h) => (
                     <th key={h} className="px-5 py-3 text-left text-xs font-medium text-white/30 uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
@@ -317,6 +348,7 @@ export default function AdminDashboard() {
                       <span className="px-2 py-0.5 rounded text-xs bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">{pod.namespace}</span>
                     </td>
                     <td className="px-5 py-3"><StatusBadge status={pod.status} /></td>
+                    <td className="px-5 py-3 font-mono text-xs text-white/50">{pod.ready}</td>
                     <td className="px-5 py-3">
                       <span className={`font-mono text-xs ${pod.restarts > 0 ? "text-amber-400" : "text-white/40"}`}>{pod.restarts}</span>
                     </td>
@@ -326,6 +358,7 @@ export default function AdminDashboard() {
                 ))}
               </tbody>
             </table>
+            )}
           </div>
         )}
 

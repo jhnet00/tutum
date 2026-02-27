@@ -36,3 +36,4 @@ websockets>=12.0                # Upbit WebSocket 클라이언트
 python-dotenv==1.0.0
 ccxt==4.4.22                     # 암호화폐 거래소 API Client
 prometheus-fastapi-instrumentator==7.1.0
+kubernetes>=29.0.0              # K8s in-cluster client (Admin API용)

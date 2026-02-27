@@ -19,6 +19,7 @@ spec:
         app: backend
         version: v1
     spec:
+      serviceAccountName: backend-sa
       nodeSelector:
         workload: app
       affinity:
