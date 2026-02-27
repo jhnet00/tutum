@@ -13,7 +13,9 @@ resources:
   - ingress/virtualservice.yaml
   - data/mongodb.yaml
   - data/redis.yaml
+  - data/redis-exporter.yaml
   - data/kafka.yaml
+  - data/kafka-exporter.yaml
   - data/elasticsearch.yaml
   - data/kibana.yaml
   - storage/minio-secret.yaml
