@@ -97,6 +97,25 @@ async def rate_limit_reset(key: str):
     await cache_delete(key)
 
 
+async def cache_get_with_last_good(key: str) -> tuple[str | None, bool]:
+    """신선 캐시 우선 조회 → 없으면 last_good 폴백.
+    Returns: (value, is_stale)  —  is_stale=True 면 last_good에서 반환된 것.
+    """
+    fresh = await cache_get(key)
+    if fresh:
+        return fresh, False
+    stale = await cache_get(f"{key}:last_good")
+    if stale:
+        return stale, True
+    return None, False
+
+
+async def cache_set_with_last_good(key: str, value: str, expire_seconds: int = 300, backup_ttl: int = 86400):
+    """단기 TTL 캐시 저장 + 24시간 last_good 백업 동시 저장."""
+    await cache_set(key, value, expire_seconds)
+    await cache_set(f"{key}:last_good", value, backup_ttl)
+
+
 async def blacklist_token(token: str, expire_seconds: int = 1800):
     if redis_client is None:
         return

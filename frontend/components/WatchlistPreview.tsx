@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { ChevronRight, ChevronLeft } from "lucide-react";
 import Sparkline from "./Sparkline";
 import { Button } from "@/components/ui/button";
@@ -25,58 +25,61 @@ interface WatchlistData {
     stocks: Asset[];
 }
 
+const CACHE_KEY = "watchlist_cache";
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5분
+
+function loadFromCache(): { data: WatchlistData; ts: number } | null {
+    try {
+        const raw = sessionStorage.getItem(CACHE_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+    } catch { return null; }
+}
+
+function saveToCache(data: WatchlistData) {
+    try {
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data, ts: Date.now() }));
+    } catch { /* ignore */ }
+}
+
 export default function WatchlistPreview() {
     const { user } = useAuth();
     const [data, setData] = useState<WatchlistData | null>(null);
     const [loading, setLoading] = useState(true);
+    const [isStale, setIsStale] = useState(false);
     const getSparklineColor = (isPositive: boolean): string =>
         isPositive ? "rgb(32, 123, 112)" : "rgb(108, 52, 60)";
 
     useEffect(() => {
+        // 캐시 즉시 표시 후 백그라운드 갱신
+        const cached = loadFromCache();
+        if (cached) {
+            setData(cached.data);
+            setLoading(false);
+            const isExpired = Date.now() - cached.ts > CACHE_TTL_MS;
+            if (!isExpired) return; // 신선하면 재요청 생략
+            setIsStale(true);
+        }
+
         async function loadData() {
             try {
                 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-                // Fetch stocks and crypto in parallel
-                // Stocks: 삼성전자(005930), Tesla(TSLA), NVIDIA(NVDA), Apple(AAPL)
-                // Crypto: BTC, ETH, USDT, ADA
                 const stockSymbols = ["005930", "TSLA", "NVDA", "AAPL"];
                 const cryptoSymbols = ["BTC", "ETH", "USDT", "ADA"];
-
-                const fetchHistoryData = async (type: string, symbol: string) => {
-                    const res = await fetch(`${API_URL}/api/v1/market/history/${type}/${symbol}?timeframe=D&count=30`);
-                    const result = await res.json();
-                    return { symbol, history: result.history || [] };
-                };
-
-                // Helper to get name and price (Note: In a full app, this would come from a unified market API)
-                // For now, we'll keep the names but fetch the history
                 const stockNames: any = { "005930": "삼성전자", "TSLA": "Tesla Inc.", "NVDA": "NVIDIA Corp.", "AAPL": "Apple Inc." };
                 const cryptoNames: any = { "BTC": "Bitcoin", "ETH": "Ethereum", "USDT": "Tether", "ADA": "Cardano" };
 
-                const [stockRes, cryptoRes] = await Promise.all([
-                    Promise.all(stockSymbols.map(async s => {
-                        try {
-                            const r = await fetch(`${API_URL}/api/v1/market/history/stock/${s}?timeframe=D&count=30`);
-                            const json = await r.json();
-                            if (!json.history || json.history.length === 0) console.warn(`Stock ${s} history is empty`);
-                            return json;
-                        } catch (e) {
-                            console.error(`Error fetching stock ${s}:`, e);
-                            return { history: [] };
-                        }
-                    })),
-                    Promise.all(cryptoSymbols.map(async s => {
-                        try {
-                            const r = await fetch(`${API_URL}/api/v1/market/history/crypto/${s}?timeframe=D&count=30`);
-                            const json = await r.json();
-                            if (!json.history || json.history.length === 0) console.warn(`Crypto ${s} history is empty`);
-                            return json;
-                        } catch (e) {
-                            console.error(`Error fetching crypto ${s}:`, e);
-                            return { history: [] };
-                        }
-                    }))
+                const fetchHistory = async (type: string, s: string) => {
+                    try {
+                        const r = await fetch(`${API_URL}/api/v1/market/history/${type}/${s}?timeframe=D&count=30`);
+                        const json = await r.json();
+                        return json?.history?.length ? json : { history: [] };
+                    } catch { return { history: [] }; }
+                };
+
+                const [stockResults, cryptoResults] = await Promise.all([
+                    Promise.all(stockSymbols.map(s => fetchHistory("stock", s))),
+                    Promise.all(cryptoSymbols.map(s => fetchHistory("crypto", s))),
                 ]);
 
                 const formatAsset = (res: any, symbol: string, name: string) => {
@@ -84,7 +87,6 @@ export default function WatchlistPreview() {
                     const last = history.length > 0 ? history[history.length - 1] : { close: 0, open: 0 };
                     const first = history.length > 0 ? history[0] : { close: 0 };
                     const changePercent = first?.close > 0 ? ((last.close - first.close) / first.close) * 100 : 0;
-
                     return {
                         name,
                         symbol,
@@ -96,12 +98,23 @@ export default function WatchlistPreview() {
                     };
                 };
 
-                setData({
-                    stocks: stockSymbols.map((s, i) => formatAsset(stockRes[i], s, stockNames[s])),
-                    crypto: cryptoSymbols.map((s, i) => formatAsset(cryptoRes[i], s, cryptoNames[s]))
-                });
+                // 모든 심볼이 빈 배열이면 캐시 유지 (API 전체 장애 상황)
+                const allEmpty = [...stockResults, ...cryptoResults].every(r => !r?.history?.length);
+                if (allEmpty && data) {
+                    setIsStale(true);
+                    return;
+                }
+
+                const freshData = {
+                    stocks: stockSymbols.map((s, i) => formatAsset(stockResults[i], s, stockNames[s])),
+                    crypto: cryptoSymbols.map((s, i) => formatAsset(cryptoResults[i], s, cryptoNames[s])),
+                };
+                setData(freshData);
+                setIsStale(false);
+                saveToCache(freshData);
             } catch (error) {
                 console.error("Failed to load watchlist:", error);
+                if (!data) setLoading(false);
             } finally {
                 setLoading(false);
             }
@@ -275,7 +288,7 @@ export default function WatchlistPreview() {
         );
     };
 
-    if (loading || !data) {
+    if (loading && !data) {
         return (
             <section className="bg-background px-4 py-12 sm:px-6 lg:px-8">
                 <div className="mx-auto max-w-7xl">
@@ -295,7 +308,14 @@ export default function WatchlistPreview() {
     return (
         <section id="market" className="bg-background px-4 pt-20 pb-8 sm:px-6 lg:px-8">
             <div className="mx-auto max-w-7xl">
-                <h2 className="mb-10 text-3xl font-bold text-foreground">주식 & 코인 TOP 10</h2>
+                <div className="mb-10 flex items-center gap-3">
+                    <h2 className="text-3xl font-bold text-foreground">주식 & 코인 TOP 10</h2>
+                    {isStale && (
+                        <Badge variant="outline" className="text-xs text-muted-foreground border-muted-foreground/40">
+                            캐시 데이터
+                        </Badge>
+                    )}
+                </div>
 
                 <Section title="주식" assets={data.stocks} />
                 <Section title="코인" assets={data.crypto} />

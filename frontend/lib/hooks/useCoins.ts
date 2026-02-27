@@ -29,8 +29,29 @@ const COIN_NAMES: Record<string, { id: string; name: string }> = {
   "BNB": { id: "binancecoin", name: "Binance Coin" },
 };
 
+const COINS_CACHE_KEY = "coins_data_cache";
+const COINS_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function loadCoinsCache(): CoinData[] | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(COINS_CACHE_KEY);
+    if (!raw) return null;
+    const { data, ts } = JSON.parse(raw);
+    if (Date.now() - ts > COINS_CACHE_TTL_MS) return null;
+    return data;
+  } catch { return null; }
+}
+
+function saveCoinsCache(data: CoinData[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(COINS_CACHE_KEY, JSON.stringify({ data, ts: Date.now() }));
+  } catch { /* ignore */ }
+}
+
 export function useCoins() {
-  const [coins, setCoins] = useState<CoinData[]>(MOCK_COINS);
+  const [coins, setCoins] = useState<CoinData[]>(() => loadCoinsCache() ?? MOCK_COINS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,6 +91,7 @@ export function useCoins() {
 
           if (updatedCoins.length > 0) {
             setError(null);
+            saveCoinsCache(updatedCoins);
             return updatedCoins;
           }
           return prevCoins;

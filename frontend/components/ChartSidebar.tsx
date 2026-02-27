@@ -1,9 +1,8 @@
 "use client";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Star, TrendingUp, TrendingDown, Info } from "lucide-react";
+import { Star, Info } from "lucide-react";
 import { useState } from "react";
 
 import { useRef, useEffect, useCallback } from "react";
@@ -16,6 +15,31 @@ interface ChartSidebarProps {
     currentAsset?: Asset | null;
 }
 
+const PRICE_CACHE_KEY = "chartsidebar_prices_cache";
+const PRICE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+interface PriceCache {
+    priceMap: Record<string, number>;
+    changeMap: Record<string, { change: string; isPositive: boolean }>;
+    ts: number;
+}
+
+function loadPriceCache(): PriceCache | null {
+    try {
+        const raw = sessionStorage.getItem(PRICE_CACHE_KEY);
+        if (!raw) return null;
+        const parsed: PriceCache = JSON.parse(raw);
+        if (Date.now() - parsed.ts > PRICE_CACHE_TTL_MS) return null;
+        return parsed;
+    } catch { return null; }
+}
+
+function savePriceCache(priceMap: Record<string, number>, changeMap: Record<string, { change: string; isPositive: boolean }>) {
+    try {
+        sessionStorage.setItem(PRICE_CACHE_KEY, JSON.stringify({ priceMap, changeMap, ts: Date.now() }));
+    } catch { /* ignore */ }
+}
+
 export default function ChartSidebar({ onSelectAsset, currentAsset }: ChartSidebarProps) {
     const [mainTab, setMainTab] = useState("인기");
     const [categoryTab, setCategoryTab] = useState("주식");
@@ -25,6 +49,15 @@ export default function ChartSidebar({ onSelectAsset, currentAsset }: ChartSideb
     // Live price state
     const [livePriceMap, setLivePriceMap] = useState<Record<string, number>>({});
     const [liveChangeMap, setLiveChangeMap] = useState<Record<string, { change: string; isPositive: boolean }>>({});
+
+    // Load price cache on mount
+    useEffect(() => {
+        const cached = loadPriceCache();
+        if (cached) {
+            setLivePriceMap(cached.priceMap);
+            setLiveChangeMap(cached.changeMap);
+        }
+    }, []);
 
     const fetchLivePrices = useCallback(async () => {
         const stockSymbols = allAssets.filter(a => a.type === "주식").map(a => a.symbol);
@@ -80,7 +113,10 @@ export default function ChartSidebar({ onSelectAsset, currentAsset }: ChartSideb
             }
         }
 
-        if (Object.keys(newPriceMap).length > 0) setLivePriceMap(newPriceMap);
+        if (Object.keys(newPriceMap).length > 0) {
+            setLivePriceMap(newPriceMap);
+            savePriceCache(newPriceMap, newChangeMap);
+        }
         if (Object.keys(newChangeMap).length > 0) setLiveChangeMap(newChangeMap);
     }, []);
 

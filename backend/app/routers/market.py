@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 from ..services.market_data import kis_client, crypto_client
 from ..services.exchange_rate import get_exchange_rate
 from ..services.stock_search import search_stocks_v2
-from ..cache import cache_get, get_redis
+from ..cache import cache_get, cache_get_with_last_good, cache_set_with_last_good, get_redis
 from ..config import get_settings
 
 router = APIRouter()
@@ -66,13 +66,16 @@ async def search_market(
 
 
 async def get_cached_price(symbol: str) -> dict | None:
-    """Redis?먯꽌 罹먯떆???쒖꽭 議고쉶"""
+    """Redis 캐시에서 최신 가격 조회. 신선 캐시 없으면 last_good(24h) 폴백."""
     try:
-        cached = await cache_get(f"price:{symbol}")
-        if cached:
-            return json.loads(cached)
+        value, is_stale = await cache_get_with_last_good(f"price:{symbol}")
+        if value:
+            data = json.loads(value)
+            if is_stale:
+                data["stale"] = True
+            return data
     except Exception as e:
-        logger.warning("罹먯떆 議고쉶 ?ㅽ뙣: %s", e)
+        logger.warning("캐시 조회 실패: %s", e)
     return None
 
 
@@ -454,10 +457,20 @@ async def get_domestic_stock_price(code: str):
         cached["source"] = "cache"
         return cached
 
-    # 罹먯떆 誘몄뒪: ?몃? API ?몄텧
-    result = await kis_client.get_current_price(code, market="KR")
-    result["source"] = "api"
-    return result
+    # cache miss: KIS API 호출. 성공 시 last_good 백업, 실패 시 last_good 폴백
+    try:
+        result = await kis_client.get_current_price(code, market="KR")
+        result["source"] = "api"
+        import json as _j; await cache_set_with_last_good(f"price:{code}", _j.dumps(result))
+        return result
+    except Exception as e:
+        logger.warning("KIS domestic API 실패 (%s): %s", code, e)
+        last_good = await get_cached_price(code)
+        if last_good:
+            last_good["source"] = "last_good"
+            last_good.setdefault("stale", True)
+            return last_good
+        return {"code": code, "error": str(e), "source": "error"}
 
 @router.get("/price/overseas/{ticker}")
 async def get_overseas_stock_price(ticker: str):
@@ -472,10 +485,20 @@ async def get_overseas_stock_price(ticker: str):
         cached["source"] = "cache"
         return cached
 
-    # 罹먯떆 誘몄뒪: ?몃? API ?몄텧
-    result = await kis_client.get_current_price(ticker, market="US")
-    result["source"] = "api"
-    return result
+    # cache miss: KIS API 호출. 성공 시 last_good 백업, 실패 시 last_good 폴백
+    try:
+        result = await kis_client.get_current_price(ticker, market="US")
+        result["source"] = "api"
+        import json as _j; await cache_set_with_last_good(f"price:{ticker.upper()}", _j.dumps(result))
+        return result
+    except Exception as e:
+        logger.warning("KIS overseas API 실패 (%s): %s", ticker, e)
+        last_good = await get_cached_price(ticker.upper())
+        if last_good:
+            last_good["source"] = "last_good"
+            last_good.setdefault("stale", True)
+            return last_good
+        return {"ticker": ticker, "error": str(e), "source": "error"}
 
 @router.get("/price/crypto/{ticker}")
 async def get_crypto_price(ticker: str):
@@ -511,13 +534,23 @@ async def get_crypto_price(ticker: str):
             cached_currency or "unknown",
         )
 
-    # 罹먯떆 誘몄뒪: ?몃? API ?몄텧
-    result = await crypto_client.get_current_price(ticker)
-    result["symbol"] = symbol
-    result.setdefault("asset_type", "crypto")
-    result.setdefault("currency", "KRW")
-    result["source"] = "api"
-    return result
+    # cache miss: Upbit API 호출. 성공 시 last_good 백업, 실패 시 last_good 폴백
+    try:
+        result = await crypto_client.get_current_price(ticker)
+        result["symbol"] = symbol
+        result.setdefault("asset_type", "crypto")
+        result.setdefault("currency", "KRW")
+        result["source"] = "api"
+        import json as _j; await cache_set_with_last_good(f"price:{symbol}", _j.dumps(result))
+        return result
+    except Exception as e:
+        logger.warning("Upbit crypto API 실패 (%s): %s", symbol, e)
+        last_good = await get_cached_price(symbol)
+        if last_good:
+            last_good["source"] = "last_good"
+            last_good.setdefault("stale", True)
+            return last_good
+        return {"ticker": ticker, "error": str(e), "source": "error"}
 
 
 @router.get("/prices/crypto")

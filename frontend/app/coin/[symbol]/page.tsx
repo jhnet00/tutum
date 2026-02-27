@@ -9,6 +9,24 @@ import { Asset } from "@/lib/mock-data";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+const COIN_CACHE_TTL_MS = 3 * 60 * 1000;
+
+function loadCoinCache(symbol: string): CoinDetail | null {
+  try {
+    const raw = sessionStorage.getItem(`coin_detail_${symbol}`);
+    if (!raw) return null;
+    const { data, ts } = JSON.parse(raw);
+    if (Date.now() - ts > COIN_CACHE_TTL_MS) return null;
+    return data;
+  } catch { return null; }
+}
+
+function saveCoinCache(symbol: string, data: CoinDetail) {
+  try {
+    sessionStorage.setItem(`coin_detail_${symbol}`, JSON.stringify({ data, ts: Date.now() }));
+  } catch { /* ignore */ }
+}
+
 // 심볼 -> 이름 매핑
 const COIN_NAMES: Record<string, string> = {
   BTC: "Bitcoin",
@@ -40,10 +58,17 @@ export default function CoinDetailPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function fetchCoinData() {
-      if (!symbol) return;
+    if (!symbol) return;
 
-      setLoading(true);
+    // 캐시 즉시 표시
+    const cachedCoin = loadCoinCache(symbol);
+    if (cachedCoin) {
+      setCoin(cachedCoin);
+      setLoading(false);
+    }
+
+    async function fetchCoinData() {
+      if (!cachedCoin) setLoading(true);
       setError(null);
 
       try {
@@ -61,31 +86,35 @@ export default function CoinDetailPage() {
           throw new Error(data.error);
         }
 
-        setCoin({
+        const coinData: CoinDetail = {
           symbol: symbol,
           name: COIN_NAMES[symbol] || symbol,
           price: data.price || 0,
           change24h: data.change_percent || 0,
           volume24h: data.volume || 0,
           marketCap: 0,
-        });
+        };
+        saveCoinCache(symbol, coinData);
+        setCoin(coinData);
       } catch (err) {
         console.error("코인 데이터 로드 실패:", err);
-        const mockCoin = MOCK_COINS.find(
-          (c) => c.symbol.toUpperCase() === symbol
-        );
-        if (mockCoin) {
-          setCoin({
-            symbol: mockCoin.symbol,
-            name: mockCoin.name,
-            price: mockCoin.price || 0,
-            change24h: mockCoin.change24h || 0,
-            volume24h: mockCoin.volume24h || 0,
-            marketCap: mockCoin.marketCap || 0,
-          });
-          setError("실시간 데이터를 불러오지 못해 캐시된 데이터를 표시합니다.");
-        } else {
-          setError("코인을 찾을 수 없습니다.");
+        if (!cachedCoin) {
+          const mockCoin = MOCK_COINS.find(
+            (c) => c.symbol.toUpperCase() === symbol
+          );
+          if (mockCoin) {
+            setCoin({
+              symbol: mockCoin.symbol,
+              name: mockCoin.name,
+              price: mockCoin.price || 0,
+              change24h: mockCoin.change24h || 0,
+              volume24h: mockCoin.volume24h || 0,
+              marketCap: mockCoin.marketCap || 0,
+            });
+            setError("실시간 데이터를 불러오지 못해 캐시된 데이터를 표시합니다.");
+          } else {
+            setError("코인을 찾을 수 없습니다.");
+          }
         }
       } finally {
         setLoading(false);
