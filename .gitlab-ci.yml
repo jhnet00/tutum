@@ -1,4 +1,4 @@
-﻿# ============================================
+# ============================================
 # Tutum CI/CD Pipeline
 # ============================================
 #
@@ -16,7 +16,7 @@
 #   - COSIGN_PRIVATE_KEY: (cosign.key 파일 내용, Type: File)
 #   - COSIGN_PASSWORD: tutum123
 #   - ARGOCD_AUTH_TOKEN: (argocd account generate-token)
-#   - K8S_MANIFESTS_TOKEN: (GitLab PAT, tutum-app/backend repo push 권한)
+#   - K8S_MANIFESTS_TOKEN: (GitLab PAT, k8s-manifests repo push 권한)
 # ============================================
 
 workflow:
@@ -33,8 +33,8 @@ variables:
   WORKERS_IMAGE: "${CI_REGISTRY_IMAGE}/workers"
   # K8s 내부 서비스 주소
   ARGOCD_SERVER: "argocd-server.argocd.svc.cluster.local"
-  # monorepo 내부 k8s-manifests 디렉터리 업데이트용 remote
-  K8S_MANIFESTS_REPO: "https://oauth2:${K8S_MANIFESTS_TOKEN}@gitlab.com/tutum-project/tutum-app/backend.git"
+  # k8s-manifests GitLab repo
+  K8S_MANIFESTS_REPO: "https://oauth2:${K8S_MANIFESTS_TOKEN}@gitlab.com/tutum-project/k8s-manifests.git"
 
 stages:
   - guard
@@ -248,9 +248,6 @@ security:frontend:
   needs:
     - job: build:frontend
       optional: true
-  rules:
-    - changes:
-        - frontend/**/*
 
 security:backend:
   stage: security
@@ -265,10 +262,6 @@ security:backend:
   needs:
     - job: build:backend
       optional: true
-  rules:
-    - changes:
-        - backend/**/*
-    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 security:workers:
   stage: security
@@ -283,9 +276,6 @@ security:workers:
   needs:
     - job: build:workers
       optional: true
-  rules:
-    - changes:
-        - backend/workers/**/*
 
 # ============================================
 # Stage 6: Cosign 이미지 서명
@@ -304,9 +294,6 @@ sign:frontend:
   needs:
     - job: security:frontend
       optional: true
-  rules:
-    - changes:
-        - frontend/**/*
 
 sign:backend:
   stage: sign
@@ -321,10 +308,6 @@ sign:backend:
   needs:
     - job: security:backend
       optional: true
-  rules:
-    - changes:
-        - backend/**/*
-    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 sign:workers:
   stage: sign
@@ -339,9 +322,6 @@ sign:workers:
   needs:
     - job: security:workers
       optional: true
-  rules:
-    - changes:
-        - backend/workers/**/*
 
 # ============================================
 # Stage 7: GitOps 배포 (k8s-manifests 이미지 태그 업데이트)
@@ -355,28 +335,17 @@ deploy:staging:
   before_script:
     - apk add --no-cache git
   script:
-    - |
-      git clone "${K8S_MANIFESTS_REPO}" /tmp/manifests
-      cd /tmp/manifests
-      git checkout develop
-      git pull --rebase origin develop
-      git config user.email ci@tutum.dev
-      git config user.name "GitLab CI"
-      sed -i "s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/" k8s-manifests/overlays/staging/kustomization.yaml
-      git add k8s-manifests/overlays/staging/kustomization.yaml
-      if git diff --cached --quiet; then
-        echo "No staging manifest change."
-        exit 0
-      fi
-      git commit -m "deploy: staging ${CI_COMMIT_SHORT_SHA} [skip ci]"
-      git push origin HEAD:develop
+    - git clone ${K8S_MANIFESTS_REPO} /tmp/manifests && cd /tmp/manifests
+    - git config user.email ci@tutum.dev
+    - git config user.name "GitLab CI"
+    - 'sed -i "s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/" overlays/staging/kustomization.yaml'
+    - git add -A
+    - 'git diff --cached --quiet || git commit -m "deploy: staging ${CI_COMMIT_SHORT_SHA}"'
+    - git push origin main
   environment:
     name: staging
   rules:
-    - if: '($CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "ruby-backup0225") && $K8S_MANIFESTS_TOKEN'
-      changes:
-        - backend/**/*
-        - frontend/**/*
+    - if: '$CI_COMMIT_BRANCH == "develop"'
 
 deploy:production:
   stage: deploy
@@ -384,29 +353,18 @@ deploy:production:
   before_script:
     - apk add --no-cache git
   script:
-    - |
-      git clone "${K8S_MANIFESTS_REPO}" /tmp/manifests
-      cd /tmp/manifests
-      git checkout main
-      git pull --rebase origin main
-      git config user.email ci@tutum.dev
-      git config user.name "GitLab CI"
-      sed -i "s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/" k8s-manifests/overlays/production/kustomization.yaml
-      git add k8s-manifests/overlays/production/kustomization.yaml
-      if git diff --cached --quiet; then
-        echo "No production manifest change."
-        exit 0
-      fi
-      git commit -m "deploy: production ${CI_COMMIT_SHORT_SHA} [skip ci]"
-      git push origin HEAD:main
+    - git clone ${K8S_MANIFESTS_REPO} /tmp/manifests && cd /tmp/manifests
+    - git config user.email ci@tutum.dev
+    - git config user.name "GitLab CI"
+    - 'sed -i "s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/" overlays/production/kustomization.yaml'
+    - git add -A
+    - 'git diff --cached --quiet || git commit -m "deploy: production ${CI_COMMIT_SHORT_SHA}"'
+    - git push origin main
   environment:
     name: production
   when: manual
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main" && $K8S_MANIFESTS_TOKEN'
-      changes:
-        - backend/**/*
-        - frontend/**/*
+    - if: '$CI_COMMIT_BRANCH == "main"'
 
 # ============================================
 # Slack, Jira
@@ -418,17 +376,10 @@ notify:slack_on_failure:
   allow_failure: true
   script:
     - |
-      if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
-        echo "SLACK_WEBHOOK_URL not set. Skip Slack notification."
-        exit 0
-      fi
-      payload=$(printf '{"text":"[CI FAIL] %s #%s\n%s"}' "${CI_PROJECT_PATH}" "${CI_PIPELINE_ID}" "${CI_PIPELINE_URL}")
-      curl -fsS -X POST -H "Content-type: application/json" --data "${payload}" "${SLACK_WEBHOOK_URL}"
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "develop"'
-      when: on_failure
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      when: on_failure
+      curl -fsS -X POST -H "Content-type: application/json" \
+      --data "{\"text\":\"[CI FAIL] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\n${CI_PIPELINE_URL}\"}" \
+      "${SLACK_WEBHOOK_URL}"
+  when: on_failure
 
 notify:jira_on_failure:
   stage: notify
@@ -436,18 +387,26 @@ notify:jira_on_failure:
   allow_failure: true
   script:
     - |
-      for v in JIRA_BASE_URL JIRA_EMAIL JIRA_API_TOKEN JIRA_PROJECT_KEY; do
-        if [ -z "$(eval echo \${$v:-})" ]; then
-          echo "$v not set. Skip Jira notification."
-          exit 0
-        fi
-      done
       curl -fsS -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
         -H "Content-Type: application/json" \
         -X POST "${JIRA_BASE_URL}/rest/api/3/issue" \
-        -d "{\"fields\":{\"project\":{\"key\":\"${JIRA_PROJECT_KEY}\"},\"summary\":\"[CI FAIL] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\",\"description\":{\"type\":\"doc\",\"version\":1,\"content\":[{\"type\":\"paragraph\",\"content\":[{\"type\":\"text\",\"text\":\"Pipeline URL: ${CI_PIPELINE_URL}\"}]}]},\"issuetype\":{\"name\":\"Task\"}}}"
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "develop"'
-      when: on_failure
-    - if: '$CI_COMMIT_BRANCH == "main"'
-      when: on_failure
+        -d '{
+          "fields": {
+            "project": { "key": "'"${JIRA_PROJECT_KEY}"'" },
+            "summary": "[CI FAIL] '"${CI_PROJECT_PATH}"' #'"${CI_PIPELINE_ID}"'",
+            "description": {
+              "type": "doc",
+              "version": 1,
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    { "type": "text", "text": "Pipeline URL: '"${CI_PIPELINE_URL}"'" }
+                  ]
+                }
+              ]
+            },
+            "issuetype": { "name": "Task" }
+          }
+        }'
+  when: on_failure
