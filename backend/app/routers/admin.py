@@ -23,6 +23,8 @@ import httpx
 from botocore.config import Config
 from fastapi import APIRouter, HTTPException
 
+from ..database import get_news_collection
+
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = logging.getLogger(__name__)
 
@@ -518,3 +520,212 @@ async def get_diagnose():
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ─── 파이프라인 모니터링 ────────────────────────────────────────────────────────
+
+_PIPELINE_WORKERS = ["news-producer", "news-consumer", "elastic-consumer"]
+
+
+async def _collect_pipeline_data() -> dict:
+    """파이프라인 3대 구성요소 상태 수집 (pipeline / pipeline-diagnose 공용)."""
+    out: dict = {
+        "workers": {w: {"status": "Unknown", "restarts": 0, "age": "-", "running": False} for w in _PIPELINE_WORKERS},
+        "mongodb": {"news_total": 0, "news_last_1h": 0, "available": False},
+        "elasticsearch": {"news_docs": 0, "available": False},
+        "recent_logs": {w: [] for w in _PIPELINE_WORKERS},
+    }
+
+    # 1. Worker 파드 상태 (K8s)
+    try:
+        core, _ = _get_k8s_clients()
+        for label in _PIPELINE_WORKERS:
+            try:
+                pods = core.list_namespaced_pod("tutum-app", label_selector=f"app={label}").items
+                running_pods = [p for p in pods if p.status.phase == "Running"]
+                pod = running_pods[0] if running_pods else (pods[0] if pods else None)
+                if pod:
+                    cs_list = pod.status.container_statuses or []
+                    phase = pod.status.phase or "Unknown"
+                    waiting_reason = None
+                    for cs in cs_list:
+                        if cs.state and cs.state.waiting:
+                            waiting_reason = cs.state.waiting.reason
+                            break
+                    restarts = sum(cs.restart_count for cs in cs_list)
+                    out["workers"][label] = {
+                        "status": waiting_reason or phase,
+                        "restarts": restarts,
+                        "age": _pod_age(pod.metadata.creation_timestamp),
+                        "running": (waiting_reason is None and phase == "Running"),
+                    }
+                else:
+                    out["workers"][label] = {"status": "Stopped", "restarts": 0, "age": "-", "running": False}
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning("pipeline K8s 조회 실패: %s", e)
+
+    # 2. MongoDB news count
+    try:
+        news_col = get_news_collection()
+        if news_col is not None:
+            total = await news_col.count_documents({})
+            one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+            recent = await news_col.count_documents({"published_at": {"$gte": one_hour_ago}})
+            out["mongodb"] = {"news_total": total, "news_last_1h": recent, "available": True}
+    except Exception as e:
+        logger.warning("pipeline MongoDB 조회 실패: %s", e)
+
+    # 3. Elasticsearch document count
+    es_url = os.getenv("ELASTICSEARCH_URL", "http://elasticsearch.tutum-data.svc.cluster.local:9200")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as http:
+            resp = await http.get(f"{es_url}/news/_count")
+            if resp.status_code == 200:
+                out["elasticsearch"] = {"news_docs": resp.json().get("count", 0), "available": True}
+    except Exception as e:
+        logger.warning("pipeline ES 조회 실패: %s", e)
+
+    # 4. Loki 최근 로그 샘플 (최근 5분)
+    end_ns   = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+    start_ns = end_ns - 300_000_000_000
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as http:
+            for worker in _PIPELINE_WORKERS:
+                try:
+                    query = f'{{job="loki.source.kubernetes.k8s_logs", instance=~"tutum-app/{worker}-.*"}}'
+                    resp = await http.get(
+                        f"{LOKI_URL}/loki/api/v1/query_range",
+                        params={"query": query, "limit": 5, "start": start_ns, "end": end_ns, "direction": "backward"},
+                    )
+                    data = resp.json()
+                    if data.get("status") == "success":
+                        logs_sample = []
+                        for stream in data["data"]["result"]:
+                            for _, msg in stream["values"]:
+                                logs_sample.append(msg.strip()[:120])
+                        out["recent_logs"][worker] = logs_sample[:5]
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning("pipeline Loki 샘플 실패: %s", e)
+
+    return out
+
+
+@router.get("/pipeline")
+async def get_pipeline():
+    """파이프라인 3대 구성요소 실시간 상태 (Worker 파드/MongoDB/ES/Loki 샘플)."""
+    return await _collect_pipeline_data()
+
+
+_PIPELINE_SYSTEM_PROMPT = """당신은 데이터 파이프라인 운영 전문가 AI입니다.
+뉴스 수집 파이프라인의 3대 구성요소를 분석하여 다음 JSON 형식으로만 응답하세요.
+다른 텍스트나 마크다운 없이 순수 JSON만 반환하세요.
+
+{
+  "overall": "OK" | "WARN" | "CRITICAL",
+  "components": [
+    {
+      "name": "news-producer",
+      "label": "뉴스 수집",
+      "status": "OK" | "WARN" | "ERROR",
+      "summary": "한 줄 요약 (20자 이내)",
+      "issues": [{"title": "이슈 제목", "detail": "상세 설명"}],
+      "actions": [{"priority": "HIGH" | "MEDIUM" | "LOW", "action": "권장 조치"}]
+    },
+    {
+      "name": "news-consumer",
+      "label": "MongoDB 저장",
+      "status": "OK" | "WARN" | "ERROR",
+      "summary": "...",
+      "issues": [],
+      "actions": []
+    },
+    {
+      "name": "elastic-consumer",
+      "label": "ES 인덱싱",
+      "status": "OK" | "WARN" | "ERROR",
+      "summary": "...",
+      "issues": [],
+      "actions": []
+    }
+  ]
+}
+
+status 기준:
+- OK: 파드 Running, 처리 정상 또는 설계상 비활성(replicas=0)이고 의도된 경우
+- WARN: 재시작 있음, 처리 지연, 비활성인데 활성화 고려 필요
+- ERROR: 파드 없음, CrashLoop, 오류 지속
+참고: elastic-consumer replicas=0은 현재 안정화 모드 설계상 의도된 상태입니다."""
+
+
+@router.get("/pipeline-diagnose")
+async def get_pipeline_diagnose():
+    """파이프라인 3대 구성요소를 Bedrock Claude로 AI 분석."""
+    # 1. 데이터 수집
+    try:
+        data = await _collect_pipeline_data()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"파이프라인 데이터 수집 실패: {e}")
+
+    # 2. 프롬프트 구성
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    WORKER_KR = {"news-producer": "뉴스 수집", "news-consumer": "MongoDB 저장", "elastic-consumer": "ES 인덱싱"}
+
+    lines = [f"파이프라인 진단 요청 ({now_str})", ""]
+    for w in _PIPELINE_WORKERS:
+        wd = data["workers"].get(w, {})
+        lines.append(f"[{WORKER_KR[w]}] ({w})")
+        lines.append(f"  상태: {wd.get('status', 'Unknown')}, 재시작: {wd.get('restarts', 0)}회, Running: {wd.get('running', False)}")
+        recent = data["recent_logs"].get(w, [])
+        if recent:
+            lines.append(f"  최근 로그: {recent[0][:80]}")
+        lines.append("")
+
+    lines += [
+        "[데이터 현황]",
+        f"  MongoDB news 전체: {data['mongodb'].get('news_total', 'N/A')}건",
+        f"  MongoDB 최근 1시간 추가: {data['mongodb'].get('news_last_1h', 'N/A')}건",
+        f"  ES 인덱스 문서: {data['elasticsearch'].get('news_docs', 'N/A')}건",
+        "",
+        "참고: elastic-consumer는 현재 replicas=0 (안정화 모드 설계상 비활성)입니다.",
+        "위 데이터를 기반으로 3개 구성요소 각각의 분석을 JSON으로 반환하세요.",
+    ]
+    prompt = "\n".join(lines)
+
+    # 3. Bedrock 호출
+    try:
+        bedrock = _get_bedrock_client()
+        model_id = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20240620-v1:0")
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 1500,
+            "temperature": 0.2,
+            "system": _PIPELINE_SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": prompt}],
+        })
+
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: bedrock.invoke_model(
+                modelId=model_id, body=body,
+                contentType="application/json", accept="application/json",
+            ),
+        )
+        raw_body = json.loads(response["body"].read())
+        text = raw_body["content"][0]["text"].strip()
+
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+        result = json.loads(text)
+
+    except Exception as e:
+        logger.error("pipeline-diagnose Bedrock 오류: %s", e)
+        raise HTTPException(status_code=503, detail=f"AI 분석 실패: {e}")
+
+    return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
