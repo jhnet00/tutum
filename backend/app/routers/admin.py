@@ -8,7 +8,8 @@ Admin 대시보드에 실시간 데이터를 제공합니다.
 
 데이터 소스:
   - K8s API Server: in-cluster ServiceAccount (nodes, pods)
-  - Mimir: http://192.168.56.30:9009/prometheus (메트릭)
+  - Mimir: http://192.168.0.230:9009/prometheus (메트릭)
+  - Loki:  http://192.168.0.230:3100 (로그)
 """
 
 import logging
@@ -21,7 +22,8 @@ from fastapi import APIRouter, HTTPException
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = logging.getLogger(__name__)
 
-MIMIR_URL = os.getenv("MIMIR_URL", "http://192.168.56.30:9009/prometheus")
+MIMIR_URL = os.getenv("MIMIR_URL", "http://192.168.0.230:9009/prometheus")
+LOKI_URL  = os.getenv("LOKI_URL",  "http://192.168.0.230:3100")
 
 
 # ─── K8s client (lazy init) ──────────────────────────────────────────────────
@@ -263,3 +265,78 @@ async def get_metrics():
                 result[key] = []
 
     return result
+
+
+@router.get("/logs")
+async def get_logs(namespace: str = "tutum-app", limit: int = 50):
+    """
+    Loki에서 실시간 로그 조회.
+    instance 레이블 형식: "namespace/pod-name:container"
+
+    namespace 파라미터:
+      - "tutum-app": 앱 파드 로그
+      - "tutum-data": 데이터 파드 로그
+      - "all": tutum-app + tutum-data 전체
+    """
+    if namespace == "all":
+        log_query = '{job="loki.source.kubernetes.k8s_logs", instance=~"(tutum-app|tutum-data)/.*"}'
+    else:
+        log_query = f'{{job="loki.source.kubernetes.k8s_logs", instance=~"{namespace}/.*"}}'
+
+    end_ns   = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+    start_ns = end_ns - 600_000_000_000  # 최근 10분
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                f"{LOKI_URL}/loki/api/v1/query_range",
+                params={
+                    "query":     log_query,
+                    "limit":     limit,
+                    "start":     start_ns,
+                    "end":       end_ns,
+                    "direction": "backward",
+                },
+            )
+            data = resp.json()
+
+        if data.get("status") != "success":
+            return {"logs": []}
+
+        logs = []
+        for stream in data["data"]["result"]:
+            labels   = stream["stream"]
+            instance = labels.get("instance", "")
+            level    = labels.get("level", "info").upper()
+
+            # instance: "tutum-app/backend-xxx:backend" → ns, pod 추출
+            ns_pod = instance.split(":")[0]  # "tutum-app/backend-xxx"
+            parts  = ns_pod.split("/", 1)
+            ns_name  = parts[0] if len(parts) == 2 else ""
+            pod_name = parts[1] if len(parts) == 2 else instance
+
+            for ts_ns, msg in stream["values"]:
+                ts = datetime.fromtimestamp(int(ts_ns) / 1_000_000_000, tz=timezone.utc)
+                logs.append({
+                    "time":      ts.strftime("%H:%M:%S"),
+                    "timestamp": int(ts_ns),
+                    "level":     level if level in ("INFO", "WARN", "WARNING", "ERROR", "DEBUG") else "INFO",
+                    "namespace": ns_name,
+                    "pod":       pod_name,
+                    "msg":       msg.rstrip("\n"),
+                })
+
+        # 최신순 정렬, 중복 제거
+        logs.sort(key=lambda x: x["timestamp"], reverse=True)
+        unique, seen = [], set()
+        for log in logs:
+            key = (log["timestamp"], log["pod"], log["msg"][:50])
+            if key not in seen:
+                seen.add(key)
+                unique.append(log)
+
+        return {"logs": unique[:limit]}
+
+    except Exception as e:
+        logger.error("get_logs Loki 오류: %s", e)
+        return {"logs": []}

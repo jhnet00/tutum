@@ -8,20 +8,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 type NodeInfo = { name: string; role: string; status: string; cpu_percent: number; memory_percent: number; ip: string };
 type PodInfo  = { name: string; namespace: string; status: string; restarts: number; node: string; age: string; ready: string };
 type Metrics  = { rps: number[]; latency_p95: number[]; error_rate: number[]; kafka_lag: number[] };
-
-// ─── Mock Logs (Loki 미연동, 시뮬레이션 유지) ─────────────────────────────────
-const MOCK_LOGS = [
-  { time: "07:18:42", level: "INFO", pod: "backend-6c8d7f-p9rs", msg: "GET /api/v1/market/prices 200 OK (45ms)" },
-  { time: "07:18:41", level: "INFO", pod: "backend-6c8d7f-t3uv", msg: "WebSocket connected: user_id=u_8821" },
-  { time: "07:18:40", level: "INFO", pod: "frontend-7d9f8b-xk2p", msg: "Page rendered: /portfolio (SSR 120ms)" },
-  { time: "07:18:38", level: "WARN", pod: "kafka-0", msg: "Consumer lag detected on topic 'prices': lag=3" },
-  { time: "07:18:35", level: "INFO", pod: "backend-6c8d7f-p9rs", msg: "POST /api/v1/auth/login 200 OK (88ms)" },
-  { time: "07:18:33", level: "INFO", pod: "alloy-ds-xk2p", msg: "Metrics scraped: 142 series from tutum-app" },
-  { time: "07:18:30", level: "ERROR", pod: "backend-6c8d7f-t3uv", msg: "Redis connection timeout (retry 1/3)" },
-  { time: "07:18:28", level: "INFO", pod: "backend-6c8d7f-t3uv", msg: "Redis reconnected successfully" },
-  { time: "07:18:25", level: "INFO", pod: "ingress-nginx-ctrl", msg: "200 GET / 0.012s" },
-  { time: "07:18:22", level: "INFO", pod: "backend-6c8d7f-p9rs", msg: "GET /api/v1/portfolio 200 OK (62ms)" },
-];
+type LogEntry = { time: string; timestamp: number; level: string; namespace: string; pod: string; msg: string };
 
 // ─── Sub Components ───────────────────────────────────────────────────────────
 function MiniChart({ values, color, unit = "" }: { values: number[]; color: string; unit?: string }) {
@@ -88,7 +75,9 @@ function LogLevel({ level }: { level: string }) {
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<"overview" | "pods" | "logs" | "monitoring">("overview");
   const [nsFilter, setNsFilter] = useState("all");
-  const [logs, setLogs] = useState(MOCK_LOGS);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(true);
+  const [logNamespace, setLogNamespace] = useState("tutum-app");
   const logRef = useRef<HTMLDivElement>(null);
 
   // ── 실데이터 상태
@@ -122,6 +111,14 @@ export default function AdminDashboard() {
     } catch { /* silent */ }
   };
 
+  const fetchLogs = async (ns: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/admin/logs?namespace=${ns}&limit=50`);
+      if (res.ok) { const d = await res.json(); setLogs(d.logs ?? []); }
+    } catch { /* silent */ }
+    finally { setLoadingLogs(false); }
+  };
+
   // 최초 로드 + 30초마다 폴링
   useEffect(() => {
     fetchNodes(); fetchPods(); fetchMetrics();
@@ -132,30 +129,13 @@ export default function AdminDashboard() {
     return () => clearInterval(poll);
   }, []);
 
-  // 로그 시뮬레이션 (Loki 미연동)
+  // Loki 로그 폴링 (10초마다)
   useEffect(() => {
-    const podNames = pods.length > 0
-      ? pods.map((p) => p.name)
-      : MOCK_LOGS.map((l) => l.pod);
-    const interval = setInterval(() => {
-      const newLog = {
-        time: new Date().toTimeString().slice(0, 8),
-        level: ["INFO", "INFO", "INFO", "WARN", "ERROR"][Math.floor(Math.random() * 5)],
-        pod: podNames[Math.floor(Math.random() * podNames.length)],
-        msg: [
-          "GET /api/v1/market/prices 200 OK",
-          "Metrics scraped successfully",
-          "WebSocket heartbeat OK",
-          "Cache hit: price:005930",
-          "Consumer lag: prices=0",
-          "WARN: slow query detected (>200ms)",
-          "ERROR: upstream timeout, retrying...",
-        ][Math.floor(Math.random() * 7)],
-      };
-      setLogs((prev) => [newLog, ...prev.slice(0, 49)]);
-    }, 3000);
+    setLoadingLogs(true);
+    fetchLogs(logNamespace);
+    const interval = setInterval(() => fetchLogs(logNamespace), 10000);
     return () => clearInterval(interval);
-  }, [pods]);
+  }, [logNamespace]);
 
   const filteredPods = nsFilter === "all" ? pods : pods.filter((p) => p.namespace === nsFilter);
   const namespaces = ["all", ...Array.from(new Set(pods.map((p) => p.namespace)))];
@@ -369,20 +349,43 @@ export default function AdminDashboard() {
               <h2 className="text-sm font-semibold text-white/70 flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 Live Log Stream
+                <span className="text-white/30 font-normal text-xs">(Loki · 10s 폴링)</span>
               </h2>
-              <span className="text-xs text-white/30 font-mono">{logs.length} entries</span>
+              <div className="flex items-center gap-3">
+                <div className="flex gap-1">
+                  {["tutum-app", "tutum-data", "all"].map((ns) => (
+                    <button
+                      key={ns}
+                      onClick={() => setLogNamespace(ns)}
+                      className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${
+                        logNamespace === ns ? "bg-indigo-600 text-white" : "text-white/40 hover:text-white/70 bg-white/[0.03]"
+                      }`}
+                    >
+                      {ns}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-xs text-white/30 font-mono">{logs.length} entries</span>
+              </div>
             </div>
             <div ref={logRef} className="h-[480px] overflow-y-auto font-mono text-xs p-4 space-y-1 bg-[#080b14]">
-              {logs.map((log, i) => (
-                <div key={i} className="flex items-start gap-3 hover:bg-white/[0.02] px-2 py-0.5 rounded transition-colors">
-                  <span className="text-white/25 flex-shrink-0 w-16">{log.time}</span>
-                  <LogLevel level={log.level} />
-                  <span className="text-violet-400/70 flex-shrink-0 w-40 truncate">{log.pod}</span>
-                  <span className={`flex-1 ${log.level === "ERROR" ? "text-red-300" : log.level === "WARN" ? "text-amber-300" : "text-white/60"}`}>
-                    {log.msg}
-                  </span>
-                </div>
-              ))}
+              {loadingLogs ? (
+                <div className="flex items-center justify-center h-full text-white/30">로그 로딩 중...</div>
+              ) : logs.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-white/20">로그 없음 (최근 10분)</div>
+              ) : (
+                logs.map((log, i) => (
+                  <div key={i} className="flex items-start gap-3 hover:bg-white/[0.02] px-2 py-0.5 rounded transition-colors">
+                    <span className="text-white/25 flex-shrink-0 w-16">{log.time}</span>
+                    <LogLevel level={log.level} />
+                    <span className="text-indigo-400/60 flex-shrink-0 w-24 truncate">{log.namespace}</span>
+                    <span className="text-violet-400/70 flex-shrink-0 w-40 truncate">{log.pod}</span>
+                    <span className={`flex-1 ${log.level === "ERROR" ? "text-red-300" : log.level === "WARN" ? "text-amber-300" : "text-white/60"}`}>
+                      {log.msg}
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}
