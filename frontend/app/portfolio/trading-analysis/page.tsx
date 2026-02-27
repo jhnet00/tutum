@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Sparkles, TrendingUp, TrendingDown, Activity, Calendar } from "lucide-react";
@@ -39,13 +39,43 @@ export default function TradingAnalysisPage() {
     const [loading, setLoading] = useState(true);
     const { token } = useAuth();
 
-    useEffect(() => {
-        if (token) {
-            loadData();
-        }
-    }, [token]);
+    const requestAIAnalysis = useCallback(
+        async (txData: Transaction[]) => {
+            try {
+                const prompt = `
+다음은 사용자의 거래 이력입니다:
+${JSON.stringify(txData, null, 2)}
 
-    const loadData = async () => {
+                분석해주세요:
+1. 매수 패턴 (어떤 이유로 주로 매수하는지)
+2. 매도 패턴 (손절 vs 익절 비율)
+3. 보유 기간 경향
+4. 개선 포인트 3가지
+5. 잘하고 있는 점 3가지
+
+친근하고 격려하는 톤으로 작성해주세요.
+                `;
+
+                const res = await fetch("/api/v1/chat/bedrock", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ prompt }),
+                });
+
+                const data = await res.json();
+                setAiAnalysis(data.response || "AI 분석을 불러올 수 없습니다.");
+            } catch (error) {
+                console.error("AI analysis failed:", error);
+                setAiAnalysis("AI 분석 중 오류가 발생했습니다.");
+            }
+        },
+        [token],
+    );
+
+    const loadData = useCallback(async () => {
         if (!token) return;
 
         try {
@@ -76,40 +106,13 @@ export default function TradingAnalysisPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [requestAIAnalysis, token]);
 
-    const requestAIAnalysis = async (txData: Transaction[]) => {
-        try {
-            const prompt = `
-다음은 사용자의 거래 이력입니다:
-${JSON.stringify(txData, null, 2)}
-
-분석해주세요:
-1. 매수 패턴 (어떤 이유로 주로 매수하는지)
-2. 매도 패턴 (손절 vs 익절 비율)
-3. 보유 기간 경향
-4. 개선 포인트 3가지
-5. 잘하고 있는 점 3가지
-
-친근하고 격려하는 톤으로 작성해주세요.
-            `;
-
-            const res = await fetch("/api/v1/chat/bedrock", {
-                method: "POST",
-                headers: { 
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${token}`
-                },
-                body: JSON.stringify({ prompt }),
-            });
-
-            const data = await res.json();
-            setAiAnalysis(data.response || "AI 분석을 불러올 수 없습니다.");
-        } catch (error) {
-            console.error("AI analysis failed:", error);
-            setAiAnalysis("AI 분석 중 오류가 발생했습니다.");
+    useEffect(() => {
+        if (token) {
+            loadData();
         }
-    };
+    }, [loadData, token]);
 
     if (loading) {
         return (

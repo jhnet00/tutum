@@ -260,7 +260,7 @@ export default function RegisterPage() {
     }
 
     return (
-        <div className="flex min-h-screen items-center justify-center bg-zinc-50 px-4 py-10 dark:bg-zinc-950">
+        <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-50 px-4 py-10 dark:bg-zinc-950">
             <Card className="w-full max-w-md border-zinc-200 dark:border-zinc-800">
                 <CardHeader className="space-y-1 text-center">
                     <div className="flex justify-center mb-4">
@@ -392,7 +392,7 @@ export default function RegisterPage() {
                     </CardFooter>
                 </form>
             </Card>
-            <div className="flex justify-center mt-8">
+            <div className="flex justify-center mt-2">
                 <Button
                     variant="ghost"
                     className="text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300 transition-colors flex items-center gap-2"

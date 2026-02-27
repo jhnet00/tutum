@@ -521,12 +521,19 @@ async def get_crypto_price(ticker: str):
 
 
 @router.get("/prices/crypto")
-async def get_multiple_crypto_prices(tickers: str = Query(..., description="?쇳몴濡?援щ텇???곗빱 紐⑸줉 (?? BTC,ETH,SOL)")):
+async def get_multiple_crypto_prices(
+    tickers: str | None = Query(None, description="?쇳몴濡?援щ텇???곗빱 紐⑸줉 (?? BTC,ETH,SOL)"),
+    symbols: str | None = Query(None, description="tickers ?泥댁슜 ?뚯씪誘명꽣 (?? BTC,ETH,SOL)"),
+):
     """
     ?щ윭 ?뷀샇?뷀룓 ?꾩옱媛 ?쇨큵 議고쉶 (Upbit)
     - tickers: ?쇳몴濡?援щ텇???곗빱 紐⑸줉 (?? BTC,ETH,SOL)
     """
-    ticker_list = [t.strip() for t in tickers.split(",") if t.strip()]
+    raw_tickers = tickers or symbols
+    if not raw_tickers:
+        raise HTTPException(status_code=422, detail="tickers or symbols query parameter is required")
+
+    ticker_list = [t.strip() for t in raw_tickers.split(",") if t.strip()]
     results = []
 
     for ticker in ticker_list:

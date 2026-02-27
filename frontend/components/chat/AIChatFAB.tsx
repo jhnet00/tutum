@@ -71,7 +71,7 @@ export function AIChatFAB({ isOpen: controlledIsOpen, onOpenChange, showLauncher
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         onClick={() => setOpen(false)}
-                        className="fixed inset-0 bg-black/20 z-[85]"
+                        className="fixed inset-0 bg-black/20 z-[75]"
                     />
                 )}
             </AnimatePresence>

@@ -9,9 +9,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import Image from "next/image";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const OCR_API_URL = 'http://localhost:8002'; // OCR 전용 서버 (포트 8002)
+// OCR 전용 서비스 경로 (프록시 기반 라우팅)
+const OCR_API_URL = '/api/proxy';
 
-export default function OcrInsertUploadPage() {
+export default function OCRUploadPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);

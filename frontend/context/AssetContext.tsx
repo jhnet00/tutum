@@ -5,7 +5,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { withCsrfHeader } from "@/lib/csrf";
 
 const API_BASE_URL = "/api/proxy";
-const WS_BASE_URL = API_BASE_URL.replace(/^http/i, "ws").replace(/\/$/, "");
+const WS_BASE_URL =
+    typeof window !== "undefined"
+        ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`
+        : "ws://localhost:8000";
 
 export interface HoldingAsset {
     id?: string;
@@ -308,16 +311,23 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
     const holdingSymbolsKey = holdingSymbols.join(",");
 
     // 현금(통화) 자산 심볼 목록
-    const cashSymbols = useMemo(() => {
-        return new Set(
-            holdings
-                .filter(h => h.assetType === "cash")
-                .map(h => String(h.symbol || "").toUpperCase())
-        );
+    const cashSymbolsList = useMemo(() => {
+        const symbols = holdings
+            .filter((h) => h.assetType === "cash")
+            .map((h) => String(h.symbol || "").toUpperCase())
+            .filter(Boolean);
+        return [...new Set(symbols)].sort();
     }, [holdings]);
+    const cashSymbolsKey = cashSymbolsList.join(",");
 
     const refreshPrices = useCallback(async () => {
-        if (holdingSymbols.length === 0) return;
+        const symbols = holdingSymbolsKey
+            ? holdingSymbolsKey.split(",").filter(Boolean)
+            : [];
+        if (symbols.length === 0) return;
+        const cashSymbols = new Set(
+            cashSymbolsKey ? cashSymbolsKey.split(",").filter(Boolean) : []
+        );
 
         try {
             // 코인, 주식, 현금 심볼 분리
@@ -325,7 +335,7 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
             const stockSymbols: string[] = [];
             const currencySymbols: string[] = [];
 
-            holdingSymbols.forEach(symbol => {
+            symbols.forEach(symbol => {
                 // 현금(통화) 자산은 환율 조회로 분리
                 if (cashSymbols.has(symbol)) {
                     currencySymbols.push(symbol);
@@ -419,7 +429,7 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
                 setPriceStreamStatus("fallback");
             }
         }
-    }, [holdingSymbols, cashSymbols, applyPriceMap, apiFetch]);
+    }, [holdingSymbolsKey, cashSymbolsKey, applyPriceMap, apiFetch]);
 
     useEffect(() => {
         let active = true;
@@ -501,7 +511,7 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
                 wsRef.current = null;
             }
         };
-    }, [holdingSymbolsKey, refreshPrices, applyPriceMap]);
+    }, [holdingSymbolsKey, refreshPrices]);
 
     return (
         <AssetContext.Provider value={{ holdings, isLoading, error, priceStreamStatus, fetchHoldings, addHoldings, updateAsset, deleteAsset, resetHoldings, refreshPrices }}>

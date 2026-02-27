@@ -40,7 +40,10 @@ export function useMarketPrices() {
 
     const allSymbols = useMemo(() => [...new Set([...STOCK_SYMBOLS, ...CRYPTO_SYMBOLS])], []);
 
-    const wsUrl = API_BASE_URL.replace(/^http/i, "ws").replace(/\/$/, "");
+    const wsUrl =
+        typeof window !== "undefined"
+            ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`
+            : "ws://localhost:8000";
 
     const fetchPrices = useCallback(async () => {
         try {

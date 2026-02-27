@@ -11,6 +11,22 @@ spec:
   http:
     - match:
         - uri:
+            prefix: /api/public
+      route:
+        - destination:
+            host: frontend.tutum-app.svc.cluster.local
+            port:
+              number: 3000
+    - match:
+        - uri:
+            prefix: /api/proxy
+      route:
+        - destination:
+            host: frontend.tutum-app.svc.cluster.local
+            port:
+              number: 3000
+    - match:
+        - uri:
             prefix: /api
       route:
         - destination:

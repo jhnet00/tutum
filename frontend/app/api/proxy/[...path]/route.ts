@@ -19,7 +19,14 @@ async function handler(request: NextRequest, path: string[]) {
     });
   }
 
-  const targetUrl = new URL(`${baseUrl.replace(/\/$/, "")}/${path.join("/")}`);
+  let targetUrl: URL;
+  if (path[0] === "import") {
+    // OCR 전용 서비스로 라우팅
+    const ocrBaseUrl = process.env.OCR_SERVICE_URL || "http://ocr.tutum-app.svc.cluster.local:8002";
+    targetUrl = new URL(`${ocrBaseUrl.replace(/\/$/, "")}/${path.join("/")}`);
+  } else {
+    targetUrl = new URL(`${baseUrl.replace(/\/$/, "")}/${path.join("/")}`);
+  }
   targetUrl.search = request.nextUrl.search;
 
   console.log(`[Proxy] ${request.method} ${targetUrl.toString()}`);
@@ -68,6 +75,11 @@ async function handler(request: NextRequest, path: string[]) {
       if (key.toLowerCase() !== "set-cookie") {
         responseHeaders.set(key, value);
       }
+    }
+    // FastAPI는 charset 미명시 → 브라우저가 Latin-1 해석 → 한글 깨짐 방지
+    const ct = responseHeaders.get("content-type");
+    if (ct && ct.includes("application/json") && !ct.includes("charset")) {
+      responseHeaders.set("content-type", ct + "; charset=utf-8");
     }
     const setCookies = (upstream.headers as any).getSetCookie?.() ?? [];
     for (const cookie of setCookies) {

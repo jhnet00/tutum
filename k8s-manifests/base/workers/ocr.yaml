@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ocr
+  namespace: tutum-app
+  labels:
+    app: ocr
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ocr
+  template:
+    metadata:
+      labels:
+        app: ocr
+        version: v1
+    spec:
+      nodeSelector:
+        workload: app
+      containers:
+        - name: ocr
+          image: registry.gitlab.com/tutum-project/tutum-app/backend:latest
+          command:
+            [
+              "uvicorn",
+              "ocr_app.main:app",
+              "--app-dir",
+              "/app/app/ocr-api",
+              "--host",
+              "0.0.0.0",
+              "--port",
+              "8002",
+            ]
+          ports:
+            - containerPort: 8002
+              name: http
+          envFrom:
+            - secretRef:
+                name: backend-secret
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      imagePullSecrets:
+        - name: gitlab-registry-secret
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ocr
+  namespace: tutum-app
+spec:
+  selector:
+    app: ocr
+  ports:
+    - protocol: TCP
+      port: 8002
+      targetPort: 8002
+  type: ClusterIP

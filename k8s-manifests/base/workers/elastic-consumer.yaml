@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: elastic-consumer
     app.kubernetes.io/part-of: tutum
 spec:
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: elastic-consumer
