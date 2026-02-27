@@ -45,12 +45,12 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: news-pipeline-config
-                  key: LIMIT
+                  key: PRODUCER_LIMIT
             - name: PAGES
               valueFrom:
                 configMapKeyRef:
                   name: news-pipeline-config
-                  key: PAGES
+                  key: PRODUCER_PAGES
           resources:
             requests:
               cpu: 200m

@@ -56,7 +56,7 @@ ${JSON.stringify(txData, null, 2)}
 친근하고 격려하는 톤으로 작성해주세요.
                 `;
 
-                const res = await fetch("/api/v1/chat/bedrock", {
+                const res = await fetch("/api/proxy/api/v1/chat/bedrock", {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
