@@ -337,8 +337,6 @@ deploy:staging:
   before_script:
     - apk add --no-cache git
   script:
-    - echo "ALERT_TEST_FORCE_FAIL_DEPLOY"
-    - exit 1
     - git clone ${K8S_MANIFESTS_REPO} /tmp/manifests && cd /tmp/manifests
     - git config user.email ci@tutum.dev
     - git config user.name "GitLab CI"
