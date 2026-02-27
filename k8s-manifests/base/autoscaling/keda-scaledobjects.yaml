@@ -72,7 +72,7 @@ spec:
         offsetResetPolicy: latest
 
 ---
-# news-consumer: Kafka news 토픽 lag 30 초과 시 1→4 파드로 자동 증가
+# news-consumer: Kafka news.raw 토픽 lag 30 초과 시 1→4 파드로 자동 증가
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
@@ -90,7 +90,7 @@ spec:
       metadata:
         bootstrapServers: kafka.tutum-data.svc.cluster.local:9092
         consumerGroup: clouddx-news-consumer-v1
-        topic: news
+        topic: news.raw
         lagThreshold: "30"
         offsetResetPolicy: latest
 

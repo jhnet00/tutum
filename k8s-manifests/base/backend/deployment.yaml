@@ -21,6 +21,15 @@ spec:
     spec:
       nodeSelector:
         workload: app
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: backend
+                topologyKey: kubernetes.io/hostname
       containers:
         - name: backend
           image: registry.gitlab.com/tutum-project/tutum-app/backend:latest
@@ -72,11 +81,11 @@ spec:
                   key: SECRET_KEY
           resources:
             requests:
-              cpu: 300m
-              memory: 768Mi
+              cpu: 600m
+              memory: 1Gi
             limits:
               cpu: "1"
-              memory: 2Gi
+              memory: 3Gi
           readinessProbe:
             httpGet:
               path: /health
