@@ -1,6 +1,6 @@
 # ArgoCD Application - Production 환경
-# 실행: kubectl apply -f production-app.yaml
-# 주의: production은 manual sync (자동 배포 비활성화)
+# main 브랜치 manual sync: CI deploy:production 잡 실행 후 ArgoCD에서 수동 승인
+# 실행: kubectl apply -f k8s-manifests/argocd/production-app.yaml -n argocd
 
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -12,14 +12,14 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://gitlab.com/tutum-project/k8s-manifests.git
+    repoURL: https://gitlab.com/tutum-project/tutum-app/backend.git
     targetRevision: main
-    path: overlays/production
+    path: k8s-manifests/overlays/production
   destination:
     server: https://kubernetes.default.svc
     namespace: tutum-app
   syncPolicy:
-    # production은 수동 승인 후 sync
+    # production은 수동 승인 후 sync (automated 없음)
     syncOptions:
       - CreateNamespace=true
       - ApplyOutOfSyncOnly=true

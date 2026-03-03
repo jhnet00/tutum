@@ -1,6 +1,6 @@
 # ArgoCD Application - Staging 환경
-# 실행: kubectl apply -f staging-app.yaml
-# 전제: ArgoCD 설치 완료 + k8s-manifests GitLab 레포 연동 완료
+# develop 브랜치 auto-sync: CI가 overlays/staging/kustomization.yaml 이미지 태그 업데이트 → ArgoCD 자동 배포
+# 실행: kubectl apply -f k8s-manifests/argocd/staging-app.yaml -n argocd
 
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -12,9 +12,9 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://gitlab.com/tutum-project/k8s-manifests.git
-    targetRevision: main
-    path: overlays/staging
+    repoURL: https://gitlab.com/tutum-project/tutum-app/backend.git
+    targetRevision: develop
+    path: k8s-manifests/overlays/staging
   destination:
     server: https://kubernetes.default.svc
     namespace: tutum-app

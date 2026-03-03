@@ -33,8 +33,9 @@ variables:
   WORKERS_IMAGE: "${CI_REGISTRY_IMAGE}/workers"
   # K8s 내부 서비스 주소
   ARGOCD_SERVER: "argocd-server.argocd.svc.cluster.local"
-  # k8s-manifests GitLab repo
-  K8S_MANIFESTS_REPO: "https://oauth2:${K8S_MANIFESTS_TOKEN}@gitlab.com/tutum-project/k8s-manifests.git"
+  # k8s-manifests: 백엔드 레포 내 k8s-manifests/ 디렉토리 직접 관리
+  # K8S_MANIFESTS_TOKEN: GitLab PAT (write_repository 권한) — Settings > CI/CD > Variables에 등록 필요
+  K8S_MANIFESTS_REPO: "https://oauth2:${K8S_MANIFESTS_TOKEN}@gitlab.com/tutum-project/tutum-app/backend.git"
 
 stages:
   - guard
@@ -370,12 +371,13 @@ deploy:staging:
     - git clone ${K8S_MANIFESTS_REPO} /tmp/manifests && cd /tmp/manifests
     - git config user.email ci@tutum.dev
     - git config user.name "GitLab CI"
-    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/frontend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" overlays/staging/kustomization.yaml'
-    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" overlays/staging/kustomization.yaml'
-    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/workers$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" overlays/staging/kustomization.yaml'
-    - git add -A
-    - 'git diff --cached --quiet || git commit -m "deploy: staging ${CI_COMMIT_SHORT_SHA}"'
-    - git push origin main
+    - git checkout develop
+    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/frontend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/staging/kustomization.yaml'
+    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/staging/kustomization.yaml'
+    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/workers$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/staging/kustomization.yaml'
+    - git add k8s-manifests/overlays/staging/kustomization.yaml
+    - 'git diff --cached --quiet || git commit -m "deploy: staging ${CI_COMMIT_SHORT_SHA} [skip ci]"'
+    - git push origin develop
   environment:
     name: staging
   rules:
@@ -393,11 +395,12 @@ deploy:production:
     - git clone ${K8S_MANIFESTS_REPO} /tmp/manifests && cd /tmp/manifests
     - git config user.email ci@tutum.dev
     - git config user.name "GitLab CI"
-    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/frontend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" overlays/production/kustomization.yaml'
-    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" overlays/production/kustomization.yaml'
-    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/workers$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" overlays/production/kustomization.yaml'
-    - git add -A
-    - 'git diff --cached --quiet || git commit -m "deploy: production ${CI_COMMIT_SHORT_SHA}"'
+    - git checkout main
+    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/frontend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/production/kustomization.yaml'
+    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/production/kustomization.yaml'
+    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/workers$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/production/kustomization.yaml'
+    - git add k8s-manifests/overlays/production/kustomization.yaml
+    - 'git diff --cached --quiet || git commit -m "deploy: production ${CI_COMMIT_SHORT_SHA} [skip ci]"'
     - git push origin main
   environment:
     name: production
