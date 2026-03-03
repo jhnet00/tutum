@@ -1,0 +1,115 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: monitoring
+data:
+  config.alloy: |
+    // ============================================
+    // 1. Kubernetes discovery
+    // ============================================
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    discovery.kubernetes "nodes" {
+      role = "node"
+    }
+
+    // ============================================
+    // 2. Relabel before scrape (target stage)
+    // ============================================
+    discovery.relabel "pod_meta" {
+      targets = discovery.kubernetes.pods.targets
+
+      // Collect only pods annotated for scraping.
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+        action        = "keep"
+        regex         = "true"
+      }
+
+      // Optional custom metrics path.
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+        action        = "replace"
+        target_label  = "__metrics_path__"
+        regex         = "(.+)"
+      }
+
+      // Optional custom metrics port.
+      rule {
+        source_labels = ["__address__", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+        action        = "replace"
+        regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+        replacement   = "$1:$2"
+        target_label  = "__address__"
+      }
+
+      // Labels used by dashboard queries.
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        target_label  = "app"
+      }
+    }
+
+    // ============================================
+    // 3. Metrics -> Mimir (monitoring VM)
+    // ============================================
+    prometheus.scrape "k8s_pods" {
+      targets         = discovery.relabel.pod_meta.output
+      forward_to      = [prometheus.remote_write.mimir.receiver]
+      scrape_interval = "30s"
+    }
+
+    prometheus.scrape "node_metrics" {
+      targets         = discovery.kubernetes.nodes.targets
+      forward_to      = [prometheus.remote_write.mimir.receiver]
+      scrape_interval = "30s"
+    }
+
+    prometheus.remote_write "mimir" {
+      endpoint {
+        url = "http://192.168.0.230:9009/api/v1/push"
+      }
+    }
+
+    // ============================================
+    // 4. Logs -> Loki
+    // ============================================
+    loki.source.kubernetes "k8s_logs" {
+      targets    = discovery.kubernetes.pods.targets
+      forward_to = [loki.write.default.receiver]
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://192.168.0.230:3100/loki/api/v1/push"
+      }
+    }
+
+    // ============================================
+    // 5. Traces -> Tempo
+    // ============================================
+    otelcol.receiver.otlp "default" {
+      grpc { endpoint = "0.0.0.0:4317" }
+      http { endpoint = "0.0.0.0:4318" }
+      output {
+        traces = [otelcol.exporter.otlp.tempo.input]
+      }
+    }
+
+    otelcol.exporter.otlp "tempo" {
+      client {
+        endpoint = "192.168.0.230:4317"
+        tls { insecure = true }
+      }
+    }

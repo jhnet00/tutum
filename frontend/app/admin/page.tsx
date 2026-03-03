@@ -8,7 +8,7 @@ import {
 } from "recharts";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const GRAFANA  = "http://192.168.56.30:3000";
+const GRAFANA  = "http://192.168.0.230:3000";
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const C = {

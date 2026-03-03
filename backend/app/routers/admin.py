@@ -858,7 +858,7 @@ async def get_data_metrics():
 
 # ─── 트레이스 (Tempo) ─────────────────────────────────────────────────────────
 
-TEMPO_URL = os.getenv("TEMPO_URL", "http://192.168.56.30:3200")
+TEMPO_URL = os.getenv("TEMPO_URL", "http://192.168.0.230:3200")
 
 
 @router.get("/traces")
@@ -894,7 +894,7 @@ async def get_traces(limit: int = 20, min_duration_ms: int = 50):
         start_time_ms = int(t.get("startTimeUnixNano", 0)) // 1_000_000
         trace_id = t.get("traceID", "")
         grafana_url = (
-            "http://192.168.56.30:3000/explore?datasource=tempo&left="
+            "http://192.168.0.230:3000/explore?datasource=tempo&left="
             "{\"queries\":[{\"refId\":\"A\",\"datasource\":{\"type\":\"tempo\"},"
             f"\"queryType\":\"traceql\",\"query\":\"{trace_id}\",\"tableType\":\"traces\"}}]}}"
         )

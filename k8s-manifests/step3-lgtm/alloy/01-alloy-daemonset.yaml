@@ -74,7 +74,7 @@ data:
     }
 
     // ============================================
-    // 3. Metrics → Mimir (192.168.56.30:9009)
+    // 3. Metrics → Mimir (192.168.0.230:9009)
     // ============================================
     prometheus.scrape "k8s_pods" {
       targets         = discovery.relabel.pod_meta.output
@@ -90,12 +90,12 @@ data:
 
     prometheus.remote_write "mimir" {
       endpoint {
-        url = "http://192.168.56.30:9009/api/v1/push"
+        url = "http://192.168.0.230:9009/api/v1/push"
       }
     }
 
     // ============================================
-    // 4. Logs → Loki (192.168.56.30:3100)
+    // 4. Logs → Loki (192.168.0.230:3100)
     // ============================================
     loki.source.kubernetes "k8s_logs" {
       targets    = discovery.kubernetes.pods.targets
@@ -104,12 +104,12 @@ data:
 
     loki.write "default" {
       endpoint {
-        url = "http://192.168.56.30:3100/loki/api/v1/push"
+        url = "http://192.168.0.230:3100/loki/api/v1/push"
       }
     }
 
     // ============================================
-    // 5. Traces → Tempo (192.168.56.30:4317)
+    // 5. Traces → Tempo (192.168.0.230:4317)
     // ============================================
     otelcol.receiver.otlp "default" {
       grpc { endpoint = "0.0.0.0:4317" }
@@ -121,7 +121,7 @@ data:
 
     otelcol.exporter.otlp "tempo" {
       client {
-        endpoint = "192.168.56.30:4317"
+        endpoint = "192.168.0.230:4317"
         tls { insecure = true }
       }
     }
@@ -175,15 +175,18 @@ metadata:
   name: alloy
   namespace: monitoring
   labels:
-    app: alloy
+    app.kubernetes.io/name: alloy
+    app.kubernetes.io/instance: alloy
 spec:
   selector:
     matchLabels:
-      app: alloy
+      app.kubernetes.io/name: alloy
+      app.kubernetes.io/instance: alloy
   template:
     metadata:
       labels:
-        app: alloy
+        app.kubernetes.io/name: alloy
+        app.kubernetes.io/instance: alloy
     spec:
       serviceAccountName: alloy
       tolerations:
@@ -193,7 +196,7 @@ spec:
           effect: NoSchedule
       containers:
         - name: alloy
-          image: grafana/alloy:v1.1.0
+          image: grafana/alloy:v1.13.0
           args:
             - run
             - /etc/alloy/config.alloy
