@@ -2,10 +2,17 @@
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from .cache import close_redis_connection, connect_to_redis
@@ -32,6 +39,15 @@ from .services.alert_service import MarketMonitor
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+# OTel TracerProvider 설정 (Alloy → Tempo)
+_otlp_endpoint = os.getenv("OTLP_ENDPOINT", "alloy.monitoring.svc.cluster.local:4317")
+_resource = Resource.create({SERVICE_NAME: "tutum-backend"})
+_tracer_provider = TracerProvider(resource=_resource)
+_tracer_provider.add_span_processor(
+    BatchSpanProcessor(OTLPSpanExporter(endpoint=_otlp_endpoint, insecure=True))
+)
+trace.set_tracer_provider(_tracer_provider)
 
 
 @asynccontextmanager
@@ -177,4 +193,7 @@ app.include_router(
 
 # Prometheus 메트릭 노출 (/metrics)
 Instrumentator().instrument(app).expose(app)
+
+# OpenTelemetry FastAPI 자동 계측
+FastAPIInstrumentor.instrument_app(app)
 

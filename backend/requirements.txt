@@ -37,3 +37,8 @@ python-dotenv==1.0.0
 ccxt==4.4.22                     # 암호화폐 거래소 API Client
 prometheus-fastapi-instrumentator==7.1.0
 kubernetes>=29.0.0              # K8s in-cluster client (Admin API용)
+
+# OpenTelemetry (Tracing)
+opentelemetry-sdk>=1.20.0
+opentelemetry-exporter-otlp-proto-grpc>=1.20.0
+opentelemetry-instrumentation-fastapi>=0.41b0

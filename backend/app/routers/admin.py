@@ -655,10 +655,10 @@ _PIPELINE_SYSTEM_PROMPT = """당신은 데이터 파이프라인 운영 전문�
 }
 
 status 기준:
-- OK: 파드 Running, 처리 정상 또는 설계상 비활성(replicas=0)이고 의도된 경우
-- WARN: 재시작 있음, 처리 지연, 비활성인데 활성화 고려 필요
+- OK: 파드 Running, 처리 정상
+- WARN: 재시작 있음, 처리 지연, 일시 중지/중단 상태
 - ERROR: 파드 없음, CrashLoop, 오류 지속
-참고: elastic-consumer replicas=0은 현재 안정화 모드 설계상 의도된 상태입니다."""
+중요: elastic-consumer가 비활성이라고 가정하지 말고 입력 데이터 기준으로 판단하세요."""
 
 
 @router.get("/pipeline-diagnose")
@@ -684,13 +684,23 @@ async def get_pipeline_diagnose():
             lines.append(f"  최근 로그: {recent[0][:80]}")
         lines.append("")
 
+    elastic = data["workers"].get("elastic-consumer", {})
+    elastic_status = elastic.get("status", "Unknown")
+    elastic_running = bool(elastic.get("running", False))
+    if elastic_running:
+        elastic_note = "참고: elastic-consumer는 현재 실행 중입니다. 비활성으로 가정하지 말고 실제 인덱싱 상태를 평가하세요."
+    elif elastic_status == "Stopped":
+        elastic_note = "참고: elastic-consumer 파드가 관찰되지 않습니다(중지 상태)."
+    else:
+        elastic_note = f"참고: elastic-consumer 상태는 {elastic_status} 입니다."
+
     lines += [
         "[데이터 현황]",
         f"  MongoDB news 전체: {data['mongodb'].get('news_total', 'N/A')}건",
         f"  MongoDB 최근 1시간 추가: {data['mongodb'].get('news_last_1h', 'N/A')}건",
         f"  ES 인덱스 문서: {data['elasticsearch'].get('news_docs', 'N/A')}건",
         "",
-        "참고: elastic-consumer는 현재 replicas=0 (안정화 모드 설계상 비활성)입니다.",
+        elastic_note,
         "위 데이터를 기반으로 3개 구성요소 각각의 분석을 JSON으로 반환하세요.",
     ]
     prompt = "\n".join(lines)
