@@ -61,17 +61,12 @@
 
 ---
 
-#### ISSUE-04: Kyverno 정책이 Audit 모드 (Enforce 아님)
+#### ~~ISSUE-04: Kyverno 정책이 Audit 모드 (Enforce 아님)~~ ✅ 완료
 
-- **영향**: 미서명 이미지 배포 시 차단되지 않고 경고만 발생
-- **현재 상태**: `validateAction: Audit` (미서명 이미지 배포 허용)
-- **해결 방법**: Cosign 키 설정 완료 후 `Enforce`로 전환
-  ```yaml
-  # k8s-manifests/kyverno/cosign-verify-policy.yaml
-  spec:
-    validationFailureAction: Enforce  # Audit → Enforce
-  ```
-  > ⚠️ Enforce 전환 전에 현재 실행 중인 이미지 전부 서명 완료 필수
+- **해결** (2026-03-03): CI `sign:*` 잡 정상 확인 후 `Enforce`로 전환
+  - `k8s-manifests/kyverno/cosign-verify-policy.yaml`: `Audit → Enforce`
+  - 이후 미서명 이미지는 `tutum-app` 네임스페이스 배포 차단됨
+  - ArgoCD tutum-staging auto-sync로 클러스터 적용 예정
 
 ---
 
@@ -189,8 +184,8 @@
 
 ```
 보안 완성 (이미지 서명 체계)
-├── ✅ ISSUE-03: Cosign 키 생성 (K8s Secret 완료) — CI Variable 등록만 남음
-├── ISSUE-04: Kyverno Audit → Enforce 전환 (CI Variable 등록 + 파이프라인 확인 후)
+├── ✅ ISSUE-03: Cosign 키 생성 + CI Variable 등록 완료
+├── ✅ ISSUE-04: Kyverno Audit → Enforce 전환 완료 (2026-03-03)
 └── ✅ ISSUE-05: Istio mTLS PeerAuthentication 적용 완료
 
 안정성 강화
