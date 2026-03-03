@@ -29,11 +29,12 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 logger = logging.getLogger(__name__)
 
 MIMIR_URL = os.getenv("MIMIR_URL", "http://192.168.0.230:9009/prometheus")
-LOKI_URL  = os.getenv("LOKI_URL",  "http://192.168.0.230:3100")
+LOKI_URL = os.getenv("LOKI_URL", "http://192.168.0.230:3100")
 
 # ─── Bedrock client (lazy init) ───────────────────────────────────────────────
 
 _bedrock_client = None
+
 
 def _get_bedrock_client():
     global _bedrock_client
@@ -127,8 +128,6 @@ async def get_nodes():
         result = []
         for node in nodes:
             name = node.metadata.name
-            labels = node.metadata.labels or {}
-
             # 노드 allocatable 정보
             alloc = node.status.allocatable or {}
             cpu_alloc_str = alloc.get("cpu", "0")
@@ -305,7 +304,7 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
     else:
         log_query = f'{{job="loki.source.kubernetes.k8s_logs", instance=~"{namespace}/.*"}}'
 
-    end_ns   = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+    end_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
     start_ns = end_ns - 600_000_000_000  # 최근 10분
 
     try:
@@ -327,14 +326,14 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
 
         logs = []
         for stream in data["data"]["result"]:
-            labels   = stream["stream"]
+            labels = stream["stream"]
             instance = labels.get("instance", "")
-            level    = labels.get("level", "info").upper()
+            level = labels.get("level", "info").upper()
 
             # instance: "tutum-app/backend-xxx:backend" → ns, pod 추출
             ns_pod = instance.split(":")[0]  # "tutum-app/backend-xxx"
-            parts  = ns_pod.split("/", 1)
-            ns_name  = parts[0] if len(parts) == 2 else ""
+            parts = ns_pod.split("/", 1)
+            ns_name = parts[0] if len(parts) == 2 else ""
             pod_name = parts[1] if len(parts) == 2 else instance
 
             for ts_ns, msg in stream["values"]:
@@ -407,7 +406,7 @@ async def get_diagnose():
             for item in raw.get("items", []):
                 name = item["metadata"]["name"]
                 cpu_nano = int(item["usage"]["cpu"].rstrip("n"))
-                mem_ki   = int(item["usage"]["memory"].rstrip("Ki"))
+                mem_ki = int(item["usage"]["memory"].rstrip("Ki"))
                 usage_map[name] = {"cpu_nano": cpu_nano, "mem_ki": mem_ki}
         except Exception:
             pass
@@ -428,7 +427,7 @@ async def get_diagnose():
                 mem_pct = round(u["mem_ki"] / mem_ki * 100) if mem_ki else 0
 
             status = _node_status(node)
-            role   = _node_role(node)
+            role = _node_role(node)
             node_lines.append(f"  - {name} ({role}): {status}, CPU {cpu_pct}%, MEM {mem_pct}%")
 
         # 파드 수집
@@ -524,10 +523,10 @@ async def get_diagnose():
 
 # ─── 파이프라인 모니터링 ────────────────────────────────────────────────────────
 
-_NEWS_WORKERS  = ["news-producer", "news-consumer", "elastic-consumer"]
+_NEWS_WORKERS = ["news-producer", "news-consumer", "elastic-consumer"]
 _PRICE_WORKERS = ["price-producer", "price-consumer"]
 _OTHER_WORKERS = ["email-worker", "ocr-worker"]
-_ALL_WORKERS   = _NEWS_WORKERS + _PRICE_WORKERS + _OTHER_WORKERS
+_ALL_WORKERS = _NEWS_WORKERS + _PRICE_WORKERS + _OTHER_WORKERS
 
 # 하위 호환성용 (pipeline-diagnose 프롬프트 등)
 _PIPELINE_WORKERS = _ALL_WORKERS
@@ -594,7 +593,7 @@ async def _collect_pipeline_data() -> dict:
         logger.warning("pipeline ES 조회 실패: %s", e)
 
     # 4. Loki 최근 로그 샘플 (최근 5분)
-    end_ns   = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+    end_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
     start_ns = end_ns - 300_000_000_000
     try:
         async with httpx.AsyncClient(timeout=8.0) as http:
@@ -677,7 +676,10 @@ async def get_pipeline_diagnose():
     for w in _PIPELINE_WORKERS:
         wd = data["workers"].get(w, {})
         lines.append(f"[{WORKER_KR[w]}] ({w})")
-        lines.append(f"  상태: {wd.get('status', 'Unknown')}, 재시작: {wd.get('restarts', 0)}회, Running: {wd.get('running', False)}")
+        status_str = wd.get('status', 'Unknown')
+        restarts_str = wd.get('restarts', 0)
+        running_str = wd.get('running', False)
+        lines.append(f"  상태: {status_str}, 재시작: {restarts_str}회, Running: {running_str}")
         recent = data["recent_logs"].get(w, [])
         if recent:
             lines.append(f"  최근 로그: {recent[0][:80]}")
@@ -817,7 +819,7 @@ async def get_data_metrics():
                 raw[key] = None
 
     # Redis hit rate
-    hits   = raw.get("redis_hits")
+    hits = raw.get("redis_hits")
     misses = raw.get("redis_misses")
     if hits is not None and misses is not None and (hits + misses) > 0:
         hit_rate = round(hits / (hits + misses) * 100, 1)
@@ -838,9 +840,11 @@ async def get_data_metrics():
             "available":       raw.get("redis_memory_used") is not None,
         },
         "kafka": {
-            "consumer_lag":         int(raw["kafka_lag"]) if raw.get("kafka_lag") is not None else None,
-            "throughput_msg_per_min": round(raw["kafka_throughput"], 1) if raw.get("kafka_throughput") is not None else None,
-            "available":            raw.get("kafka_lag") is not None,
+            "consumer_lag": int(raw["kafka_lag"]) if raw.get("kafka_lag") is not None else None,
+            "throughput_msg_per_min": (
+                round(raw["kafka_throughput"], 1) if raw.get("kafka_throughput") is not None else None
+            ),
+            "available": raw.get("kafka_lag") is not None,
         },
         "elasticsearch": {
             "indexing_rate":  round(raw["es_indexing_rate"], 2) if raw.get("es_indexing_rate") is not None else None,
@@ -863,7 +867,7 @@ async def get_traces(limit: int = 20, min_duration_ms: int = 50):
     Tempo에서 최근 슬로우 요청 트레이스 조회.
     service.name=tutum-backend, 최근 1시간 내.
     """
-    end_ns   = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+    end_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
     start_ns = end_ns - 3_600_000_000_000  # 1시간
 
     try:
@@ -889,13 +893,19 @@ async def get_traces(limit: int = 20, min_duration_ms: int = 50):
     for t in data.get("traces", []):
         duration_ms = round(int(t.get("durationMs", 0)))
         start_time_ms = int(t.get("startTimeUnixNano", 0)) // 1_000_000
+        trace_id = t.get("traceID", "")
+        grafana_url = (
+            "http://192.168.56.30:3000/explore?datasource=tempo&left="
+            "{\"queries\":[{\"refId\":\"A\",\"datasource\":{\"type\":\"tempo\"},"
+            f"\"queryType\":\"traceql\",\"query\":\"{trace_id}\",\"tableType\":\"traces\"}}]}}"
+        )
         traces.append({
-            "traceID":         t.get("traceID", ""),
+            "traceID": trace_id,
             "rootServiceName": t.get("rootServiceName", "tutum-backend"),
-            "rootTraceName":   t.get("rootTraceName", "-"),
-            "durationMs":      duration_ms,
-            "startTimeMs":     start_time_ms,
-            "grafana_url":     f"http://192.168.56.30:3000/explore?datasource=tempo&left={{\"queries\":[{{\"refId\":\"A\",\"datasource\":{{\"type\":\"tempo\"}},\"queryType\":\"traceql\",\"query\":\"{t.get('traceID','')}\",\"tableType\":\"traces\"}}]}}",
+            "rootTraceName": t.get("rootTraceName", "-"),
+            "durationMs": duration_ms,
+            "startTimeMs": start_time_ms,
+            "grafana_url": grafana_url,
         })
 
     traces.sort(key=lambda x: x["durationMs"], reverse=True)
