@@ -25,9 +25,33 @@ data:
     // ============================================
     // 2. Metrics → Mimir (192.168.56.30:9009)
     // ============================================
+
+    // Relabeling: __meta_kubernetes_* → actual metric labels
+    prometheus.relabel "k8s_pods_meta" {
+      forward_to = [prometheus.remote_write.mimir.receiver]
+
+      // namespace label (required for namespace-scoped queries)
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+
+      // pod name label
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+
+      // app label from pod labels
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        target_label  = "app"
+      }
+    }
+
     prometheus.scrape "k8s_pods" {
       targets         = discovery.kubernetes.pods.targets
-      forward_to      = [prometheus.remote_write.mimir.receiver]
+      forward_to      = [prometheus.relabel.k8s_pods_meta.receiver]
       scrape_interval = "30s"
     }
 
