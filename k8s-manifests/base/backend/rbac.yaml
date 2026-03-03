@@ -24,7 +24,7 @@ metadata:
   name: backend-cluster-reader
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "pods"]
+    resources: ["nodes", "pods", "persistentvolumeclaims"]
     verbs: ["get", "list"]
   - apiGroups: ["metrics.k8s.io"]
     resources: ["nodes", "pods"]
