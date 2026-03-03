@@ -148,6 +148,9 @@
   - `tutum-production`: manual sync, main 브랜치, `k8s-manifests/overlays/production`
   - staging overlay namePrefix 제거, backend OOM 메모리 512Mi→768Mi 수정
   - CI deploy 잡: 백엔드 레포 직접 push, `[skip ci]` 태그로 루프 방지
+  - 경윤님 추가 수정 (2026-03-03): OTel BatchSpanProcessor 부하로 768Mi→**1Gi** 재상향
+  - 경윤님 추가 수정 (2026-03-03): ocr `google-cloud-vision` 의존성 추가 → CrashLoopBackOff 해소
+  - backend-sa RBAC에 `persistentvolumeclaims list` 권한 추가 (`/admin/storage` 엔드포인트 대응)
   - **참고**: KEDA minReplicas와 staging replicas:1 충돌로 OutOfSync 표시 (서비스는 정상)
 
 ---
@@ -224,8 +227,9 @@
 ✅ Kafka          StatefulSet Running (20Gi)
 ✅ Elasticsearch  StatefulSet Running (30Gi)
 ✅ MinIO          StatefulSet Running (20Gi)
-✅ Backend        3 파드 Running
+✅ Backend        3 파드 Running (메모리 1Gi — OTel 포함)
 ✅ Frontend       2 파드 Running
+✅ OCR            Running (google-cloud-vision 의존성 추가 완료)
 ✅ Workers        6종 전부 Running (price/news producer/consumer, elastic, email)
 ✅ GitLab Runner  Pod Running (config.toml tags=k8s 설정됨)
 ✅ SonarQube      Running (Helm, sonarqube ns)
