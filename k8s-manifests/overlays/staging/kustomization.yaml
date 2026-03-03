@@ -9,8 +9,8 @@ patches:
 
 images:
   - name: registry.gitlab.com/tutum-project/tutum-app/backend/frontend
-    newTag: latest
+    newTag: 850ad0c4
   - name: registry.gitlab.com/tutum-project/tutum-app/backend
-    newTag: latest
+    newTag: 850ad0c4
   - name: registry.gitlab.com/tutum-project/tutum-app/backend/workers
-    newTag: latest
+    newTag: 850ad0c4
