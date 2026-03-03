@@ -79,5 +79,3 @@ async def get_exchange_rate(from_currency: str, to_currency: str) -> float:
     source_per_krw = rates[source]
     target_per_krw = rates[target]
     return target_per_krw / source_per_krw
-
-

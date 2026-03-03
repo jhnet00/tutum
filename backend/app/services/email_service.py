@@ -118,16 +118,13 @@ class EmailService:
         </html>
         """
 
-        text_body = f"""
-        Welcome to TUTUM!
-        
-        Please verify your email address by clicking the link below:
-        {verification_url}
-        
-        This link will expire in 1 hour.
-        
-        If you didn't create an account with TUTUM, please ignore this email.
-        """
+        text_body = (
+            "Welcome to TUTUM!\n\n"
+            "Please verify your email address by clicking the link below:\n"
+            f"{verification_url}\n\n"
+            "This link will expire in 1 hour.\n\n"
+            "If you didn't create an account with TUTUM, please ignore this email."
+        )
 
         try:
             response = self.client.send_email(

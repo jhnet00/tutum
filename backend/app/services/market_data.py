@@ -252,11 +252,11 @@ class KISClient:
         t = payload.get("t") or []
         o = payload.get("o") or []
         h = payload.get("h") or []
-        l = payload.get("l") or []
+        low_values = payload.get("l") or []
         c = payload.get("c") or []
         v = payload.get("v") or []
 
-        size = min(len(t), len(o), len(h), len(l), len(c), len(v))
+        size = min(len(t), len(o), len(h), len(low_values), len(c), len(v))
         history: list[dict] = []
         for i in range(size):
             ts = int(t[i])
@@ -266,7 +266,7 @@ class KISClient:
                     "date": dt_kst.isoformat(timespec="seconds"),
                     "open": float(o[i]),
                     "high": float(h[i]),
-                    "low": float(l[i]),
+                    "low": float(low_values[i]),
                     "close": float(c[i]),
                     "volume": float(v[i]),
                 }

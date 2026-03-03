@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type ComponentProps } from "react";
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar,
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
@@ -106,9 +106,12 @@ function Skel({ w = "w-full", h = "h-4" }: { w?: string; h?: string }) {
   return <div className={`${w} ${h} bg-white/[0.06] rounded-md animate-pulse`} />;
 }
 
-function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+function Card({ children, className = "", ...props }: ComponentProps<"div">) {
   return (
-    <div className={`rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm p-4 ${className}`}>
+    <div
+      className={`rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-sm p-4 ${className}`}
+      {...props}
+    >
       {children}
     </div>
   );
