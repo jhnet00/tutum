@@ -524,22 +524,28 @@ async def get_diagnose():
 
 # ─── 파이프라인 모니터링 ────────────────────────────────────────────────────────
 
-_PIPELINE_WORKERS = ["news-producer", "news-consumer", "elastic-consumer"]
+_NEWS_WORKERS  = ["news-producer", "news-consumer", "elastic-consumer"]
+_PRICE_WORKERS = ["price-producer", "price-consumer"]
+_OTHER_WORKERS = ["email-worker", "ocr-worker"]
+_ALL_WORKERS   = _NEWS_WORKERS + _PRICE_WORKERS + _OTHER_WORKERS
+
+# 하위 호환성용 (pipeline-diagnose 프롬프트 등)
+_PIPELINE_WORKERS = _ALL_WORKERS
 
 
 async def _collect_pipeline_data() -> dict:
-    """파이프라인 3대 구성요소 상태 수집 (pipeline / pipeline-diagnose 공용)."""
+    """파이프라인 전체 워커 상태 수집 (pipeline / pipeline-diagnose 공용)."""
     out: dict = {
-        "workers": {w: {"status": "Unknown", "restarts": 0, "age": "-", "running": False} for w in _PIPELINE_WORKERS},
+        "workers": {w: {"status": "Unknown", "restarts": 0, "age": "-", "running": False} for w in _ALL_WORKERS},
         "mongodb": {"news_total": 0, "news_last_1h": 0, "available": False},
         "elasticsearch": {"news_docs": 0, "available": False},
-        "recent_logs": {w: [] for w in _PIPELINE_WORKERS},
+        "recent_logs": {w: [] for w in _ALL_WORKERS},
     }
 
     # 1. Worker 파드 상태 (K8s)
     try:
         core, _ = _get_k8s_clients()
-        for label in _PIPELINE_WORKERS:
+        for label in _ALL_WORKERS:
             try:
                 pods = core.list_namespaced_pod("tutum-app", label_selector=f"app={label}").items
                 running_pods = [p for p in pods if p.status.phase == "Running"]
@@ -592,7 +598,7 @@ async def _collect_pipeline_data() -> dict:
     start_ns = end_ns - 300_000_000_000
     try:
         async with httpx.AsyncClient(timeout=8.0) as http:
-            for worker in _PIPELINE_WORKERS:
+            for worker in _ALL_WORKERS:
                 try:
                     query = f'{{job="loki.source.kubernetes.k8s_logs", instance=~"tutum-app/{worker}-.*"}}'
                     resp = await http.get(
@@ -621,7 +627,7 @@ async def get_pipeline():
 
 
 _PIPELINE_SYSTEM_PROMPT = """당신은 데이터 파이프라인 운영 전문가 AI입니다.
-뉴스 수집 파이프라인의 3대 구성요소를 분석하여 다음 JSON 형식으로만 응답하세요.
+파이프라인 구성요소들을 분석하여 다음 JSON 형식으로만 응답하세요.
 다른 텍스트나 마크다운 없이 순수 JSON만 반환하세요.
 
 {
@@ -634,22 +640,6 @@ _PIPELINE_SYSTEM_PROMPT = """당신은 데이터 파이프라인 운영 전문�
       "summary": "한 줄 요약 (20자 이내)",
       "issues": [{"title": "이슈 제목", "detail": "상세 설명"}],
       "actions": [{"priority": "HIGH" | "MEDIUM" | "LOW", "action": "권장 조치"}]
-    },
-    {
-      "name": "news-consumer",
-      "label": "MongoDB 저장",
-      "status": "OK" | "WARN" | "ERROR",
-      "summary": "...",
-      "issues": [],
-      "actions": []
-    },
-    {
-      "name": "elastic-consumer",
-      "label": "ES 인덱싱",
-      "status": "OK" | "WARN" | "ERROR",
-      "summary": "...",
-      "issues": [],
-      "actions": []
     }
   ]
 }
@@ -658,7 +648,8 @@ status 기준:
 - OK: 파드 Running, 처리 정상
 - WARN: 재시작 있음, 처리 지연, 일시 중지/중단 상태
 - ERROR: 파드 없음, CrashLoop, 오류 지속
-중요: elastic-consumer가 비활성이라고 가정하지 말고 입력 데이터 기준으로 판단하세요."""
+워커 그룹: 뉴스(news-producer/consumer/elastic-consumer), 시세(price-producer/consumer), 기타(email-worker/ocr-worker)
+중요: 각 워커의 입력 데이터와 실제 상태를 기반으로 판단하세요."""
 
 
 @router.get("/pipeline-diagnose")
@@ -739,3 +730,165 @@ async def get_pipeline_diagnose():
         raise HTTPException(status_code=503, detail=f"AI 분석 실패: {e}")
 
     return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+# ─── 스토리지 (PVC) ────────────────────────────────────────────────────────────
+
+@router.get("/storage")
+async def get_storage():
+    """
+    K8s PersistentVolumeClaim 목록과 상태 반환.
+    tutum-app, tutum-data, tutum-storage 네임스페이스 대상.
+    """
+    TARGET_NS = {"tutum-app", "tutum-data", "tutum-storage"}
+    try:
+        core, _ = _get_k8s_clients()
+        pvcs = core.list_persistent_volume_claim_for_all_namespaces().items
+        result = []
+        for pvc in pvcs:
+            if pvc.metadata.namespace not in TARGET_NS:
+                continue
+            capacity = ""
+            if pvc.spec.resources and pvc.spec.resources.requests:
+                capacity = pvc.spec.resources.requests.get("storage", "")
+            result.append({
+                "name": pvc.metadata.name,
+                "namespace": pvc.metadata.namespace,
+                "status": pvc.status.phase or "Unknown",
+                "capacity": capacity,
+                "storage_class": pvc.spec.storage_class_name or "-",
+                "volume": pvc.spec.volume_name or "-",
+            })
+        result.sort(key=lambda x: (x["namespace"], x["name"]))
+        return {"pvcs": result}
+    except Exception as e:
+        logger.error("get_storage 오류: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── 데이터 레이어 메트릭 ────────────────────────────────────────────────────────
+
+@router.get("/data-metrics")
+async def get_data_metrics():
+    """
+    Mimir에서 Redis/Kafka/ES 메트릭 조회.
+    kafka-exporter(9308), redis-exporter(9121)가 Alloy에 의해 스크랩된 데이터.
+    """
+    now = datetime.now(timezone.utc)
+    instant_params = {"time": now.isoformat()}
+
+    queries = {
+        "redis_memory_used":    'redis_memory_used_bytes',
+        "redis_memory_max":     'redis_memory_max_bytes',
+        "redis_clients":        'redis_connected_clients',
+        "redis_hits":           'increase(redis_keyspace_hits_total[5m])',
+        "redis_misses":         'increase(redis_keyspace_misses_total[5m])',
+        "kafka_lag":            'sum(kafka_consumergroup_lag)',
+        "kafka_throughput":     'sum(rate(kafka_topic_partition_current_offset[5m])) * 60',
+        "es_indexing_rate":     'sum(rate(elasticsearch_indices_indexing_index_total[5m]))',
+        "es_jvm_heap_used":     'sum(elasticsearch_jvm_memory_used_bytes{area="heap"})',
+        "es_jvm_heap_max":      'sum(elasticsearch_jvm_memory_max_bytes{area="heap"})',
+    }
+
+    raw: dict = {}
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        for key, query in queries.items():
+            try:
+                resp = await client.get(
+                    f"{MIMIR_URL}/api/v1/query",
+                    params={"query": query, **instant_params},
+                )
+                data = resp.json()
+                if data.get("status") == "success":
+                    results = data["data"]["result"]
+                    raw[key] = float(results[0]["value"][1]) if results else None
+                else:
+                    raw[key] = None
+            except Exception as e:
+                logger.warning("data-metrics Mimir 실패 [%s]: %s", key, e)
+                raw[key] = None
+
+    # Redis hit rate
+    hits   = raw.get("redis_hits")
+    misses = raw.get("redis_misses")
+    if hits is not None and misses is not None and (hits + misses) > 0:
+        hit_rate = round(hits / (hits + misses) * 100, 1)
+    else:
+        hit_rate = None
+
+    # 메모리 GB 변환
+    def to_gb(v): return round(v / 1024 / 1024 / 1024, 2) if v else None
+    def to_pct(used, max_v): return round(used / max_v * 100, 1) if used and max_v else None
+
+    return {
+        "redis": {
+            "memory_used_gb":  to_gb(raw.get("redis_memory_used")),
+            "memory_max_gb":   to_gb(raw.get("redis_memory_max")),
+            "memory_pct":      to_pct(raw.get("redis_memory_used"), raw.get("redis_memory_max")),
+            "clients":         int(raw["redis_clients"]) if raw.get("redis_clients") is not None else None,
+            "hit_rate_pct":    hit_rate,
+            "available":       raw.get("redis_memory_used") is not None,
+        },
+        "kafka": {
+            "consumer_lag":         int(raw["kafka_lag"]) if raw.get("kafka_lag") is not None else None,
+            "throughput_msg_per_min": round(raw["kafka_throughput"], 1) if raw.get("kafka_throughput") is not None else None,
+            "available":            raw.get("kafka_lag") is not None,
+        },
+        "elasticsearch": {
+            "indexing_rate":  round(raw["es_indexing_rate"], 2) if raw.get("es_indexing_rate") is not None else None,
+            "jvm_heap_used_gb": to_gb(raw.get("es_jvm_heap_used")),
+            "jvm_heap_max_gb":  to_gb(raw.get("es_jvm_heap_max")),
+            "jvm_heap_pct":   to_pct(raw.get("es_jvm_heap_used"), raw.get("es_jvm_heap_max")),
+            "available":      raw.get("es_jvm_heap_used") is not None,
+        },
+    }
+
+
+# ─── 트레이스 (Tempo) ─────────────────────────────────────────────────────────
+
+TEMPO_URL = os.getenv("TEMPO_URL", "http://192.168.56.30:3200")
+
+
+@router.get("/traces")
+async def get_traces(limit: int = 20, min_duration_ms: int = 50):
+    """
+    Tempo에서 최근 슬로우 요청 트레이스 조회.
+    service.name=tutum-backend, 최근 1시간 내.
+    """
+    end_ns   = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+    start_ns = end_ns - 3_600_000_000_000  # 1시간
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                f"{TEMPO_URL}/api/search",
+                params={
+                    "service.name": "tutum-backend",
+                    "limit":         limit,
+                    "start":         start_ns,
+                    "end":           end_ns,
+                    "minDuration":   f"{min_duration_ms}ms",
+                },
+            )
+            if resp.status_code != 200:
+                return {"traces": [], "available": False}
+            data = resp.json()
+    except Exception as e:
+        logger.warning("Tempo 조회 실패: %s", e)
+        return {"traces": [], "available": False}
+
+    traces = []
+    for t in data.get("traces", []):
+        duration_ms = round(int(t.get("durationMs", 0)))
+        start_time_ms = int(t.get("startTimeUnixNano", 0)) // 1_000_000
+        traces.append({
+            "traceID":         t.get("traceID", ""),
+            "rootServiceName": t.get("rootServiceName", "tutum-backend"),
+            "rootTraceName":   t.get("rootTraceName", "-"),
+            "durationMs":      duration_ms,
+            "startTimeMs":     start_time_ms,
+            "grafana_url":     f"http://192.168.56.30:3000/explore?datasource=tempo&left={{\"queries\":[{{\"refId\":\"A\",\"datasource\":{{\"type\":\"tempo\"}},\"queryType\":\"traceql\",\"query\":\"{t.get('traceID','')}\",\"tableType\":\"traces\"}}]}}",
+        })
+
+    traces.sort(key=lambda x: x["durationMs"], reverse=True)
+    return {"traces": traces, "available": True}
