@@ -302,7 +302,7 @@ export default function AdminDashboard() {
     }));
   })();
 
-  // Pod status breakdown for pie
+  // Pod status breakdown (pie chart)
   const podStats = (() => {
     const counts: Record<string, number> = { Running: 0, Pending: 0, Failed: 0, Evicted: 0 };
     const pendingStates = new Set(["Pending", "ContainerCreating", "PodInitializing"]);

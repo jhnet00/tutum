@@ -201,6 +201,7 @@ build:frontend:
   rules:
     - changes:
         - frontend/**/*
+        - backend/**/*
 
 build:backend:
   stage: build
@@ -214,6 +215,7 @@ build:backend:
     - docker push ${BACKEND_IMAGE}:latest
   rules:
     - changes:
+        - frontend/**/*
         - backend/**/*
     - if: '$CI_PIPELINE_SOURCE == "api"'
 
@@ -229,7 +231,9 @@ build:workers:
     - docker push ${WORKERS_IMAGE}:latest
   rules:
     - changes:
-        - backend/workers/**/*
+        - frontend/**/*
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 # ============================================
 # Stage 5: Trivy 이미지 취약점 스캔
@@ -248,6 +252,10 @@ security:frontend:
   needs:
     - job: build:frontend
       optional: true
+  rules:
+    - changes:
+        - frontend/**/*
+        - backend/**/*
 
 security:backend:
   stage: security
@@ -262,6 +270,11 @@ security:backend:
   needs:
     - job: build:backend
       optional: true
+  rules:
+    - changes:
+        - frontend/**/*
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 security:workers:
   stage: security
@@ -276,6 +289,11 @@ security:workers:
   needs:
     - job: build:workers
       optional: true
+  rules:
+    - changes:
+        - frontend/**/*
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 # ============================================
 # Stage 6: Cosign 이미지 서명
@@ -294,6 +312,10 @@ sign:frontend:
   needs:
     - job: security:frontend
       optional: true
+  rules:
+    - changes:
+        - frontend/**/*
+        - backend/**/*
 
 sign:backend:
   stage: sign
@@ -308,6 +330,11 @@ sign:backend:
   needs:
     - job: security:backend
       optional: true
+  rules:
+    - changes:
+        - frontend/**/*
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 sign:workers:
   stage: sign
@@ -322,6 +349,11 @@ sign:workers:
   needs:
     - job: security:workers
       optional: true
+  rules:
+    - changes:
+        - frontend/**/*
+        - backend/**/*
+    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 # ============================================
 # Stage 7: GitOps 배포 (k8s-manifests 이미지 태그 업데이트)
@@ -338,7 +370,9 @@ deploy:staging:
     - git clone ${K8S_MANIFESTS_REPO} /tmp/manifests && cd /tmp/manifests
     - git config user.email ci@tutum.dev
     - git config user.name "GitLab CI"
-    - 'sed -i "s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/" overlays/staging/kustomization.yaml'
+    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/frontend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" overlays/staging/kustomization.yaml'
+    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" overlays/staging/kustomization.yaml'
+    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/workers$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" overlays/staging/kustomization.yaml'
     - git add -A
     - 'git diff --cached --quiet || git commit -m "deploy: staging ${CI_COMMIT_SHORT_SHA}"'
     - git push origin main
@@ -346,6 +380,9 @@ deploy:staging:
     name: staging
   rules:
     - if: '$CI_COMMIT_BRANCH == "develop"'
+      changes:
+        - frontend/**/*
+        - backend/**/*
 
 deploy:production:
   stage: deploy
@@ -356,7 +393,9 @@ deploy:production:
     - git clone ${K8S_MANIFESTS_REPO} /tmp/manifests && cd /tmp/manifests
     - git config user.email ci@tutum.dev
     - git config user.name "GitLab CI"
-    - 'sed -i "s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/" overlays/production/kustomization.yaml'
+    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/frontend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" overlays/production/kustomization.yaml'
+    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" overlays/production/kustomization.yaml'
+    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/workers$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" overlays/production/kustomization.yaml'
     - git add -A
     - 'git diff --cached --quiet || git commit -m "deploy: production ${CI_COMMIT_SHORT_SHA}"'
     - git push origin main
@@ -365,6 +404,9 @@ deploy:production:
   when: manual
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - frontend/**/*
+        - backend/**/*
 
 # ============================================
 # Slack, Jira
