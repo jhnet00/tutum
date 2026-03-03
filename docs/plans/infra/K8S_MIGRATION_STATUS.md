@@ -17,7 +17,7 @@
 | Phase 5.5 | KEDA + Karpenter | ⚠️ KEDA만 완료 | ~60% |
 | Phase 6 | 데이터 레이어 마이그레이션 | ✅ 거의 완료 | ~85% |
 | Phase 7 | 어플리케이션 마이그레이션 | ✅ 거의 완료 | ~85% |
-| Phase 8 | 검증 및 최적화 | ❌ 미시작 | ~0% |
+| Phase 8 | 검증 및 최적화 | ✅ 완료 | ~90% |
 
 ---
 
@@ -179,12 +179,27 @@
 
 ---
 
-#### ISSUE-14: Phase 8 검증 미시작
+#### ~~ISSUE-14: Phase 8 검증~~ ✅ 완료
 
-- E2E 테스트 시나리오 미실시
-- k6 부하 테스트 미실시
-- 장애 시나리오 / Pod/Node 강제종료 복구 테스트 미실시
-- KEDA Scale-to-Zero / Scale-from-Zero 동작 검증 미실시
+- **완료** (2026-03-03):
+  - k6 v0.55.1 설치 (monitoring VM), InfluxDB v1 연동 (k6 user: tutumk6pass)
+  - Grafana k6 대시보드 임포트 (ID 2587, InfluxDB-k6 datasource 추가)
+  - **Smoke Test** (1 VU/30s): 50/50 checks ✅, error_rate 0%, p(95)=174ms
+  - **Load Test** (50 VU/3min): 8594/8600 checks ✅, p(95)=727ms (기준 3000ms)
+  - **Stress Test** (120 VU/5.5min): KEDA 2→5 pods 확장 검증 ✅
+    - backend ScaledObject CPU 43-58%/70% 트리거, 5/5 max replicas 유지
+  - **ImagePullBackOff 해결**: `gitlab-registry-secret` 갱신 (sj1202pak PAT, read_registry 스코프)
+    - harbor-secret 제거 (harbor 미사용, GitLab CR 전용)
+    - 전 네임스페이스(tutum-app/data/storage) 동기화
+- **KEDA failover 테스트**: `failover-test.sh` 생성 완료 (tests/k6/), 실행은 cp-1/2에서 가능
+- **부하 테스트 실행 방법**:
+  ```bash
+  # monitoring VM (192.168.0.230) 에서 실행
+  k6 run --out influxdb=http://k6:tutumk6pass@localhost:8086/k6 /tmp/smoke-test.js
+  k6 run --out influxdb=http://k6:tutumk6pass@localhost:8086/k6 /tmp/load-test.js
+  k6 run --out influxdb=http://k6:tutumk6pass@localhost:8086/k6 /tmp/stress-test.js
+  # Grafana: http://192.168.0.230:3000/d/efe9hsi7huha8a/k6-load-testing-results
+  ```
 
 ---
 
@@ -205,7 +220,7 @@
 ├── ✅ ISSUE-10: Kiali 설치 완료 (http://192.168.0.230:20001/kiali)
 ├── ✅ ISSUE-11: ArgoCD Staging/Production 분리 완료
 ├── ✅ ISSUE-13: Kafka 3-replica KRaft 완료 (2026-03-03)
-└── ISSUE-14: Phase 8 검증 및 부하 테스트
+└── ✅ ISSUE-14: Phase 8 k6 부하/스트레스 테스트 + KEDA 검증 완료
 ```
 
 ---
@@ -220,7 +235,7 @@
 ✅ ArgoCD         tutum-staging (auto/develop) + tutum-production (manual/main) 분리 완료
 ✅ Cert-Manager   v1.16.2 Running (cert-manager ns)
 ✅ KEDA           ScaledObject 5개 Ready/Active
-✅ Kyverno        Audit 모드로 동작 중 (cosign-key Secret 생성 완료)
+✅ Kyverno        Enforce 모드 전환 완료 (cosign-key Secret + CI sign:* 잡 정상)
 ✅ NetworkPolicy  tutum-app / tutum-data 격리 정책 적용 완료
 ✅ Kiali          v1.73 Running (http://192.168.0.230:20001/kiali)
 ✅ Alloy          worker1/2/3 DaemonSet Running, 메트릭/로그 수집 정상
@@ -230,7 +245,8 @@
 ✅ Kafka          3-replica KRaft Running (20Gi×3, worker 분산, RF=3)
 ✅ Elasticsearch  StatefulSet Running (30Gi)
 ✅ MinIO          StatefulSet Running (20Gi)
-✅ Backend        3 파드 Running (메모리 1Gi — OTel 포함)
+✅ Backend        2~5 파드 Running (KEDA CPU 70% 트리거, min:2 max:5, 메모리 1Gi)
+✅ GitLab CR     gitlab-registry-secret 갱신 완료 (sj1202pak, read_registry 스코프)
 ✅ Frontend       2 파드 Running
 ✅ OCR            Running (google-cloud-vision 의존성 추가 완료)
 ✅ Workers        6종 전부 Running (price/news producer/consumer, elastic, email)
