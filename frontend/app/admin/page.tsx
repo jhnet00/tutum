@@ -167,6 +167,17 @@ function SevColors(sev: "OK" | "WARN" | "CRITICAL") {
     : { bg: "bg-emerald-500/10", border: "border-emerald-500/20", text: "text-emerald-400", dot: "bg-emerald-400" };
 }
 
+// ─── Clock (isolated to avoid full dashboard re-render every second) ──────────
+
+function Clock() {
+  const [time, setTime] = useState(() => new Date().toLocaleTimeString("ko-KR", { hour12: false }));
+  useEffect(() => {
+    const id = setInterval(() => setTime(new Date().toLocaleTimeString("ko-KR", { hour12: false })), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return <span className="font-mono">{time}</span>;
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function AdminDashboard() {
@@ -205,7 +216,8 @@ export default function AdminDashboard() {
   const [logPod,    setLogPod]    = useState("");
   const logRef = useRef<HTMLDivElement>(null);
   const [lastUpdated, setLastUpdated] = useState("");
-  const [clock, setClock] = useState("");
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [fetchError, setFetchError] = useState("");
 
   // Overall cluster health from nodes + pods
   const clusterHealth = (() => {
@@ -218,69 +230,82 @@ export default function AdminDashboard() {
     return "OK";
   })();
 
-  // Clock
-  useEffect(() => {
-    const tick = () => setClock(new Date().toLocaleTimeString("ko-KR", { hour12: false }));
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, []);
-
   // Fetch helpers
+  const showError = (msg: string) => {
+    setFetchError(msg);
+    setTimeout(() => setFetchError(""), 4000);
+  };
+
   const fetchNodes = useCallback(async () => {
     try {
       const r = await fetch(`${API_BASE}/api/v1/admin/nodes`);
       if (r.ok) { const d = await r.json(); setNodes(d.nodes || []); }
-    } catch {} finally { setLoadingNodes(false); setLastUpdated(new Date().toLocaleTimeString("ko-KR")); }
+      else showError("노드 조회 실패");
+    } catch (e) { console.error("fetchNodes", e); showError("노드 조회 실패"); }
+    finally { setLoadingNodes(false); setLastUpdated(new Date().toLocaleTimeString("ko-KR")); }
   }, []);
 
   const fetchPods = useCallback(async () => {
     try {
       const r = await fetch(`${API_BASE}/api/v1/admin/pods`);
       if (r.ok) { const d = await r.json(); setPods(d.pods || []); }
-    } catch {} finally { setLoadingPods(false); }
+      else showError("파드 조회 실패");
+    } catch (e) { console.error("fetchPods", e); showError("파드 조회 실패"); }
+    finally { setLoadingPods(false); }
   }, []);
 
   const fetchMetrics = useCallback(async () => {
     try {
       const r = await fetch(`${API_BASE}/api/v1/admin/metrics`);
       if (r.ok) setMetrics(await r.json());
-    } catch {} finally { setLoadingMetrics(false); }
+      else showError("메트릭 조회 실패");
+    } catch (e) { console.error("fetchMetrics", e); }
+    finally { setLoadingMetrics(false); }
   }, []);
 
   const fetchStorage = useCallback(async () => {
     try {
       const r = await fetch(`${API_BASE}/api/v1/admin/storage`);
       if (r.ok) { const d = await r.json(); setPvcs(d.pvcs || []); }
-    } catch {} finally { setLoadingStorage(false); }
+      else showError("스토리지 조회 실패");
+    } catch (e) { console.error("fetchStorage", e); }
+    finally { setLoadingStorage(false); }
   }, []);
 
   const fetchDataMetrics = useCallback(async () => {
     try {
       const r = await fetch(`${API_BASE}/api/v1/admin/data-metrics`);
       if (r.ok) setDataMetrics(await r.json());
-    } catch {} finally { setLoadingDataM(false); }
+      else showError("데이터 메트릭 조회 실패");
+    } catch (e) { console.error("fetchDataMetrics", e); }
+    finally { setLoadingDataM(false); }
   }, []);
 
   const fetchTraces = useCallback(async () => {
     try {
       const r = await fetch(`${API_BASE}/api/v1/admin/traces?limit=20&min_duration_ms=50`);
       if (r.ok) { const d = await r.json(); setTraces(d.traces || []); }
-    } catch {} finally { setLoadingTraces(false); }
+      else showError("트레이스 조회 실패");
+    } catch (e) { console.error("fetchTraces", e); }
+    finally { setLoadingTraces(false); }
   }, []);
 
   const fetchPipeline = useCallback(async () => {
     try {
       const r = await fetch(`${API_BASE}/api/v1/admin/pipeline`);
       if (r.ok) setPipeline(await r.json());
-    } catch {} finally { setLoadingPipeline(false); }
+      else showError("파이프라인 조회 실패");
+    } catch (e) { console.error("fetchPipeline", e); }
+    finally { setLoadingPipeline(false); }
   }, []);
 
   const fetchLogs = useCallback(async () => {
     try {
       const r = await fetch(`${API_BASE}/api/v1/admin/logs?namespace=${logNs}&limit=100`);
       if (r.ok) { const d = await r.json(); setLogs(d.logs || []); }
-    } catch {} finally { setLoadingLogs(false); }
+      else showError("로그 조회 실패");
+    } catch (e) { console.error("fetchLogs", e); }
+    finally { setLoadingLogs(false); }
   }, [logNs]);
 
   // Initial + polling
@@ -291,6 +316,17 @@ export default function AdminDashboard() {
     const id60 = setInterval(() => fetchTraces(), 60_000);
     return () => { clearInterval(id30); clearInterval(id10); clearInterval(id60); };
   }, [fetchNodes, fetchPods, fetchMetrics, fetchStorage, fetchDataMetrics, fetchTraces, fetchPipeline, fetchLogs]);
+
+  // Scroll logs to top when new entries arrive (newest-first order)
+  useEffect(() => {
+    logRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [logs]);
+
+  // Reset filters when logNs changes
+  useEffect(() => {
+    setLogPod("");
+    setLogLevel("ALL");
+  }, [logNs]);
 
   // Metrics time series data for charts
   const metricsChartData = (() => {
@@ -374,11 +410,17 @@ export default function AdminDashboard() {
 
           {/* Right: time + refresh */}
           <div className="flex items-center gap-4 text-xs text-white/40">
-            <span className="font-mono">{clock}</span>
+            <Clock />
             {lastUpdated && <span>갱신 {lastUpdated}</span>}
-            <button onClick={() => { fetchNodes(); fetchPods(); fetchMetrics(); fetchStorage(); fetchDataMetrics(); fetchPipeline(); fetchLogs(); fetchTraces(); }}
-                    className="px-3 py-1 rounded-lg border border-white/[0.08] hover:bg-white/[0.05] transition text-white/60 hover:text-white text-xs">
-              ↺ 새로고침
+            <button
+              onClick={async () => {
+                setIsRefreshing(true);
+                await Promise.all([fetchNodes(), fetchPods(), fetchMetrics(), fetchStorage(), fetchDataMetrics(), fetchPipeline(), fetchLogs(), fetchTraces()]);
+                setIsRefreshing(false);
+              }}
+              disabled={isRefreshing}
+              className="px-3 py-1 rounded-lg border border-white/[0.08] hover:bg-white/[0.05] transition text-white/60 hover:text-white text-xs disabled:opacity-50">
+              {isRefreshing ? "↺ 갱신중…" : "↺ 새로고침"}
             </button>
           </div>
         </div>
@@ -386,7 +428,8 @@ export default function AdminDashboard() {
         {/* Tabs */}
         <div className="max-w-[1600px] mx-auto px-6 flex gap-1 pb-0">
           {tabs.map(t => (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
+            <button key={t.id}
+                    onClick={() => { setActiveTab(t.id); setNsFilter("all"); setNodeFilter("all"); setLogPod(""); setLogLevel("ALL"); }}
                     className={`px-4 py-2 text-sm font-medium border-b-2 transition-all ${
                       activeTab === t.id
                         ? "border-blue-400 text-blue-400"
@@ -397,6 +440,13 @@ export default function AdminDashboard() {
           ))}
         </div>
       </header>
+
+      {/* Error toast */}
+      {fetchError && (
+        <div className="fixed bottom-4 right-4 z-50 bg-red-500/20 border border-red-500/30 text-red-400 text-xs px-4 py-2 rounded-lg shadow-lg">
+          ⚠ {fetchError}
+        </div>
+      )}
 
       <main className="max-w-[1600px] mx-auto px-6 py-6 space-y-6">
 
@@ -602,7 +652,7 @@ export default function AdminDashboard() {
                           <p className="text-[10px] text-white/30">{p.namespace} · {p.storage_class}</p>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-xs font-mono text-white/60">{p.capacity}</span>
+                          <span className="text-xs font-mono text-white/60">{p.capacity || "-"}</span>
                           <StatusBadge status={p.status} />
                         </div>
                       </div>
@@ -648,7 +698,7 @@ export default function AdminDashboard() {
                       {filteredPods.map(p => (
                         <tr key={`${p.namespace}/${p.name}`}
                             className="border-b border-white/[0.03] hover:bg-white/[0.02] transition">
-                          <td className="py-1.5 pr-4 font-mono max-w-[180px] truncate">{p.name}</td>
+                          <td className="py-1.5 pr-4 font-mono max-w-[180px] truncate" title={p.name}>{p.name}</td>
                           <td className="py-1.5 pr-4 text-white/50">{p.namespace}</td>
                           <td className="py-1.5 pr-4"><StatusBadge status={p.status} /></td>
                           <td className="py-1.5 pr-4 font-mono text-white/50">{p.ready}</td>
@@ -853,7 +903,7 @@ export default function AdminDashboard() {
                          className="flex items-start gap-3 px-4 py-1 border-b border-white/[0.03] hover:bg-white/[0.025] transition cursor-pointer">
                       <span className="text-white/25 shrink-0 w-16">{log.time}</span>
                       <LogLevelBadge level={log.level} />
-                      <span className="text-white/25 shrink-0 hidden lg:inline w-28 truncate">{log.pod}</span>
+                      <span className="text-white/25 shrink-0 hidden lg:inline w-28 truncate" title={log.pod}>{log.pod}</span>
                       <span className="text-white/60 break-all">{log.msg}</span>
                     </div>
                   ))

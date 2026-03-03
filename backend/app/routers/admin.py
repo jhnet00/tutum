@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 MIMIR_URL = os.getenv("MIMIR_URL", "http://192.168.0.230:9009/prometheus")
 LOKI_URL = os.getenv("LOKI_URL", "http://192.168.0.230:3100")
 
+# Shared HTTP clients — reused across requests for connection pooling
+_HTTP_MIMIR = httpx.AsyncClient(timeout=5.0)
+_HTTP_LOKI = httpx.AsyncClient(timeout=8.0)
+_HTTP_MISC = httpx.AsyncClient(timeout=8.0)
+
 # ─── Bedrock client (lazy init) ───────────────────────────────────────────────
 
 _bedrock_client = None
@@ -109,7 +114,7 @@ async def get_nodes():
     """
     try:
         core, metrics_api = _get_k8s_clients()
-        nodes = core.list_node().items
+        nodes = core.list_node(_request_timeout=10).items
 
         # metrics-server에서 노드 사용량 조회
         usage_map = {}
@@ -187,9 +192,9 @@ async def get_pods(namespace: str = "all"):
         core, _ = _get_k8s_clients()
 
         if namespace == "all":
-            pods = core.list_pod_for_all_namespaces().items
+            pods = core.list_pod_for_all_namespaces(_request_timeout=10).items
         else:
-            pods = core.list_namespaced_pod(namespace).items
+            pods = core.list_namespaced_pod(namespace, _request_timeout=10).items
 
         result = []
         for pod in pods:
@@ -259,31 +264,30 @@ async def get_metrics():
     }
 
     result = {}
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        for key, query in queries.items():
-            try:
-                resp = await client.get(
-                    f"{MIMIR_URL}/api/v1/query_range",
-                    params={
-                        "query": query,
-                        "start": start.isoformat(),
-                        "end": end.isoformat(),
-                        "step": step,
-                    },
-                )
-                data = resp.json()
-                if data.get("status") == "success":
-                    results = data["data"]["result"]
-                    if results:
-                        values = [round(float(v[1]), 2) for v in results[0]["values"]]
-                        result[key] = values[-12:] if len(values) >= 12 else values
-                    else:
-                        result[key] = []
+    for key, query in queries.items():
+        try:
+            resp = await _HTTP_MIMIR.get(
+                f"{MIMIR_URL}/api/v1/query_range",
+                params={
+                    "query": query,
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "step": step,
+                },
+            )
+            data = resp.json()
+            if data.get("status") == "success":
+                results = data.get("data", {}).get("result", [])
+                if results:
+                    values = [round(float(v[1]), 2) for v in results[0]["values"]]
+                    result[key] = values[-12:] if len(values) >= 12 else values
                 else:
                     result[key] = []
-            except Exception as e:
-                logger.warning("Mimir 쿼리 실패 [%s]: %s", key, e)
+            else:
                 result[key] = []
+        except Exception as e:
+            logger.warning("Mimir 쿼리 실패 [%s]: %s", key, e)
+            result[key] = []
 
     return result
 
@@ -308,24 +312,23 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
     start_ns = end_ns - 600_000_000_000  # 최근 10분
 
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(
-                f"{LOKI_URL}/loki/api/v1/query_range",
-                params={
-                    "query":     log_query,
-                    "limit":     limit,
-                    "start":     start_ns,
-                    "end":       end_ns,
-                    "direction": "backward",
-                },
-            )
-            data = resp.json()
+        resp = await _HTTP_LOKI.get(
+            f"{LOKI_URL}/loki/api/v1/query_range",
+            params={
+                "query":     log_query,
+                "limit":     limit,
+                "start":     start_ns,
+                "end":       end_ns,
+                "direction": "backward",
+            },
+        )
+        data = resp.json()
 
         if data.get("status") != "success":
             return {"logs": []}
 
         logs = []
-        for stream in data["data"]["result"]:
+        for stream in data.get("data", {}).get("result", []):
             labels = stream["stream"]
             instance = labels.get("instance", "")
             level = labels.get("level", "info").upper()
@@ -397,7 +400,7 @@ async def get_diagnose():
         core, metrics_api = _get_k8s_clients()
 
         # 노드 수집
-        nodes_raw = core.list_node().items
+        nodes_raw = core.list_node(_request_timeout=10).items
         usage_map = {}
         try:
             raw = metrics_api.list_cluster_custom_object(
@@ -432,7 +435,7 @@ async def get_diagnose():
 
         # 파드 수집
         TARGET_NS = {"tutum-app", "tutum-data", "monitoring", "keda"}
-        pods_raw = core.list_pod_for_all_namespaces().items
+        pods_raw = core.list_pod_for_all_namespaces(_request_timeout=10).items
         pod_lines = []
         problem_pods = []
         for pod in pods_raw:
@@ -546,7 +549,7 @@ async def _collect_pipeline_data() -> dict:
         core, _ = _get_k8s_clients()
         for label in _ALL_WORKERS:
             try:
-                pods = core.list_namespaced_pod("tutum-app", label_selector=f"app={label}").items
+                pods = core.list_namespaced_pod("tutum-app", label_selector=f"app={label}", _request_timeout=5).items
                 running_pods = [p for p in pods if p.status.phase == "Running"]
                 pod = running_pods[0] if running_pods else (pods[0] if pods else None)
                 if pod:
@@ -585,10 +588,9 @@ async def _collect_pipeline_data() -> dict:
     # 3. Elasticsearch document count
     es_url = os.getenv("ELASTICSEARCH_URL", "http://elasticsearch.tutum-data.svc.cluster.local:9200")
     try:
-        async with httpx.AsyncClient(timeout=5.0) as http:
-            resp = await http.get(f"{es_url}/news/_count")
-            if resp.status_code == 200:
-                out["elasticsearch"] = {"news_docs": resp.json().get("count", 0), "available": True}
+        resp = await _HTTP_MISC.get(f"{es_url}/news/_count")
+        if resp.status_code == 200:
+            out["elasticsearch"] = {"news_docs": resp.json().get("count", 0), "available": True}
     except Exception as e:
         logger.warning("pipeline ES 조회 실패: %s", e)
 
@@ -596,23 +598,22 @@ async def _collect_pipeline_data() -> dict:
     end_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
     start_ns = end_ns - 300_000_000_000
     try:
-        async with httpx.AsyncClient(timeout=8.0) as http:
-            for worker in _ALL_WORKERS:
-                try:
-                    query = f'{{job="loki.source.kubernetes.k8s_logs", instance=~"tutum-app/{worker}-.*"}}'
-                    resp = await http.get(
-                        f"{LOKI_URL}/loki/api/v1/query_range",
-                        params={"query": query, "limit": 5, "start": start_ns, "end": end_ns, "direction": "backward"},
-                    )
-                    data = resp.json()
-                    if data.get("status") == "success":
-                        logs_sample = []
-                        for stream in data["data"]["result"]:
-                            for _, msg in stream["values"]:
-                                logs_sample.append(msg.strip()[:120])
-                        out["recent_logs"][worker] = logs_sample[:5]
-                except Exception:
-                    pass
+        for worker in _ALL_WORKERS:
+            try:
+                query = f'{{job="loki.source.kubernetes.k8s_logs", instance=~"tutum-app/{worker}-.*"}}'
+                resp = await _HTTP_LOKI.get(
+                    f"{LOKI_URL}/loki/api/v1/query_range",
+                    params={"query": query, "limit": 5, "start": start_ns, "end": end_ns, "direction": "backward"},
+                )
+                data = resp.json()
+                if data.get("status") == "success":
+                    logs_sample = []
+                    for stream in data.get("data", {}).get("result", []):
+                        for _, msg in stream.get("values", []):
+                            logs_sample.append(msg.strip()[:120])
+                    out["recent_logs"][worker] = logs_sample[:5]
+            except Exception:
+                pass
     except Exception as e:
         logger.warning("pipeline Loki 샘플 실패: %s", e)
 
@@ -753,7 +754,7 @@ async def get_storage():
     TARGET_NS = {"tutum-app", "tutum-data", "tutum-storage"}
     try:
         core, _ = _get_k8s_clients()
-        pvcs = core.list_persistent_volume_claim_for_all_namespaces().items
+        pvcs = core.list_persistent_volume_claim_for_all_namespaces(_request_timeout=10).items
         result = []
         for pvc in pvcs:
             if pvc.metadata.namespace not in TARGET_NS:
@@ -801,22 +802,21 @@ async def get_data_metrics():
     }
 
     raw: dict = {}
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        for key, query in queries.items():
-            try:
-                resp = await client.get(
-                    f"{MIMIR_URL}/api/v1/query",
-                    params={"query": query, **instant_params},
-                )
-                data = resp.json()
-                if data.get("status") == "success":
-                    results = data["data"]["result"]
-                    raw[key] = float(results[0]["value"][1]) if results else None
-                else:
-                    raw[key] = None
-            except Exception as e:
-                logger.warning("data-metrics Mimir 실패 [%s]: %s", key, e)
+    for key, query in queries.items():
+        try:
+            resp = await _HTTP_MIMIR.get(
+                f"{MIMIR_URL}/api/v1/query",
+                params={"query": query, **instant_params},
+            )
+            data = resp.json()
+            if data.get("status") == "success":
+                results = data.get("data", {}).get("result", [])
+                raw[key] = float(results[0]["value"][1]) if results else None
+            else:
                 raw[key] = None
+        except Exception as e:
+            logger.warning("data-metrics Mimir 실패 [%s]: %s", key, e)
+            raw[key] = None
 
     # Redis hit rate
     hits = raw.get("redis_hits")
@@ -871,20 +871,19 @@ async def get_traces(limit: int = 20, min_duration_ms: int = 50):
     start_ns = end_ns - 3_600_000_000_000  # 1시간
 
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.get(
-                f"{TEMPO_URL}/api/search",
-                params={
-                    "service.name": "tutum-backend",
-                    "limit":         limit,
-                    "start":         start_ns,
-                    "end":           end_ns,
-                    "minDuration":   f"{min_duration_ms}ms",
-                },
-            )
-            if resp.status_code != 200:
-                return {"traces": [], "available": False}
-            data = resp.json()
+        resp = await _HTTP_MISC.get(
+            f"{TEMPO_URL}/api/search",
+            params={
+                "service.name": "tutum-backend",
+                "limit":         limit,
+                "start":         start_ns,
+                "end":           end_ns,
+                "minDuration":   f"{min_duration_ms}ms",
+            },
+        )
+        if resp.status_code != 200:
+            return {"traces": [], "available": False}
+        data = resp.json()
     except Exception as e:
         logger.warning("Tempo 조회 실패: %s", e)
         return {"traces": [], "available": False}
