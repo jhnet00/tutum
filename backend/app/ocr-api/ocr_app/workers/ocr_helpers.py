@@ -49,7 +49,7 @@ def extract_price_near_keyword(line: str, keywords: List[str]) -> Optional[float
         if keyword in line:
             # 키워드 이후의 숫자 찾기
             idx = line.find(keyword)
-            after_keyword = line[idx + len(keyword) :]
+            after_keyword = line[idx + len(keyword):]
 
             # 숫자 패턴 찾기
             pattern = r"[\d,]+\.?\d*"

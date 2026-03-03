@@ -8,7 +8,7 @@ AI 분석용 데이터를 제공합니다.
 from fastapi import APIRouter, HTTPException, Query, Depends
 from datetime import datetime
 from typing import Optional, List
-from bson import ObjectId
+from bson import ObjectId  # noqa: F401
 
 from ..database import get_database
 from ..models.transaction import (

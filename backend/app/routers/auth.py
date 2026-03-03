@@ -30,18 +30,15 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional
 import time
-import uuid
-import secrets
 import hashlib
 from jose import jwt, JWTError
 import bcrypt  # passlib ???bcrypt  ? (Python 3.13 ?)
 import httpx
 import secrets
-from bson import ObjectId  # For backwards compatibility/S3 if needed
-import os
 from fastapi import UploadFile, File
 
 from ..config import get_settings
+from ..database import get_database
 from ..mariadb import (
     get_user_by_email,
     get_user_by_id,
@@ -49,7 +46,7 @@ from ..mariadb import (
     update_user,
 )
 from app.services.queue_service import get_queue_service
-from app.services.email_service import get_email_service
+from app.services.email_service import get_email_service  # noqa: F401
 
 # Redis ??? ??  (? ????)
 try:
@@ -475,9 +472,6 @@ async def get_current_user(token: str = Depends(_extract_token)) -> UserResponse
 # ============================================
 # API ????
 # ============================================
-
-
-from ..database import get_database
 
 
 @router.post("/register")

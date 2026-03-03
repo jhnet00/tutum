@@ -169,4 +169,3 @@ class MarketMonitor:
         if unread_only:
             results = [n for n in results if not n.is_read]
         return results[:limit]
-

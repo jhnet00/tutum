@@ -30,7 +30,7 @@ async def connect_to_mongodb():
 
 async def close_mongodb_connection():
     """Close MongoDB connection."""
-    global client
+    global client  # noqa: F824
 
     if client:
         client.close()

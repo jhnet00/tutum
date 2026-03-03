@@ -14,7 +14,7 @@
 """
 
 from fastapi import APIRouter, HTTPException, Query, Depends
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel  # noqa: F401 field_validator removed
 from datetime import datetime
 from typing import Optional, Dict, Literal
 from bson import ObjectId

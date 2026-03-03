@@ -28,7 +28,7 @@ async def connect_to_redis():
 
 async def close_redis_connection():
     """Close Redis connection."""
-    global redis_client
+    global redis_client  # noqa: F824
 
     if redis_client:
         await redis_client.close()

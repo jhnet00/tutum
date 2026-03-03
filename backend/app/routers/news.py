@@ -35,11 +35,16 @@ ASSET_TERM_SYNONYMS: dict[str, tuple[str, ...]] = {
     "GOOGL": ("googl", "google", "alphabet"),
     "AMZN": ("amzn", "amazon"),
     "005930": ("005930", "samsung", "samsung electronics", "\uc0bc\uc131\uc804\uc790"),
-    "000660": ("000660", "hynix", "sk hynix", "\uc5d0\uc2a4\ucf00\uc774\ud558\uc774\ub2c9\uc2a4", "sk\ud558\uc774\ub2c9\uc2a4"),
+    "000660": ("000660", "hynix", "sk hynix", "\uc5d0\uc2a4\ucf00\uc774\ud558\uc774\ub2c9\uc2a4",
+               "sk\ud558\uc774\ub2c9\uc2a4"),
     # Asset-name key fallback (when asset_code is absent or not normalized)
     "\uc0bc\uc131\uc804\uc790": ("005930", "samsung", "samsung electronics", "\uc0bc\uc131\uc804\uc790"),
-    "sk\ud558\uc774\ub2c9\uc2a4": ("000660", "hynix", "sk hynix", "\uc5d0\uc2a4\ucf00\uc774\ud558\uc774\ub2c9\uc2a4", "sk\ud558\uc774\ub2c9\uc2a4"),
-    "\uc5d0\uc2a4\ucf00\uc774\ud558\uc774\ub2c9\uc2a4": ("000660", "hynix", "sk hynix", "\uc5d0\uc2a4\ucf00\uc774\ud558\uc774\ub2c9\uc2a4", "sk\ud558\uc774\ub2c9\uc2a4"),
+    "sk\ud558\uc774\ub2c9\uc2a4": ("000660", "hynix", "sk hynix", "\uc5d0\uc2a4\ucf00\uc774\ud558\uc774\ub2c9\uc2a4",
+                                   "sk\ud558\uc774\ub2c9\uc2a4"),
+    "\uc5d0\uc2a4\ucf00\uc774\ud558\uc774\ub2c9\uc2a4": (
+        "000660", "hynix", "sk hynix",
+        "\uc5d0\uc2a4\ucf00\uc774\ud558\uc774\ub2c9\uc2a4", "sk\ud558\uc774\ub2c9\uc2a4",
+    ),
     "\uc560\ud50c": ("aapl", "apple", "\uc560\ud50c"),
     "\ub9c8\uc774\ud06c\ub85c\uc18c\ud504\ud2b8": ("msft", "microsoft", "\ub9c8\uc774\ud06c\ub85c\uc18c\ud504\ud2b8"),
 }

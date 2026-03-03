@@ -9,7 +9,7 @@ Redis 罹먯떆 ?곗꽑 議고쉶 ??罹먯떆 誘몄뒪 ???몃? API ?몄텧.
 """
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
-from typing import List, Any
+from typing import Any
 import json
 import asyncio
 import os
@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 from ..services.market_data import kis_client, crypto_client
 from ..services.exchange_rate import get_exchange_rate
 from ..services.stock_search import search_stocks_v2
-from ..cache import cache_get, cache_get_with_last_good, cache_set_with_last_good, get_redis
+from ..cache import cache_get_with_last_good, cache_set_with_last_good, get_redis
 from ..config import get_settings
 
 router = APIRouter()
@@ -31,7 +31,10 @@ settings = get_settings()
 MARKET_WS_CACHE_ONLY = os.getenv("MARKET_WS_CACHE_ONLY", "false").lower() in {"1", "true", "yes", "on"}
 
 # 통화(현금) 코드 목록 - 주식/코인 시세 조회에서 제외
-CURRENCY_CODES = {"USD", "EUR", "JPY", "GBP", "CNY", "CHF", "CAD", "AUD", "HKD", "SGD", "NZD", "TWD", "THB", "VND", "KRW"}
+CURRENCY_CODES = {
+    "USD", "EUR", "JPY", "GBP", "CNY", "CHF", "CAD", "AUD",
+    "HKD", "SGD", "NZD", "TWD", "THB", "VND", "KRW",
+}
 KST = timezone(timedelta(hours=9))
 ET = ZoneInfo("America/New_York")
 
@@ -357,7 +360,10 @@ async def get_price_snapshot(symbol: str) -> dict:
                 rate = 1.0
             else:
                 rate = await get_exchange_rate(normalized, "KRW")
-            return {"symbol": normalized, "price": rate, "currency": "KRW", "source": "exchange_rate", "asset_type": "cash"}
+            return {
+                "symbol": normalized, "price": rate,
+                "currency": "KRW", "source": "exchange_rate", "asset_type": "cash",
+            }
         except Exception as e:
             return {"symbol": normalized, "error": str(e), "source": "error"}
 
@@ -444,6 +450,7 @@ def _status_symbol_targets() -> list[tuple[str, str]]:
         deduped.append((symbol, asset_type))
     return deduped
 
+
 @router.get("/price/domestic/{code}")
 async def get_domestic_stock_price(code: str):
     """
@@ -461,7 +468,8 @@ async def get_domestic_stock_price(code: str):
     try:
         result = await kis_client.get_current_price(code, market="KR")
         result["source"] = "api"
-        import json as _j; await cache_set_with_last_good(f"price:{code}", _j.dumps(result))
+        import json as _j
+        await cache_set_with_last_good(f"price:{code}", _j.dumps(result))
         return result
     except Exception as e:
         logger.warning("KIS domestic API 실패 (%s): %s", code, e)
@@ -471,6 +479,7 @@ async def get_domestic_stock_price(code: str):
             last_good.setdefault("stale", True)
             return last_good
         return {"code": code, "error": str(e), "source": "error"}
+
 
 @router.get("/price/overseas/{ticker}")
 async def get_overseas_stock_price(ticker: str):
@@ -489,7 +498,8 @@ async def get_overseas_stock_price(ticker: str):
     try:
         result = await kis_client.get_current_price(ticker, market="US")
         result["source"] = "api"
-        import json as _j; await cache_set_with_last_good(f"price:{ticker.upper()}", _j.dumps(result))
+        import json as _j
+        await cache_set_with_last_good(f"price:{ticker.upper()}", _j.dumps(result))
         return result
     except Exception as e:
         logger.warning("KIS overseas API 실패 (%s): %s", ticker, e)
@@ -499,6 +509,7 @@ async def get_overseas_stock_price(ticker: str):
             last_good.setdefault("stale", True)
             return last_good
         return {"ticker": ticker, "error": str(e), "source": "error"}
+
 
 @router.get("/price/crypto/{ticker}")
 async def get_crypto_price(ticker: str):
@@ -541,7 +552,8 @@ async def get_crypto_price(ticker: str):
         result.setdefault("asset_type", "crypto")
         result.setdefault("currency", "KRW")
         result["source"] = "api"
-        import json as _j; await cache_set_with_last_good(f"price:{symbol}", _j.dumps(result))
+        import json as _j
+        await cache_set_with_last_good(f"price:{symbol}", _j.dumps(result))
         return result
     except Exception as e:
         logger.warning("Upbit crypto API 실패 (%s): %s", symbol, e)
@@ -633,6 +645,7 @@ async def get_multiple_stock_prices(symbols: str = Query(..., description="?쇳�
             results.append({"code": symbol, "error": str(e)})
 
     return {"prices": results, "count": len(results)}
+
 
 @router.get("/exchange-rate")
 async def get_exchange_rate_api(
@@ -841,6 +854,7 @@ async def market_price_ws(
     except WebSocketDisconnect:
         logger.info("market websocket client disconnected")
 
+
 @router.get("/history/{market_type}/{symbol}")
 async def get_market_history(market_type: str, symbol: str, timeframe: str = "D", count: int = 30):
     """
@@ -1008,6 +1022,3 @@ async def get_market_history(market_type: str, symbol: str, timeframe: str = "D"
         return res
     else:
         raise HTTPException(status_code=400, detail="Invalid market type")
-
-
-

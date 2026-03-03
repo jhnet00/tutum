@@ -196,4 +196,3 @@ Instrumentator().instrument(app).expose(app)
 
 # OpenTelemetry FastAPI 자동 계측
 FastAPIInstrumentor.instrument_app(app)
-

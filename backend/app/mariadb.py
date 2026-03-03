@@ -133,7 +133,7 @@ async def connect_to_mariadb():
 
 async def close_mariadb_connection():
     """MariaDB 연결 종료"""
-    global engine
+    global engine  # noqa: F824
 
     if engine:
         await engine.dispose()

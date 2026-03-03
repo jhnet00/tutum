@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Optional  # noqa: F401
 from google.cloud import vision
 from google.api_core import client_options as client_options_lib
 

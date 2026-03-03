@@ -16,7 +16,7 @@ async def get_exchange_rate_api(
 ):
     """
     환율 조회 API
-    
+
     - from_currency: 원본 통화 (예: USD, JPY, CNY)
     - to_currency: 대상 통화 (예: KRW)
     - 반환: 환율 정보 (1 from_currency = rate to_currency)

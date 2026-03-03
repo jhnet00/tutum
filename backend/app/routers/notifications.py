@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Request, Query
-from typing import List
 from ..models.notification import NotificationListResponse
 from ..services.alert_service import MarketMonitor
 
 router = APIRouter()
+
 
 @router.get("", response_model=NotificationListResponse)
 async def get_notifications(
@@ -17,14 +17,15 @@ async def get_notifications(
     - unread_only: 읽지 않은 알림만 필터링 여부
     """
     monitor: MarketMonitor = request.app.state.market_monitor
-    
+
     notifications = monitor.get_notifications(limit=limit, unread_only=unread_only)
     unread_count = len([n for n in monitor.notifications if not n.is_read])
-    
+
     return {
         "notifications": notifications,
         "unread_count": unread_count
     }
+
 
 @router.post("/read-all")
 async def mark_all_read(request: Request):

@@ -118,6 +118,7 @@ SYSTEM_PROMPT = """당신은 "tutum AI"라는 금융 AI 어시스턴트입니다
 사용자 메시지와 함께 [내 포트폴리오], [실시간 시세 데이터], [관련 뉴스]가 제공될 수 있습니다. 이 데이터를 활용하여 정확한 정보 기반으로 응답하세요.
 - [내 포트폴리오]가 있으면 사용자의 실제 보유 자산을 기반으로 분석하세요, 리밸런싱 추천 시 현재 비중과 수익률을 고려하세요"""
 
+
 def _next_stream_event(iterator):
     try:
         return next(iterator), False
@@ -338,7 +339,6 @@ class ChatService:
             logger.warning("??? ???????: %s", e)
             return []
 
-
     def _expand_keywords(self, keywords: List[str]) -> List[str]:
         """유사어 사전으로 키워드 확장 (중복 제거)"""
         expanded: List[str] = []
@@ -508,7 +508,7 @@ class ChatService:
             except Exception:
                 usd_to_krw = 1.0
 
-            # 1) MariaDB ? 
+            # 1) MariaDB
             try:
                 items = await get_user_portfolios(int(user_id))
                 if items:
@@ -567,7 +567,6 @@ class ChatService:
             logger.warning("Portfolio fetch failed: %s", e)
             return [], True
 
-
     def _build_price_context(self, prices: Dict[str, dict]) -> str:
         """Build price RAG context (ASCII safe)."""
         if not prices:
@@ -591,7 +590,10 @@ class ChatService:
 
         lines = ["\n[NEWS]"]
         for i, news in enumerate(news_list, 1):
-            lines.append(f"{i}. [{news.get('published_at','')}] '{news.get('title','')}' ({news.get('source','')})")
+            lines.append(
+                f"{i}. [{news.get('published_at', '')}]"
+                f" '{news.get('title', '')}' ({news.get('source', '')})"
+            )
             body = news.get("body") or ""
             if body:
                 lines.append(f"   Summary: {body}")
@@ -819,8 +821,5 @@ class ChatService:
         # 6. Done event
         yield f"event: done\ndata: {json.dumps({'status': 'complete'})}\n\n"
 
+
 chat_service = ChatService()
-
-
-
-
