@@ -738,7 +738,7 @@ async def search_stocks_v2(
     if offset >= total:
         return {"items": [], "total": total, "next_cursor": None}
 
-    sliced = candidates[offset : offset + safe_limit]
+    sliced = candidates[offset:offset + safe_limit]
     items = [row[3] for row in sliced]
     next_offset = offset + len(items)
     next_cursor = (

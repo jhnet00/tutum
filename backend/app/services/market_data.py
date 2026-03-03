@@ -476,11 +476,21 @@ class KISClient:
                             f"{self.base_url}{path}", headers=headers, params=params
                         )
                         if not response.text.strip():
-                            logger.warning("KIS history empty response (%s, EXCD=%s, status=%s, url=%s)", code, excd, response.status_code, response.url)
+                            logger.warning(
+                                "KIS history empty response (%s, EXCD=%s, status=%s, url=%s)",
+                                code,
+                                excd,
+                                response.status_code,
+                                response.url,
+                            )
                             continue
                         data = response.json()
                         output2 = data.get("output2", [])
-                        logger.debug("KIS History ({code}, EXCD={excd}): rt_cd={data.get('rt_cd')}, msg={data.get('msg1','')[:60]}, rows=%s", len(output2))
+                        logger.debug(
+                            "KIS History ({code}, EXCD={excd}): rt_cd={data.get('rt_cd')}, "
+                            "msg={data.get('msg1','')[:60]}, rows=%s",
+                            len(output2),
+                        )
                         if output2:
                             break
                 else:
@@ -496,7 +506,11 @@ class KISClient:
                             "error": "Empty response from KIS history endpoint",
                         }
                     data = response.json()
-                    logger.debug("KIS History ({code}, tf={timeframe}): rt_cd={data.get('rt_cd')}, msg={data.get('msg1','')[:60]}, rows=%s", len(data.get('output2', [])))
+                    logger.debug(
+                        "KIS History ({code}, tf={timeframe}): rt_cd={data.get('rt_cd')}, "
+                        "msg={data.get('msg1','')[:60]}, rows=%s",
+                        len(data.get("output2", [])),
+                    )
 
                 history = []
                 if is_overseas:
@@ -901,7 +915,3 @@ async def get_exchange_rates():
             logger.error("Exchange Rate API Error: %s", e)
 
     return fallback_rates
-
-
-
-
