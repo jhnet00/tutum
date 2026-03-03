@@ -36,6 +36,9 @@ spec:
           ports:
             - containerPort: 8002
               name: http
+          env:
+            - name: PYTHONPATH
+              value: /app
           envFrom:
             - secretRef:
                 name: backend-secret

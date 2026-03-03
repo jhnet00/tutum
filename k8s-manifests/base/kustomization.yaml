@@ -29,6 +29,7 @@ resources:
   - workers/news-producer.yaml
   - workers/news-consumer.yaml
   - workers/elastic-consumer.yaml
+  - workers/ocr.yaml
   - autoscaling/keda-scaledobjects.yaml
   - autoscaling/pdb.yaml
   - security/network-policy.yaml

@@ -1,11 +1,11 @@
-"use client";
+﻿"use client";
 
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { MOCK_COINS } from "../../../lib/mock-data";
 import AdvancedChart from "@/components/AdvancedChart";
-import { Asset } from "@/lib/mock-data";
+import type { ChartAsset } from "@/lib/types/chart-asset";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -27,7 +27,7 @@ function saveCoinCache(symbol: string, data: CoinDetail) {
   } catch { /* ignore */ }
 }
 
-// 심볼 -> 이름 매핑
+// ?щ낵 -> ?대쫫 留ㅽ븨
 const COIN_NAMES: Record<string, string> = {
   BTC: "Bitcoin",
   ETH: "Ethereum",
@@ -60,7 +60,7 @@ export default function CoinDetailPage() {
   useEffect(() => {
     if (!symbol) return;
 
-    // 캐시 즉시 표시
+    // 罹먯떆 利됱떆 ?쒖떆
     const cachedCoin = loadCoinCache(symbol);
     if (cachedCoin) {
       setCoin(cachedCoin);
@@ -77,7 +77,7 @@ export default function CoinDetailPage() {
         );
 
         if (!response.ok) {
-          throw new Error("코인 시세 조회 실패");
+          throw new Error("肄붿씤 ?쒖꽭 議고쉶 ?ㅽ뙣");
         }
 
         const data = await response.json();
@@ -97,7 +97,7 @@ export default function CoinDetailPage() {
         saveCoinCache(symbol, coinData);
         setCoin(coinData);
       } catch (err) {
-        console.error("코인 데이터 로드 실패:", err);
+        console.error("肄붿씤 ?곗씠??濡쒕뱶 ?ㅽ뙣:", err);
         if (!cachedCoin) {
           const mockCoin = MOCK_COINS.find(
             (c) => c.symbol.toUpperCase() === symbol
@@ -111,9 +111,9 @@ export default function CoinDetailPage() {
               volume24h: mockCoin.volume24h || 0,
               marketCap: mockCoin.marketCap || 0,
             });
-            setError("실시간 데이터를 불러오지 못해 캐시된 데이터를 표시합니다.");
+            setError("?ㅼ떆媛??곗씠?곕? 遺덈윭?ㅼ? 紐삵빐 罹먯떆???곗씠?곕? ?쒖떆?⑸땲??");
           } else {
-            setError("코인을 찾을 수 없습니다.");
+            setError("肄붿씤??李얠쓣 ???놁뒿?덈떎.");
           }
         }
       } finally {
@@ -127,17 +127,17 @@ export default function CoinDetailPage() {
     return () => clearInterval(interval);
   }, [symbol]);
 
-  // AdvancedChart에 전달할 Asset 형식으로 변환
-  const chartAsset: Asset | null = coin
+  // AdvancedChart에 전달할 ChartAsset 형식으로 변환
+  const chartAsset: ChartAsset | null = coin
     ? {
         symbol: coin.symbol,
         name: coin.name,
-        price: coin.price.toLocaleString(),
-        change: `${coin.change24h >= 0 ? "+" : ""}${coin.change24h.toFixed(2)}%`,
+        price: coin.price,
+        changePercent: coin.change24h,
         isPositive: coin.change24h >= 0,
-        type: "코인",
+        kind: "crypto",
+        country: "GLOBAL",
         logo: coin.symbol.substring(0, 1),
-        logoColor: "bg-orange-500 text-white",
       }
     : null;
 
@@ -146,7 +146,7 @@ export default function CoinDetailPage() {
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-zinc-500 dark:text-zinc-400">로딩 중...</p>
+          <p className="text-zinc-500 dark:text-zinc-400">濡쒕뵫 以?..</p>
         </div>
       </div>
     );
@@ -157,16 +157,16 @@ export default function CoinDetailPage() {
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <h1 className="text-4xl font-bold text-zinc-900 dark:text-zinc-100 mb-4">
-            코인을 찾을 수 없습니다
+            肄붿씤??李얠쓣 ???놁뒿?덈떎
           </h1>
           <p className="text-zinc-500 dark:text-zinc-400 mb-8">
-            요청하신 코인 ({symbol})을 찾을 수 없습니다.
+            ?붿껌?섏떊 肄붿씤 ({symbol})??李얠쓣 ???놁뒿?덈떎.
           </p>
           <Link
             href="/"
             className="inline-block bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold px-6 py-3 rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all"
           >
-            홈으로 돌아가기
+            ?덉쑝濡??뚯븘媛湲?
           </Link>
         </div>
       </div>
@@ -182,7 +182,7 @@ export default function CoinDetailPage() {
         href="/"
         className="inline-flex items-center text-sm text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 mb-6"
       >
-        ← 뒤로 가기
+        ???ㅻ줈 媛湲?
       </Link>
 
       {/* Error Banner */}
@@ -225,7 +225,7 @@ export default function CoinDetailPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div className="glass rounded-2xl p-6 shadow-lg">
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-2">
-            시가총액
+            ?쒓?珥앹븸
           </p>
           <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
             {coin?.marketCap ? `$${coin.marketCap.toLocaleString()}` : "-"}
@@ -233,7 +233,7 @@ export default function CoinDetailPage() {
         </div>
         <div className="glass rounded-2xl p-6 shadow-lg">
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-2">
-            24시간 거래량
+            24?쒓컙 嫄곕옒??
           </p>
           <p className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
             {coin?.volume24h ? coin.volume24h.toLocaleString() : "-"}
@@ -241,7 +241,7 @@ export default function CoinDetailPage() {
         </div>
         <div className="glass rounded-2xl p-6 shadow-lg">
           <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-2">
-            24시간 변동률
+            24?쒓컙 蹂?숇쪧
           </p>
           <p
             className={`text-2xl font-bold ${
@@ -260,7 +260,7 @@ export default function CoinDetailPage() {
       <div className="glass rounded-3xl shadow-2xl shadow-blue-500/10 mb-8 overflow-hidden">
         <div className="p-6 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-            가격 차트
+            媛寃?李⑦듃
           </h2>
         </div>
         <div className="h-[500px]">
@@ -271,23 +271,23 @@ export default function CoinDetailPage() {
       {/* Trading Section Placeholder */}
       <div className="glass rounded-3xl p-8 shadow-2xl shadow-blue-500/10">
         <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-6">
-          거래
+          嫄곕옒
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="text-center py-12 bg-zinc-100 dark:bg-zinc-800 rounded-xl">
             <p className="text-zinc-500 dark:text-zinc-400 font-semibold">
-              매수 주문
+              留ㅼ닔 二쇰Ц
             </p>
             <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-2">
-              로그인 후 이용 가능합니다
+              濡쒓렇?????댁슜 媛?ν빀?덈떎
             </p>
           </div>
           <div className="text-center py-12 bg-zinc-100 dark:bg-zinc-800 rounded-xl">
             <p className="text-zinc-500 dark:text-zinc-400 font-semibold">
-              매도 주문
+              留ㅻ룄 二쇰Ц
             </p>
             <p className="text-sm text-zinc-400 dark:text-zinc-500 mt-2">
-              로그인 후 이용 가능합니다
+              濡쒓렇?????댁슜 媛?ν빀?덈떎
             </p>
           </div>
         </div>
