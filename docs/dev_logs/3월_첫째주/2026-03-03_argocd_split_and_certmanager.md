@@ -133,9 +133,88 @@ cert-manager-webhook    1/1 Running
 
 ---
 
+## 🔴 사용자 직접 수행 필요 사항
+
+### 1. K8S_MANIFESTS_TOKEN — GitLab PAT 생성 및 CI Variable 등록
+
+CI deploy 잡이 `overlays/staging/kustomization.yaml`의 이미지 태그를 업데이트하고
+백엔드 레포에 push하기 위해 필요한 Personal Access Token.
+
+**① GitLab PAT 생성**
+1. GitLab 로그인 → 우측 상단 프로필 클릭 → **Edit profile**
+2. 왼쪽 사이드바 → **Access Tokens**
+3. **Add new token** 클릭
+   - Token name: `k8s-manifests-deploy`
+   - Expiration date: 적절히 설정 (예: 1년)
+   - Scopes: ✅ **`write_repository`** 체크
+4. **Create personal access token** → 토큰 값 복사 (다시 볼 수 없음)
+
+**② GitLab CI Variable 등록**
+1. GitLab → `tutum-project/tutum-app/backend` 레포
+2. **Settings > CI/CD > Variables** → **Add variable**
+   ```
+   Key:   K8S_MANIFESTS_TOKEN
+   Value: (위에서 생성한 PAT 값)
+   Type:  Variable
+   Flags: Mask variable ✅ (토큰 값 로그 숨김)
+   ```
+3. **Save variables**
+
+---
+
+### 2. COSIGN_PRIVATE_KEY + COSIGN_PASSWORD — CI Variable 등록
+
+이미지 서명 파이프라인(`sign:backend`, `sign:frontend` 잡)이 동작하려면 필요.
+cosign 개인키는 `2026-03-03` 에 cp-2 노드에서 생성됨 (`~/cosign.key`).
+
+**개인키 내용 확인 (cp-2 SSH 접속 필요)**
+```bash
+ssh cp-2
+cat ~/cosign.key
+# -----BEGIN ENCRYPTED COSIGN PRIVATE KEY-----
+# ... 여러 줄 ...
+# -----END ENCRYPTED COSIGN PRIVATE KEY-----
+```
+
+**GitLab CI Variable 등록**
+1. GitLab → `tutum-project/tutum-app/backend` → **Settings > CI/CD > Variables**
+
+**① COSIGN_PRIVATE_KEY**
+```
+Key:   COSIGN_PRIVATE_KEY
+Value: (cosign.key 파일 전체 내용 붙여넣기)
+Type:  File          ← 반드시 File 타입 선택
+Flags: Mask variable ✅
+```
+
+**② COSIGN_PASSWORD**
+```
+Key:   COSIGN_PASSWORD
+Value: tutum123
+Type:  Variable
+Flags: Mask variable ✅
+```
+
+2. **Save variables**
+
+---
+
+### 3. 등록 후 확인 방법
+
+**CI 파이프라인 실행 확인**:
+- develop 브랜치에 아무 코드나 push → GitLab → CI/CD → Pipelines
+- `sign:backend`, `sign:frontend` 잡이 ✅ 성공하면 COSIGN 설정 완료
+- `deploy:staging` 잡이 ✅ 성공하면 K8S_MANIFESTS_TOKEN 설정 완료
+
+**ArgoCD 확인**:
+- deploy:staging 성공 후 ArgoCD `tutum-staging` 앱이 자동 sync되어 새 이미지 배포
+- `kubectl get pods -n tutum-app` 에서 새 SHA 태그 이미지로 파드 교체 확인
+
+---
+
 ## 다음 작업
 
-1. **사용자 필수**: `K8S_MANIFESTS_TOKEN` GitLab PAT 등록 (deploy 잡 동작 필수)
+1. **사용자 필수**: 위 CI Variable 2종 등록 완료 후 파이프라인 실행 확인
 2. `ocr` 이슈: `requirements.txt`에 `google-cloud-vision` 추가 및 이미지 재빌드
 3. HTTPS 전환: Let's Encrypt ClusterIssuer + Istio Gateway 443 포트 설정
 4. Phase 4 CI/CD 전체 파이프라인 end-to-end 실행 확인
