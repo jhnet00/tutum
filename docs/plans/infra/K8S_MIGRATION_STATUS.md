@@ -10,8 +10,8 @@
 |-------|------|------|--------|
 | Phase 0 | 사전 준비 (Dockerfile, 환경변수, Health endpoint) | ✅ 완료 | ~90% |
 | Phase 1 | K8s 클러스터 구축 | ✅ 완료 | ~95% |
-| Phase 2 | Istio 서비스 메시 | ⚠️ 부분 완료 | ~70% |
-| Phase 3 | LGTM 옵저버빌리티 | ✅ 거의 완료 | ~85% |
+| Phase 2 | Istio 서비스 메시 | ⚠️ 부분 완료 | ~85% |
+| Phase 3 | LGTM 옵저버빌리티 | ✅ 거의 완료 | ~90% |
 | Phase 4 | GitLab CI/CD + SonarQube | ⚠️ 부분 완료 | ~60% |
 | Phase 5 | ArgoCD GitOps | ⚠️ 부분 완료 | ~70% |
 | Phase 5.5 | KEDA + Karpenter | ⚠️ KEDA만 완료 | ~60% |
@@ -181,17 +181,17 @@
 
 ```
 보안 완성 (이미지 서명 체계)
-├── ISSUE-03: Cosign 키 생성 + CI Variable 등록
-├── ISSUE-04: Kyverno Audit → Enforce 전환 (03 완료 후)
-└── ISSUE-05: Istio mTLS PeerAuthentication 적용
+├── ✅ ISSUE-03: Cosign 키 생성 (K8s Secret 완료) — CI Variable 등록만 남음
+├── ISSUE-04: Kyverno Audit → Enforce 전환 (CI Variable 등록 + 파이프라인 확인 후)
+└── ✅ ISSUE-05: Istio mTLS PeerAuthentication 적용 완료
 
 안정성 강화
-├── ISSUE-06: NetworkPolicy 적용 (tutum-app/tutum-data)
+├── ✅ ISSUE-06: NetworkPolicy 적용 완료 (ArgoCD sync 예정)
 └── ISSUE-08: Redis Sentinel 구성
 
 장기 과제
 ├── ISSUE-09: Cert-Manager + HTTPS 전환
-├── ISSUE-10: Kiali 설치
+├── ✅ ISSUE-10: Kiali 설치 완료 (http://192.168.0.230:20001/kiali)
 ├── ISSUE-11: ArgoCD Staging/Production 분리
 ├── ISSUE-13: Kafka 3-replica 전환
 └── ISSUE-14: Phase 8 검증 및 부하 테스트
@@ -205,10 +205,12 @@
 ✅ 클러스터       cp-1/2/3 + worker1/2/3  전부 Ready
 ✅ Calico CNI     6노드 calico-node Running
 ✅ MetalLB        External IP 192.168.0.240 정상
-✅ Istio          istiod + ingressgateway Running
-✅ ArgoCD         develop 브랜치 auto-sync 설정됨 (OutOfSync 이슈 제외)
+✅ Istio          istiod + ingressgateway Running + mTLS STRICT (tutum-app)
+✅ ArgoCD         develop 브랜치 auto-sync, Synced/Healthy
 ✅ KEDA           ScaledObject 5개 Ready/Active
-✅ Kyverno        Audit 모드로 동작 중
+✅ Kyverno        Audit 모드로 동작 중 (cosign-key Secret 생성 완료)
+✅ NetworkPolicy  tutum-app / tutum-data 격리 정책 적용 완료
+✅ Kiali          v1.73 Running (http://192.168.0.230:20001/kiali)
 ✅ Alloy          worker1/2/3 DaemonSet Running, 메트릭/로그 수집 정상
 ✅ Grafana        CloudDX Overview 5패널 전부 데이터 표시
 ✅ MongoDB        3-replica StatefulSet Running (30Gi × 3)
@@ -219,6 +221,6 @@
 ✅ Backend        3 파드 Running
 ✅ Frontend       2 파드 Running
 ✅ Workers        6종 전부 Running (price/news producer/consumer, elastic, email)
-✅ GitLab Runner  Pod Running (태그 설정만 필요)
-✅ SonarQube      시작 중 (Running, 초기화 대기)
+✅ GitLab Runner  Pod Running (config.toml tags=k8s 설정됨)
+✅ SonarQube      Running (Helm, sonarqube ns)
 ```
