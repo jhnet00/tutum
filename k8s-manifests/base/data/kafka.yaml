@@ -27,6 +27,7 @@ metadata:
     app.kubernetes.io/part-of: tutum
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
   selector:
     app: kafka
   ports:
@@ -50,7 +51,8 @@ metadata:
     app.kubernetes.io/part-of: tutum
 spec:
   serviceName: kafka-headless
-  replicas: 1
+  replicas: 3
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       app: kafka
@@ -59,8 +61,29 @@ spec:
       labels:
         app: kafka
     spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: kafka
+              topologyKey: kubernetes.io/hostname
       # Prevent service env injection (e.g., KAFKA_PORT) from breaking cp-kafka env parsing.
       enableServiceLinks: false
+      initContainers:
+        - name: wait-for-peers
+          image: busybox:1.35
+          command:
+            - /bin/sh
+            - -c
+            - |
+              PEERS="kafka-0.kafka-headless.tutum-data.svc.cluster.local kafka-1.kafka-headless.tutum-data.svc.cluster.local kafka-2.kafka-headless.tutum-data.svc.cluster.local"
+              for peer in $PEERS; do
+                echo "Waiting for $peer DNS..."
+                until nslookup $peer > /dev/null 2>&1; do sleep 2; done
+                echo "$peer is resolvable"
+              done
+              echo "All Kafka peers resolvable. Starting Kafka."
       containers:
         - name: kafka
           image: confluentinc/cp-kafka:7.5.0
@@ -70,6 +93,7 @@ spec:
             - -ec
             - |
               export KAFKA_NODE_ID="${HOSTNAME##*-}"
+              export KAFKA_ADVERTISED_LISTENERS="PLAINTEXT://${HOSTNAME}.kafka-headless.tutum-data.svc.cluster.local:9092"
               /etc/confluent/docker/run
           ports:
             - containerPort: 9092
@@ -87,18 +111,20 @@ spec:
               value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
             - name: KAFKA_LISTENERS
               value: "PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093"
-            - name: KAFKA_ADVERTISED_LISTENERS
-              value: "PLAINTEXT://kafka.tutum-data.svc.cluster.local:9092"
             - name: KAFKA_INTER_BROKER_LISTENER_NAME
               value: "PLAINTEXT"
             - name: KAFKA_CONTROLLER_QUORUM_VOTERS
-              value: "0@kafka-0.kafka-headless.tutum-data.svc.cluster.local:9093"
+              value: "0@kafka-0.kafka-headless.tutum-data.svc.cluster.local:9093,1@kafka-1.kafka-headless.tutum-data.svc.cluster.local:9093,2@kafka-2.kafka-headless.tutum-data.svc.cluster.local:9093"
             - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
-              value: "1"
+              value: "3"
             - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
-              value: "1"
+              value: "3"
             - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
-              value: "1"
+              value: "2"
+            - name: KAFKA_DEFAULT_REPLICATION_FACTOR
+              value: "3"
+            - name: KAFKA_MIN_INSYNC_REPLICAS
+              value: "2"
             - name: KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS
               value: "0"
           resources:
