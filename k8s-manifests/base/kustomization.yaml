@@ -11,6 +11,7 @@ resources:
   - backend/rbac.yaml
   - ingress/gateway.yaml
   - ingress/virtualservice.yaml
+  - ingress/peer-authentication.yaml
   - data/mongodb.yaml
   - data/redis.yaml
   - data/redis-exporter.yaml
@@ -30,3 +31,4 @@ resources:
   - workers/elastic-consumer.yaml
   - autoscaling/keda-scaledobjects.yaml
   - autoscaling/pdb.yaml
+  - security/network-policy.yaml
