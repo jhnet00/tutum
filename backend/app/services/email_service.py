@@ -101,14 +101,16 @@ class EmailService:
             </div>
             <div class="content">
                 <h2>Verify Your Email Address</h2>
-                <p>Thank you for registering with TUTUM. Please click the button below to verify your email address and activate your account.</p>
-                
+                <p>Thank you for registering with TUTUM.
+                Please click the button below to verify your email address and activate your account.</p>
+
                 <a href="{verification_url}" class="button">Verify Email Address</a>
-                
+
                 <p style="margin-top: 30px; font-size: 14px; color: #666;">
-                    This link will expire in <strong>1 hour</strong>. If you didn't create an account with TUTUM, please ignore this email.
+                    This link will expire in <strong>1 hour</strong>.
+                    If you didn't create an account with TUTUM, please ignore this email.
                 </p>
-                
+
                 <div class="footer">
                     <p>If the button doesn't work, copy and paste this link into your browser:</p>
                     <p style="word-break: break-all; color: #667eea;">{verification_url}</p>
