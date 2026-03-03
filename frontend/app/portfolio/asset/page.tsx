@@ -566,9 +566,9 @@ export default function PortfolioAssetPage() {
                                                     </CardHeader>
                                                     <CardContent className="flex flex-col items-center justify-center p-2 md:p-6 pt-2 md:pt-4">
                                                         <div className="relative flex items-center justify-center w-20 h-20 md:w-32 md:h-32 mb-4 md:mb-6">
-                                                            <svg className="w-full h-full transform -rotate-90">
-                                                                <circle className="text-muted/20" strokeWidth="6 md:8" stroke="currentColor" fill="transparent" r="34 md:54" cx="40 md:64" cy="40 md:64" />
-                                                                <circle className="text-profit transition-all duration-1000" strokeWidth="6 md:8" strokeDasharray="213 md:339" strokeDashoffset={213 * (1 - 0.72)} strokeLinecap="round" stroke="currentColor" fill="transparent" r="34 md:54" cx="40 md:64" cy="40 md:64" />
+                                                            <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                                                                <circle className="text-muted/20" strokeWidth={8} stroke="currentColor" fill="transparent" r={42} cx={50} cy={50} />
+                                                                <circle className="text-profit transition-all duration-1000" strokeWidth={8} strokeDasharray={264} strokeDashoffset={264 * (1 - 0.72)} strokeLinecap="round" stroke="currentColor" fill="transparent" r={42} cx={50} cy={50} />
                                                             </svg>
                                                             <div className="absolute flex flex-col items-center">
                                                                 <span className="text-xl md:text-5xl font-black">72</span>
