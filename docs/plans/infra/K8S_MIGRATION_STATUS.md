@@ -99,12 +99,16 @@
 
 ---
 
-#### ISSUE-08: Redis Sentinel 미구성
+#### ~~ISSUE-08: Redis Sentinel 미구성~~ ✅ 완료 (Master+Replica 방식으로)
 
-- **영향**: Redis 단일 장애점 존재 (redis-0 장애 시 전체 캐시 불가)
-- **현재 상태**: Redis StatefulSet 1-replica만 운영 중 (PVC 5Gi)
-- **계획 목표**: Redis Sentinel 3-replica
-- **해결 방법**: `k8s-manifests/base/data/redis.yaml` StatefulSet 3-replica 전환 + Sentinel 배포
+- **해결** (2026-03-03): StatefulSet 1→3 replicas (Master + 2 Replica)
+  - redis-0: master, redis-1/2: replica (`--replicaof redis-0.redis-headless...`)
+  - `redis-headless` 서비스 추가 (StatefulSet 파드 DNS 전용)
+  - `redis` ClusterIP: `statefulset.kubernetes.io/pod-name: redis-0` 선택자로 마스터 전용
+  - podAntiAffinity required: worker1/2/3 분산 배치
+  - 앱 REDIS_URL 변경 없음 (코드 수정 불필요)
+  - connected_slaves: 2 확인 완료
+- **참고**: 완전한 Sentinel은 redis-py 코드 변경 필요 → EKS 전환 시 ElastiCache로 대체 예정
 
 ---
 
@@ -162,12 +166,16 @@
 
 ---
 
-#### ISSUE-13: Kafka 단일 인스턴스
+#### ~~ISSUE-13: Kafka 단일 인스턴스~~ ✅ 완료
 
-- **영향**: Kafka 장애 시 전체 이벤트 파이프라인 중단
-- **현재 상태**: kafka-0 1개 (PVC 20Gi)
-- **계획 목표**: 추후 3-replica KRaft 클러스터
-- **해결 방법**: Kafka StatefulSet 3-replica 전환 (디스크 용량 확인 필요)
+- **해결** (2026-03-03): StatefulSet 1→3 replicas, KRaft 3-voter 클러스터
+  - `podManagementPolicy: Parallel`: 3개 파드 동시 기동 (KRaft quorum 동시 형성 필요)
+  - `kafka-headless` 서비스: `publishNotReadyAddresses: true` (Init 단계 DNS 등록)
+  - `wait-for-peers` init container: 모든 피어 DNS 준비 후 Kafka 기동
+  - `KAFKA_ADVERTISED_LISTENERS`: 파드별 headless 주소 동적 설정
+  - Replication factor 3, min.insync.replicas 2
+  - podAntiAffinity required: worker1/2/3 분산 배치
+  - kafka-0/1/2 모두 Running 확인, price-consumer-group 재연결 완료
 
 ---
 
@@ -190,13 +198,13 @@
 
 안정성 강화
 ├── ✅ ISSUE-06: NetworkPolicy 적용 완료 (ArgoCD sync 예정)
-└── ISSUE-08: Redis Sentinel 구성
+└── ✅ ISSUE-08: Redis 3-replica (Master+Replica) 완료
 
 장기 과제
 ├── ✅ ISSUE-09: Cert-Manager v1.16.2 설치 완료 (cert-manager ns)
 ├── ✅ ISSUE-10: Kiali 설치 완료 (http://192.168.0.230:20001/kiali)
 ├── ✅ ISSUE-11: ArgoCD Staging/Production 분리 완료
-├── ISSUE-13: Kafka 3-replica 전환
+├── ✅ ISSUE-13: Kafka 3-replica KRaft 완료 (2026-03-03)
 └── ISSUE-14: Phase 8 검증 및 부하 테스트
 ```
 
@@ -218,8 +226,8 @@
 ✅ Alloy          worker1/2/3 DaemonSet Running, 메트릭/로그 수집 정상
 ✅ Grafana        CloudDX Overview 5패널 전부 데이터 표시
 ✅ MongoDB        3-replica StatefulSet Running (30Gi × 3)
-✅ Redis          StatefulSet Running (5Gi)
-✅ Kafka          StatefulSet Running (20Gi)
+✅ Redis          3-replica Running (master+2replica, 5Gi×3, worker 분산)
+✅ Kafka          3-replica KRaft Running (20Gi×3, worker 분산, RF=3)
 ✅ Elasticsearch  StatefulSet Running (30Gi)
 ✅ MinIO          StatefulSet Running (20Gi)
 ✅ Backend        3 파드 Running (메모리 1Gi — OTel 포함)
