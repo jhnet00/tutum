@@ -58,4 +58,3 @@ def test_avg_price_uses_total_cost_div_amount_when_mismatched() -> None:
 
     expected_avg = 499_338.0 / 0.00381993
     assert math.isclose(float(btc["avg_price"]), expected_avg, rel_tol=0, abs_tol=1e-6)
-
