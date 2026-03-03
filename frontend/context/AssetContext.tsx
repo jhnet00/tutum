@@ -9,6 +9,13 @@ const WS_BASE_URL =
     typeof window !== "undefined"
         ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`
         : "ws://localhost:8000";
+const MAX_DECIMAL_PLACES = 6;
+
+const toFixedDecimal = (value: unknown) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    return Number(parsed.toFixed(MAX_DECIMAL_PLACES));
+};
 
 export interface HoldingAsset {
     id?: string;
@@ -207,8 +214,8 @@ export function AssetProvider({ children }: { children: React.ReactNode }) {
                     asset_code: h.symbol,
                     asset_name: h.name || h.symbol,
                     asset_type: h.type === "currency" ? "cash" : (h.type || "crypto"),
-                    quantity: Number(h.quantity),
-                    avg_buy_price: Number(h.price),
+                    quantity: toFixedDecimal(h.quantity),
+                    avg_buy_price: toFixedDecimal(h.price),
                     currency: h.currency || "KRW",
                 }))
             };

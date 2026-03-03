@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..mariadb import (
     add_portfolio_item,
@@ -19,6 +19,12 @@ from .auth import UserResponse, get_current_user, verify_csrf_token
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+MAX_DECIMAL_PLACES = 6
+
+
+def _normalize_decimal(value: float) -> float:
+    numeric = float(value)
+    return round(numeric, MAX_DECIMAL_PLACES)
 
 
 class PortfolioCreate(BaseModel):
@@ -29,6 +35,11 @@ class PortfolioCreate(BaseModel):
     avg_buy_price: float = Field(..., gt=0)
     currency: str = Field(default="KRW", min_length=3, max_length=10)
 
+    @field_validator("quantity", "avg_buy_price")
+    @classmethod
+    def normalize_numeric_fields(cls, value: float) -> float:
+        return _normalize_decimal(value)
+
 
 class PortfolioUpdate(BaseModel):
     asset_name: Optional[str] = Field(default=None, min_length=1, max_length=100)
@@ -37,6 +48,13 @@ class PortfolioUpdate(BaseModel):
     avg_buy_price: Optional[float] = Field(default=None, gt=0)
     currency: Optional[str] = Field(default=None, min_length=3, max_length=10)
 
+    @field_validator("quantity", "avg_buy_price")
+    @classmethod
+    def normalize_optional_numeric_fields(cls, value: Optional[float]) -> Optional[float]:
+        if value is None:
+            return value
+        return _normalize_decimal(value)
+
 
 class PortfolioSell(BaseModel):
     quantity: float = Field(..., gt=0)
@@ -44,6 +62,11 @@ class PortfolioSell(BaseModel):
     sell_reason: Optional[str] = None
     sell_date: Optional[str] = None
     memo: Optional[str] = None
+
+    @field_validator("quantity", "sell_price")
+    @classmethod
+    def normalize_sell_numeric_fields(cls, value: float) -> float:
+        return _normalize_decimal(value)
 
 
 class BulkPortfolioCreate(BaseModel):

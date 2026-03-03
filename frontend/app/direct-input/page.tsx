@@ -113,6 +113,54 @@ const CURRENCIES: Asset[] = [
     { id: "CNY", symbol: "CNY", name: "위안화 (CNY)", type: "currency" },
 ];
 
+const MAX_DECIMAL_PLACES = 6;
+const DECIMAL_INPUT_REGEX = new RegExp(`^\\d*(\\.\\d{0,${MAX_DECIMAL_PLACES}})?$`);
+
+function normalizeDecimalInput(rawValue: string): string | null {
+    const stripped = rawValue.replace(/,/g, "").trim();
+
+    if (stripped === "") return "";
+    if (stripped === ".") return "0.";
+
+    const normalized = stripped.startsWith(".") ? `0${stripped}` : stripped;
+    if (!DECIMAL_INPUT_REGEX.test(normalized)) return null;
+
+    return normalized;
+}
+
+function toFixedDecimal(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Number(value.toFixed(MAX_DECIMAL_PLACES));
+}
+
+function parseDecimalValue(rawValue: string): number {
+    const parsed = Number((rawValue || "").replace(/,/g, ""));
+    return toFixedDecimal(parsed);
+}
+
+function formatDecimalInput(rawValue: string): string {
+    if (!rawValue) return "";
+
+    const stripped = rawValue.replace(/,/g, "");
+    const hasDot = stripped.includes(".");
+    const [integerPartRaw, decimalPartRaw = ""] = stripped.split(".");
+
+    const integerPart = integerPartRaw === "" ? "0" : integerPartRaw;
+    const normalizedInteger = integerPart.replace(/^0+(?=\d)/, "") || "0";
+    const formattedInteger = Number(normalizedInteger).toLocaleString("ko-KR", {
+        maximumFractionDigits: 0,
+    });
+
+    if (!hasDot) return formattedInteger;
+    return `${formattedInteger}.${decimalPartRaw}`;
+}
+
+function formatDecimalNumber(value: number): string {
+    return toFixedDecimal(value).toLocaleString("ko-KR", {
+        maximumFractionDigits: MAX_DECIMAL_PLACES,
+    });
+}
+
 // --- Main Component ---
 
 export default function DirectRegisterPage() {
@@ -244,7 +292,7 @@ export default function DirectRegisterPage() {
     // Auto-update price field when exchange rate is fetched for currency
     useEffect(() => {
         if (selectedAsset?.type === 'currency' && selectedAsset.id !== 'KRW' && exchangeRate) {
-            setFormValues(prev => ({ ...prev, price: exchangeRate.toString() }));
+            setFormValues(prev => ({ ...prev, price: toFixedDecimal(exchangeRate).toString() }));
         }
     }, [exchangeRate, selectedAsset]);
 
@@ -288,11 +336,15 @@ export default function DirectRegisterPage() {
     const handleAddToCart = () => {
         if (!selectedAsset || !formValues.quantity || !formValues.price) return;
 
+        const quantity = parseDecimalValue(formValues.quantity);
+        const price = parseDecimalValue(formValues.price);
+        if (quantity <= 0 || price <= 0) return;
+
         const newItem: CartItem = {
             ...selectedAsset,
             uid: Math.random().toString(36).substr(2, 9),
-            quantity: parseFloat(formValues.quantity),
-            price: parseFloat(formValues.price),
+            quantity,
+            price,
             date: new Date().toISOString(),
             memo: formValues.memo,
             buyReason: formValues.buyReason,
@@ -314,8 +366,8 @@ export default function DirectRegisterPage() {
         // Load item data into form
         setSelectedAsset(item);
         setFormValues({
-            quantity: item.quantity.toString(),
-            price: item.price.toString(),
+            quantity: toFixedDecimal(item.quantity).toString(),
+            price: toFixedDecimal(item.price).toString(),
             memo: item.memo || "",
             buyReason: item.buyReason || "",
             aiAnalysis: item.aiAnalysis || ""
@@ -325,7 +377,15 @@ export default function DirectRegisterPage() {
     };
 
     const updateCartItem = (uid: string, field: keyof CartItem, value: any) => {
-        setCart(cart.map(item => item.uid === uid ? { ...item, [field]: value } : item));
+        setCart(prev =>
+            prev.map(item => {
+                if (item.uid !== uid) return item;
+                if (field === "quantity" || field === "price") {
+                    return { ...item, [field]: toFixedDecimal(Number(value) || 0) };
+                }
+                return { ...item, [field]: value };
+            })
+        );
     };
 
     // Column resize handlers
@@ -599,12 +659,13 @@ export default function DirectRegisterPage() {
                                                         <div className="relative">
                                                             <Input
                                                                 type="text"
+                                                                inputMode="decimal"
                                                                 placeholder="0"
-                                                                value={formValues.quantity ? parseFloat(formValues.quantity.replace(/,/g, '')).toLocaleString('ko-KR') : ''}
+                                                                value={formatDecimalInput(formValues.quantity)}
                                                                 onChange={(e) => {
-                                                                    const rawValue = e.target.value.replace(/,/g, '');
-                                                                    if (rawValue === '' || !isNaN(Number(rawValue))) {
-                                                                        setFormValues({ ...formValues, quantity: rawValue });
+                                                                    const normalized = normalizeDecimalInput(e.target.value);
+                                                                    if (normalized !== null) {
+                                                                        setFormValues({ ...formValues, quantity: normalized });
                                                                     }
                                                                 }}
                                                                 className="h-14 text-xl font-bold bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 focus-visible:ring-emerald-500 pl-4 pr-10"
@@ -619,7 +680,7 @@ export default function DirectRegisterPage() {
                                                                         <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
                                                                     ) : exchangeRate ? (
                                                                         <span className="text-base font-black text-blue-900 dark:text-blue-300">
-                                                                            ≈ {(parseFloat(formValues.quantity) * exchangeRate).toLocaleString('ko-KR', { maximumFractionDigits: 0 })} KRW
+                                                                            ≈ {(parseDecimalValue(formValues.quantity) * exchangeRate).toLocaleString('ko-KR', { maximumFractionDigits: 0 })} KRW
                                                                         </span>
                                                                     ) : (
                                                                         <span className="text-xs text-zinc-500">환율 정보 없음</span>
@@ -644,12 +705,13 @@ export default function DirectRegisterPage() {
                                                             <div className="relative">
                                                                 <Input
                                                                     type="text"
+                                                                    inputMode="decimal"
                                                                     placeholder="0"
-                                                                    value={formValues.price ? parseFloat(formValues.price.replace(/,/g, '')).toLocaleString('ko-KR') : ''}
+                                                                    value={formatDecimalInput(formValues.price)}
                                                                     onChange={(e) => {
-                                                                        const rawValue = e.target.value.replace(/,/g, '');
-                                                                        if (rawValue === '' || !isNaN(Number(rawValue))) {
-                                                                            setFormValues({ ...formValues, price: rawValue });
+                                                                        const normalized = normalizeDecimalInput(e.target.value);
+                                                                        if (normalized !== null) {
+                                                                            setFormValues({ ...formValues, price: normalized });
                                                                         }
                                                                     }}
                                                                     className="h-14 text-xl font-bold bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 focus-visible:ring-emerald-500 pl-4 pr-10"
@@ -703,7 +765,12 @@ export default function DirectRegisterPage() {
                                                 <Button
                                                     className="w-full h-14 text-lg font-bold bg-zinc-900 dark:bg-white text-white dark:text-black hover:bg-zinc-800 dark:hover:bg-zinc-200 rounded-xl shadow-lg transition-all active:scale-[0.98]"
                                                     onClick={handleAddToCart}
-                                                    disabled={!formValues.quantity || !formValues.price}
+                                                    disabled={
+                                                        !formValues.quantity ||
+                                                        !formValues.price ||
+                                                        parseDecimalValue(formValues.quantity) <= 0 ||
+                                                        parseDecimalValue(formValues.price) <= 0
+                                                    }
                                                 >
                                                     리스트에 추가
                                                 </Button>
@@ -846,8 +913,10 @@ export default function DirectRegisterPage() {
                                                             <td className="px-4 py-3">
                                                                 <Input
                                                                     type="number"
+                                                                    min="0"
+                                                                    step="0.000001"
                                                                     value={item.quantity}
-                                                                    onChange={(e) => updateCartItem(item.uid, 'quantity', parseFloat(e.target.value) || 0)}
+                                                                    onChange={(e) => updateCartItem(item.uid, 'quantity', parseDecimalValue(e.target.value))}
                                                                     className="h-9 bg-transparent border-none hover:bg-zinc-100 dark:hover:bg-zinc-900 focus-visible:ring-emerald-500 text-right font-bold text-zinc-900 dark:text-zinc-100"
                                                                 />
                                                             </td>
@@ -855,8 +924,14 @@ export default function DirectRegisterPage() {
                                                                 <div className="flex items-center gap-2">
                                                                     <Input
                                                                         type="text"
-                                                                        value={item.price.toLocaleString('ko-KR')}
-                                                                        onChange={(e) => updateCartItem(item.uid, 'price', parseFloat(e.target.value.replace(/,/g, '')) || 0)}
+                                                                        inputMode="decimal"
+                                                                        value={formatDecimalNumber(item.price)}
+                                                                        onChange={(e) => {
+                                                                            const normalized = normalizeDecimalInput(e.target.value);
+                                                                            if (normalized !== null) {
+                                                                                updateCartItem(item.uid, 'price', parseDecimalValue(normalized));
+                                                                            }
+                                                                        }}
                                                                         className={`flex-1 h-9 bg-transparent border-none hover:bg-zinc-100 dark:hover:bg-zinc-900 focus-visible:ring-emerald-500 text-right font-bold ${(item.currency || 'KRW') === 'USD' ? 'text-blue-600 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-400'}`}
                                                                     />
                                                                     <Select
@@ -963,8 +1038,10 @@ export default function DirectRegisterPage() {
                                                         <label className="text-[10px] font-black uppercase text-zinc-500">보유량</label>
                                                         <Input
                                                             type="number"
+                                                            min="0"
+                                                            step="0.000001"
                                                             value={item.quantity}
-                                                            onChange={(e) => updateCartItem(item.uid, 'quantity', parseFloat(e.target.value) || 0)}
+                                                            onChange={(e) => updateCartItem(item.uid, 'quantity', parseDecimalValue(e.target.value))}
                                                             className="h-10 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 font-bold"
                                                         />
                                                     </div>
@@ -975,8 +1052,14 @@ export default function DirectRegisterPage() {
                                                     <div className="flex items-center gap-2">
                                                         <Input
                                                             type="text"
-                                                            value={item.price.toLocaleString('ko-KR')}
-                                                            onChange={(e) => updateCartItem(item.uid, 'price', parseFloat(e.target.value.replace(/,/g, '')) || 0)}
+                                                            inputMode="decimal"
+                                                            value={formatDecimalNumber(item.price)}
+                                                            onChange={(e) => {
+                                                                const normalized = normalizeDecimalInput(e.target.value);
+                                                                if (normalized !== null) {
+                                                                    updateCartItem(item.uid, 'price', parseDecimalValue(normalized));
+                                                                }
+                                                            }}
                                                             className={`flex-1 h-12 bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 text-right font-black text-xl ${(item.currency || 'KRW') === 'USD' ? 'text-blue-600 dark:text-blue-400' : 'text-emerald-600 dark:text-emerald-400'}`}
                                                         />
                                                         <Select value={item.currency || 'KRW'} onValueChange={(val: "KRW" | "USD") => updateCartItem(item.uid, 'currency', val)}>

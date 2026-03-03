@@ -1,19 +1,15 @@
 """
-OCR 텍스트 파싱 엔진 - 업비트/거래소 형식 지원 (고도화 버전)
+OCR 텍스트 파서 (업비트 카드형 레이아웃 우선)
 
-기본 전략:
-1. '보유수량' 키워드를 앵커로 설정 -> 바로 윗줄에서 수량 추출
-2. '매수평균가' 키워드를 앵커로 설정 -> 바로 아랫줄에서 가격 추출
-3. 데이터 발견 시 인접 라인에서 심볼/종목명 역추적
-4. 최종 결과 중복 제거
+핵심 개선:
+1. 라벨(보유수량/매수평균가/매수금액) 주변 값 탐색 시 "위쪽 값 우선"으로 처리
+2. 매수평균가가 매수금액/평가금액으로 잘못 매핑되는 경우 보정
+3. 기존 응답 스키마(symbol, amount, avg_price, asset_type, currency) 유지
 """
 
 import re
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 
-# ============================================
-# 심볼 데이터베이스
-# ============================================
 
 KNOWN_CRYPTO_SYMBOLS = {
     "BTC": ["비트코인", "Bitcoin"],
@@ -41,143 +37,214 @@ KNOWN_STOCK_SYMBOLS = {
     "105560": ["KB금융", "KB Financial"],
 }
 
-# ============================================
-# 헬퍼 함수
-# ============================================
+AMOUNT_LABELS = ["보유수량", "보유량", "수량"]
+AVG_PRICE_LABELS = ["매수평균가", "평단가", "평균단가", "평균가"]
+TOTAL_COST_LABELS = ["매수금액"]
+NON_VALUE_LABELS = [
+    *AMOUNT_LABELS,
+    *AVG_PRICE_LABELS,
+    *TOTAL_COST_LABELS,
+    "평가금액",
+    "평가손익",
+    "수익률",
+]
 
 
 def extract_numbers(text: str) -> List[float]:
-    """텍스트에서 모든 숫자 추출 (쉼표 제거)"""
-    # 0.00381993 BTC 같은 경우 소수점 포함 인식
-    pattern = r"[\d,]+\.?\d*"
-    matches = re.findall(pattern, text)
-    numbers = []
+    """텍스트에서 숫자 목록 추출."""
+    matches = re.findall(r"[\d,]+\.?\d*", text)
+    numbers: List[float] = []
     for match in matches:
         try:
-            # 쉼표 제거 후 float 변환
-            clean_match = match.replace(",", "")
-            if clean_match and clean_match != ".":
-                numbers.append(float(clean_match))
+            normalized = match.replace(",", "")
+            if normalized and normalized != ".":
+                numbers.append(float(normalized))
         except ValueError:
             continue
     return numbers
 
 
+def _contains_any(text: str, keywords: List[str]) -> bool:
+    return any(keyword in text for keyword in keywords)
+
+
 def find_symbol_in_text(text: str) -> Optional[tuple]:
-    """텍스트에서 알려진 심볼 또는 (BTC) 형태의 티커 찾기"""
+    """텍스트에서 티커/종목 추정."""
     text_upper = text.upper()
 
-    # 1. (BTC) 형태의 티커 추출 시도
     ticker_match = re.search(r"\(([A-Z]{2,10})\)", text_upper)
     if ticker_match:
-        ticker = ticker_match.group(1)
-        return (ticker, "token")
+        return (ticker_match.group(1), "crypto")
 
-    # 2. 알려진 심볼 매칭
     for symbol, names in KNOWN_CRYPTO_SYMBOLS.items():
         if symbol in text_upper:
             return (symbol, "crypto")
-        for name in names:
-            if name in text:
-                return (symbol, "crypto")
+        if any(name in text for name in names):
+            return (symbol, "crypto")
 
     for code, names in KNOWN_STOCK_SYMBOLS.items():
         if code in text:
             return (names[0], "stock")
-        for name in names:
-            if name in text:
-                return (names[0], "stock")
+        if any(name in text for name in names):
+            return (names[0], "stock")
 
     return None
 
 
-# ============================================
-# 업비트 특화 파싱 로직 (앵커 기반)
-# ============================================
+def _find_label_index(lines: List[str], start: int, end: int, labels: List[str]) -> Optional[int]:
+    for i in range(start, end):
+        if _contains_any(lines[i], labels):
+            return i
+    return None
+
+
+def _extract_value_near_label(
+    lines: List[str],
+    label_idx: int,
+    *,
+    prefer_above: bool = True,
+    max_distance: int = 3,
+) -> Optional[float]:
+    """라벨 주변에서 숫자 값을 추출. 카드형 UI를 위해 위쪽 우선."""
+    offsets: List[int] = []
+    if prefer_above:
+        for dist in range(1, max_distance + 1):
+            offsets.extend([-dist, dist])
+    else:
+        for dist in range(1, max_distance + 1):
+            offsets.extend([dist, -dist])
+
+    for offset in offsets:
+        idx = label_idx + offset
+        if idx < 0 or idx >= len(lines):
+            continue
+
+        candidate = lines[idx].strip()
+        if not candidate:
+            continue
+        if _contains_any(candidate, NON_VALUE_LABELS):
+            continue
+        if "%" in candidate:
+            continue
+
+        nums = extract_numbers(candidate)
+        if nums:
+            return nums[0]
+
+    return None
+
+
+def _correct_avg_price_with_total_cost(
+    *,
+    amount: Optional[float],
+    avg_price: Optional[float],
+    total_cost: Optional[float],
+) -> Optional[float]:
+    """
+    매수평균가 오인식 보정.
+    - amount, total_cost가 있으면 derived_avg = total_cost / amount 계산
+    - 기존 avg_price와 큰 불일치 시 derived_avg로 교체
+    """
+    if amount is None or total_cost is None or amount <= 0:
+        return avg_price
+
+    derived_avg = total_cost / amount
+    if avg_price is None:
+        return derived_avg
+
+    implied_total = avg_price * amount
+    # 35% 이상 괴리면 오인식으로 판단
+    mismatch_ratio = abs(implied_total - total_cost) / max(total_cost, 1.0)
+    if mismatch_ratio > 0.35:
+        return derived_avg
+
+    return avg_price
 
 
 def extract_upbit_data(lines: List[str]) -> List[Dict]:
     """
-    업비트 형식 앵커 기반 추출
-    '보유수량' -> 위쪽은 수량
-    '매수평균가' -> 아래쪽은 가격
+    업비트 카드형 화면에서 자산 데이터 추출.
+    기본 앵커: 보유수량
     """
-    results = []
-    seen_symbols = set()
-
-    # 1. '보유수량' 위치들 찾기
-    anchor_indices = [i for i, line in enumerate(lines) if "보유수량" in line.strip()]
+    results: List[Dict] = []
+    seen_symbols: set[str] = set()
+    anchor_indices = [i for i, line in enumerate(lines) if _contains_any(line, AMOUNT_LABELS)]
 
     for idx in anchor_indices:
-        amount = None
-        avg_price = None
+        amount: Optional[float] = None
+        avg_price: Optional[float] = None
+        total_cost: Optional[float] = None
         symbol = "알 수 없음"
+        asset_type = "crypto"
 
-        # A. 보유수량 추출 (바로 윗줄)
         if idx > 0:
             amount_line = lines[idx - 1].strip()
             numbers = extract_numbers(amount_line)
             if numbers:
                 amount = numbers[0]
-                # 팁: 수량 줄에 종목 이름도 있을 수 있으니 심볼 추출 시도
-                sym_match = find_symbol_in_text(amount_line)
-                if sym_match:
-                    symbol = sym_match[0]
+            symbol_guess = find_symbol_in_text(amount_line)
+            if symbol_guess:
+                symbol, asset_type = symbol_guess
 
-        # B. 심볼 역추적 (수량 줄이나 그 위 5줄 안에서)
-        asset_type = "crypto"  # 기본값
         if symbol == "알 수 없음":
-            for j in range(max(0, idx - 10), idx):
-                sym_match = find_symbol_in_text(lines[j])
-                if sym_match:
-                    symbol = sym_match[0]
-                    asset_type = sym_match[1]
+            for j in range(max(0, idx - 12), idx):
+                symbol_guess = find_symbol_in_text(lines[j])
+                if symbol_guess:
+                    symbol, asset_type = symbol_guess
                     break
 
-        # C. 매수평균가 추출 ('보유수량' 아래 10줄 이내에서 '매수평균가' 찾기)
-        for j in range(idx + 1, min(idx + 10, len(lines))):
-            if "매수평균가" in lines[j]:
-                if j + 1 < len(lines):
-                    price_line = lines[j + 1].strip()
-                    nums = extract_numbers(price_line)
-                    if nums:
-                        avg_price = nums[0]
-                break
+        scan_end = min(idx + 16, len(lines))
 
-        if amount is not None:
-            # 중복 제거: 심볼이 인식되었고 이미 처리한 적 없는 항목만 추가
-            if symbol not in seen_symbols:
-                results.append(
-                    {
-                        "symbol": symbol,
-                        "amount": amount,
-                        "avg_price": avg_price,
-                        "asset_type": asset_type,
-                        "currency": "KRW",
-                        "recognized": symbol != "알 수 없음" and avg_price is not None,
-                    }
-                )
-                seen_symbols.add(symbol)
-                print(
-                    f"[SUCCESS] Anchor extraction: {symbol}({asset_type}) | Amount: {amount} | Price: {avg_price}"
-                )
+        avg_label_idx = _find_label_index(lines, idx + 1, scan_end, AVG_PRICE_LABELS)
+        if avg_label_idx is not None:
+            avg_price = _extract_value_near_label(lines, avg_label_idx, prefer_above=True)
+
+        total_cost_label_idx = _find_label_index(lines, idx + 1, scan_end, TOTAL_COST_LABELS)
+        if total_cost_label_idx is not None:
+            total_cost = _extract_value_near_label(lines, total_cost_label_idx, prefer_above=True)
+
+        avg_price = _correct_avg_price_with_total_cost(
+            amount=amount,
+            avg_price=avg_price,
+            total_cost=total_cost,
+        )
+
+        if amount is None:
+            continue
+
+        if symbol in seen_symbols and symbol != "알 수 없음":
+            continue
+
+        results.append(
+            {
+                "symbol": symbol,
+                "amount": amount,
+                "avg_price": avg_price,
+                "asset_type": asset_type,
+                "currency": "KRW",
+                "recognized": symbol != "알 수 없음" and avg_price is not None,
+            }
+        )
+
+        if symbol != "알 수 없음":
+            seen_symbols.add(symbol)
+
+        print(
+            f"[SUCCESS] Anchor extraction: {symbol}({asset_type}) | Amount: {amount} | "
+            f"Avg: {avg_price} | TotalCost: {total_cost}"
+        )
 
     return results
 
 
 def parse_portfolio_text(raw_text: str) -> List[Dict]:
-    """메인 파서 - 앵커 기반 로직 사용"""
+    """메인 파서."""
     lines = [line.strip() for line in raw_text.split("\n") if line.strip()]
-
     print(f"[OCR] Total {len(lines)} lines parsing started (anchor method)")
 
-    # 업비트 형식 추출
     items = extract_upbit_data(lines)
-
     if not items:
         print("[WARNING] Anchor-based extraction failed, fallback logic prepared (to be implemented)")
-        # 필요시 기존의 일반 파싱 로직을 여기에 fallback으로 넣을 수 있음
-        pass
 
     print(f"[SUCCESS] Returning {len(items)} items")
     return items
