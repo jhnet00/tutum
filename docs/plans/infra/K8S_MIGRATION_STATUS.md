@@ -121,7 +121,11 @@
   cert-manager-cainjector 1/1 Running
   cert-manager-webhook    1/1 Running
   ```
-  - 다음 단계: ClusterIssuer (Let's Encrypt) 생성 + Istio Gateway HTTPS 전환 필요
+  - **다음 단계 (온프레미스 스킵)**: 현재 Cloudflare Tunnel이 HTTPS TLS를 처리하고 있어 Let's Encrypt + Istio 443 설정 불필요
+  - **EKS 전환 시**: Let's Encrypt 대신 ACM (AWS Certificate Manager) + AWS Load Balancer Controller 사용 예정
+    - ACM: 인증서 자동 갱신, 추가 비용 없음
+    - AWS Load Balancer Controller: ALB를 K8s Ingress 리소스로 제어
+    - cert-manager는 내부 서비스 인증서 / 웹훅 TLS 용도로 유지
 
 ---
 
