@@ -35,7 +35,7 @@ export default function TopNav() {
                             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white shadow-md">
                                 <Activity className="h-5 w-5" />
                             </div>
-                            <span className="text-2xl font-black bg-gradient-to-r from-indigo-600 via-purple-600 to-fuchsia-600 dark:from-indigo-400 dark:via-purple-400 dark:to-fuchsia-400 text-transparent bg-clip-text hover:opacity-80 transition-opacity">tutum</span>
+                            <span className="text-2xl font-black bg-gradient-to-r from-indigo-600 via-purple-600 to-fuchsia-600 dark:from-indigo-400 dark:via-purple-400 dark:to-fuchsia-400 text-transparent bg-clip-text hover:opacity-80 transition-opacity">Tutum</span>
                         </Link>
                     </div>
 
@@ -84,7 +84,7 @@ export default function TopNav() {
                             <SheetContent side="right" className="w-[300px] p-0">
                                 <SheetHeader className="p-6 border-b">
                                     <SheetTitle>
-                                        tutum
+                                        Tutum
                                     </SheetTitle>
                                 </SheetHeader>
                                 <div className="mt-6 flex flex-col gap-4">

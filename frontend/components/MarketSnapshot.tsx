@@ -190,7 +190,7 @@ export default function MarketSnapshot() {
                     <Card className="bg-muted/30 border-dashed">
                         <CardHeader className="pb-2">
                             <CardTitle className="text-sm font-medium text-muted-foreground">
-                                tutum AI Market Watch
+                                Tutum AI Market Watch
                             </CardTitle>
                         </CardHeader>
                         <CardContent>

@@ -12,7 +12,7 @@ import { Loader2 } from "lucide-react";
 const SLIDES = [
     {
         id: "value-prop",
-        title: <>흩어진 나의 모든 자산,<br /><span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-500 via-violet-500 to-cyan-500 font-extrabold pb-2">tutum AI</span>가 하나로.</>,
+        title: <>흩어진 나의 모든 자산,<br /><span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-500 via-violet-500 to-cyan-500 font-extrabold pb-2">Tutum AI</span>가 하나로.</>,
         description: "은행, 증권, 코인 지갑까지. 여기저기 흩어진 자산 정보를 수동 입력 없이 AI 엔진으로 단 1초 만에 통합하고 분석하세요.",
         cta: "무료로 시작하기",
         ctaLink: "/login",
@@ -22,7 +22,7 @@ const SLIDES = [
     {
         id: "how-to-ocr",
         title: <>사진만 찍으세요.<br /><span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-500 via-blue-500 to-indigo-500 font-extrabold pb-2">기록은 AI가</span> 합니다.</>,
-        description: "복잡한 거래 내역서나 영수증, 더 이상 직접 입력하지 마세요. tutum의 OCR 엔진이 항목별로 정확하게 분류하여 포트폴리오에 반영합니다.",
+        description: "복잡한 거래 내역서나 영수증, 더 이상 직접 입력하지 마세요. Tutum의 OCR 엔진이 항목별로 정확하게 분류하여 포트폴리오에 반영합니다.",
         cta: "무료로 시작하기",
         ctaLink: "/login",
         type: "device-transition",

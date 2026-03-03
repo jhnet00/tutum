@@ -538,7 +538,16 @@ export default function AdminDashboard() {
                 ) : (
                   <div className="text-xs text-white/20 py-4">
                     Elasticsearch 연결 불가
-                    <div className="text-white/15 mt-1">elastic-consumer 비활성 상태</div>
+                    {(() => {
+                      const ec = pipeline?.workers?.["elastic-consumer"];
+                      if (ec?.running) {
+                        return <div className="text-white/15 mt-1">elastic-consumer 실행 중 (ES 연결 점검 필요)</div>;
+                      }
+                      if (ec?.status === "Stopped") {
+                        return <div className="text-white/15 mt-1">elastic-consumer 중지 상태</div>;
+                      }
+                      return <div className="text-white/15 mt-1">elastic-consumer 상태: {ec?.status ?? "Unknown"}</div>;
+                    })()}
                   </div>
                 )}
               </div>

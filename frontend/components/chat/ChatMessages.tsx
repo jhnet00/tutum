@@ -102,7 +102,7 @@ export function ChatMessages({ messages, onSuggestionClick }: ChatMessagesProps)
                 <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-purple-500 to-fuchsia-500 text-2xl font-bold text-white shadow-xl">
                     AI
                 </div>
-                <h2 className="mb-2 text-xl font-bold text-zinc-900 dark:text-white">tutum AI에게 물어보세요</h2>
+                <h2 className="mb-2 text-xl font-bold text-zinc-900 dark:text-white">Tutum AI에게 물어보세요</h2>
                 <p className="max-w-sm text-sm text-zinc-500 dark:text-zinc-400">
                     포트폴리오 분석, 시세 정보, 투자 인사이트 등 금융 관련 질문에 답변합니다.
                 </p>

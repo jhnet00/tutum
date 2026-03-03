@@ -55,7 +55,7 @@ export default function AlertPresets() {
                                 </div>
                                 <div className="text-left flex-1">
                                     <div className="flex items-center justify-between mb-1">
-                                        <span className="text-sm font-bold text-foreground">tutum</span>
+                                        <span className="text-sm font-bold text-foreground">Tutum</span>
                                         <span className="text-[11px] text-zinc-400">방금 전</span>
                                     </div>
                                     <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">

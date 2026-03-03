@@ -36,7 +36,7 @@ export default function NotFound() {
 
       {/* Footer-like Logo */}
       <div className="absolute bottom-12 left-1/2 -translate-x-1/2 opacity-20">
-        <span className="text-4xl font-black tracking-tighter text-zinc-100">tutum</span>
+        <span className="text-4xl font-black tracking-tighter text-zinc-100">Tutum</span>
       </div>
     </div>
   );

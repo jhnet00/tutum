@@ -13,7 +13,7 @@ export default function Footer() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 lg:gap-16 mb-20">
           {/* Brand Column */}
           <div className="col-span-2 md:col-span-1">
-            <h3 className="text-xl font-black tracking-tighter text-foreground mb-4">tutum</h3>
+            <h3 className="text-xl font-black tracking-tighter text-foreground mb-4">Tutum</h3>
             <p className="text-sm text-muted-foreground leading-relaxed mb-6">
               AI 기반 자산 관리의 새로운 기준.<br />
               복잡한 투자를 가장 단순하게.
@@ -73,7 +73,7 @@ export default function Footer() {
       {/* Big Fading Logo - Background */}
       <div className="absolute bottom-0 left-1/2 -translate-x-1/2 pointer-events-none select-none -z-0 w-full overflow-hidden flex justify-center">
         <h1 className="text-[12rem] sm:text-[18rem] font-black tracking-tighter leading-[0.8] text-transparent bg-clip-text bg-gradient-to-t from-zinc-200 to-transparent dark:from-zinc-900/40 dark:to-transparent transform translate-y-[20%]">
-          tutum
+          Tutum
         </h1>
       </div>
     </footer>

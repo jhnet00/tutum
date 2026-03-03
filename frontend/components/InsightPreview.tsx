@@ -106,7 +106,7 @@ export default function InsightPreview() {
                         </h2>
                     </div>
                     <div className="hidden md:block text-right">
-                        <p className="text-indigo-200/60 font-medium text-sm">tutum AI가 실시간으로 분석한<br/>시장 흐름과 포트폴리오 전략</p>
+                        <p className="text-indigo-200/60 font-medium text-sm">Tutum AI가 실시간으로 분석한<br/>시장 흐름과 포트폴리오 전략</p>
                     </div>
                 </div>
 

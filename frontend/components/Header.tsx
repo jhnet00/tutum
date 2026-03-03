@@ -86,7 +86,7 @@ export default function Header() {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-r from-indigo-600 to-fuchsia-600 text-white shadow-lg shadow-indigo-500/20 group-hover:scale-105 transition-transform">
               <Activity className="h-5 w-5" />
             </div>
-            <span className="text-2xl font-black bg-gradient-to-r from-indigo-600 via-purple-600 to-fuchsia-600 dark:from-indigo-400 dark:via-purple-400 dark:to-fuchsia-400 text-transparent bg-clip-text group-hover:opacity-80 transition-opacity">tutum</span>
+            <span className="text-2xl font-black bg-gradient-to-r from-indigo-600 via-purple-600 to-fuchsia-600 dark:from-indigo-400 dark:via-purple-400 dark:to-fuchsia-400 text-transparent bg-clip-text group-hover:opacity-80 transition-opacity">Tutum</span>
           </Link>
 
           {/* Nav Menu */}

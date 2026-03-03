@@ -94,7 +94,7 @@ export function AIChatFAB({ isOpen: controlledIsOpen, onOpenChange, showLauncher
                                 </div>
                                 <div>
                                     <h2 className="text-sm font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-                                        tutum AI
+                                        Tutum AI
                                         <span className="text-[9px] font-medium px-1.5 py-0.5 bg-fuchsia-100 dark:bg-fuchsia-900/30 text-fuchsia-600 dark:text-fuchsia-300 rounded-full uppercase tracking-wider">
                                             Beta
                                         </span>

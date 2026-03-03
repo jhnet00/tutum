@@ -21,7 +21,7 @@ const FEATURES = [
     },
     {
         title: "터치 한 번으로 끝나는 자산 등록",
-        description: "여러 증권사와 지갑의 내역을 캡처만 하세요. tutum AI가 종목명, 수량, 평단가를 자동으로 인식합니다.",
+        description: "여러 증권사와 지갑의 내역을 캡처만 하세요. Tutum AI가 종목명, 수량, 평단가를 자동으로 인식합니다.",
         image: "/images/iphone-11.png",
         side: "left",
         isPhone: true,
@@ -50,7 +50,7 @@ export default function ScrollRevealSection() {
                         transition={{ duration: 0.6, delay: 0.2 }}
                         className="mt-6 text-lg leading-8 text-zinc-600 dark:text-zinc-400"
                     >
-                        tutum이 제공하는 압도적인 정교함과 편의성을 직접 경험해 보세요. 
+                        Tutum이 제공하는 압도적인 정교함과 편의성을 직접 경험해 보세요.
                         금융 생활의 질이 한 단계 올라갑니다.
                     </motion.p>
                 </div>
