@@ -13,7 +13,7 @@
 | Phase 2 | Istio 서비스 메시 | ⚠️ 부분 완료 | ~85% |
 | Phase 3 | LGTM 옵저버빌리티 | ✅ 거의 완료 | ~90% |
 | Phase 4 | GitLab CI/CD + SonarQube | ⚠️ 부분 완료 | ~60% |
-| Phase 5 | ArgoCD GitOps | ⚠️ 부분 완료 | ~70% |
+| Phase 5 | ArgoCD GitOps | ✅ 거의 완료 | ~90% |
 | Phase 5.5 | KEDA + Karpenter | ⚠️ KEDA만 완료 | ~60% |
 | Phase 6 | 데이터 레이어 마이그레이션 | ✅ 거의 완료 | ~85% |
 | Phase 7 | 어플리케이션 마이그레이션 | ✅ 거의 완료 | ~85% |
@@ -113,16 +113,15 @@
 
 ---
 
-#### ISSUE-09: Cert-Manager 미설치
+#### ~~ISSUE-09: Cert-Manager 미설치~~ ✅ 완료
 
-- **영향**: TLS 인증서 자동 발급/갱신 불가 (HTTPS 게이트웨이 설정 시 필요)
-- **현재 상태**: Istio Gateway가 HTTP(port 80)만 운영 중, HTTPS 미적용
-- **해결 방법**:
-  ```bash
-  helm install cert-manager jetstack/cert-manager \
-    --namespace cert-manager --create-namespace \
-    --set installCRDs=true
+- **해결** (2026-03-03): cert-manager v1.16.2 Helm 설치 완료
   ```
+  cert-manager            1/1 Running
+  cert-manager-cainjector 1/1 Running
+  cert-manager-webhook    1/1 Running
+  ```
+  - 다음 단계: ClusterIssuer (Let's Encrypt) 생성 + Istio Gateway HTTPS 전환 필요
 
 ---
 
@@ -138,12 +137,14 @@
 
 ---
 
-#### ISSUE-11: ArgoCD 앱 구조 계획과 불일치
+#### ~~ISSUE-11: ArgoCD 앱 구조 계획과 불일치~~ ✅ 완료
 
-- **영향**: Staging/Production 환경 분리 미완성
-- **현재 상태**: `tutum-app-gitops` 단일 앱 (k8s-manifests/base 감시)
-- **계획 목표**: `tutum-staging` (Auto sync) + `tutum-production` (Manual sync)
-- **해결 방법**: Kustomize overlay 구조 활성화 후 ArgoCD 앱 2개로 분리
+- **해결** (2026-03-03): `tutum-app-gitops` 삭제 후 2개 앱으로 분리
+  - `tutum-staging`: auto-sync, develop 브랜치, `k8s-manifests/overlays/staging`
+  - `tutum-production`: manual sync, main 브랜치, `k8s-manifests/overlays/production`
+  - staging overlay namePrefix 제거, backend OOM 메모리 512Mi→768Mi 수정
+  - CI deploy 잡: 백엔드 레포 직접 push, `[skip ci]` 태그로 루프 방지
+  - **참고**: KEDA minReplicas와 staging replicas:1 충돌로 OutOfSync 표시 (서비스는 정상)
 
 ---
 
@@ -190,9 +191,9 @@
 └── ISSUE-08: Redis Sentinel 구성
 
 장기 과제
-├── ISSUE-09: Cert-Manager + HTTPS 전환
+├── ✅ ISSUE-09: Cert-Manager v1.16.2 설치 완료 (cert-manager ns)
 ├── ✅ ISSUE-10: Kiali 설치 완료 (http://192.168.0.230:20001/kiali)
-├── ISSUE-11: ArgoCD Staging/Production 분리
+├── ✅ ISSUE-11: ArgoCD Staging/Production 분리 완료
 ├── ISSUE-13: Kafka 3-replica 전환
 └── ISSUE-14: Phase 8 검증 및 부하 테스트
 ```
@@ -206,7 +207,8 @@
 ✅ Calico CNI     6노드 calico-node Running
 ✅ MetalLB        External IP 192.168.0.240 정상
 ✅ Istio          istiod + ingressgateway Running + mTLS STRICT (tutum-app)
-✅ ArgoCD         develop 브랜치 auto-sync, Synced/Healthy
+✅ ArgoCD         tutum-staging (auto/develop) + tutum-production (manual/main) 분리 완료
+✅ Cert-Manager   v1.16.2 Running (cert-manager ns)
 ✅ KEDA           ScaledObject 5개 Ready/Active
 ✅ Kyverno        Audit 모드로 동작 중 (cosign-key Secret 생성 완료)
 ✅ NetworkPolicy  tutum-app / tutum-data 격리 정책 적용 완료
