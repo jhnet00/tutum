@@ -18,6 +18,10 @@ spec:
         app: redis-exporter
         app.kubernetes.io/name: redis-exporter
         app.kubernetes.io/part-of: tutum
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
         - name: redis-exporter

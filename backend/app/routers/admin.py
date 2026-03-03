@@ -15,6 +15,7 @@ Admin 대시보드에 실시간 데이터를 제공합니다.
 import asyncio
 import json
 import logging
+import math
 import os
 from datetime import datetime, timezone, timedelta
 
@@ -35,6 +36,51 @@ LOKI_URL = os.getenv("LOKI_URL", "http://192.168.0.230:3100")
 _HTTP_MIMIR = httpx.AsyncClient(timeout=5.0)
 _HTTP_LOKI = httpx.AsyncClient(timeout=8.0)
 _HTTP_MISC = httpx.AsyncClient(timeout=8.0)
+
+
+def _mimir_api_urls(api_path: str) -> list[str]:
+    """
+    Build candidate Mimir API URLs.
+    Mimir can expose Prometheus APIs with or without /prometheus prefix.
+    """
+    base = MIMIR_URL.rstrip("/")
+    with_prefix = (
+        f"{base}/prometheus{api_path}"
+        if not base.endswith("/prometheus")
+        else f"{base}{api_path}"
+    )
+    without_prefix = (
+        f"{base[:-11]}{api_path}"
+        if base.endswith("/prometheus")
+        else f"{base}{api_path}"
+    )
+
+    urls: list[str] = []
+    for url in (with_prefix, without_prefix):
+        if url not in urls:
+            urls.append(url)
+    return urls
+
+
+async def _mimir_query(api_path: str, params: dict) -> dict | None:
+    """Execute a Prometheus query against Mimir with path fallbacks."""
+    last_error = ""
+    for url in _mimir_api_urls(api_path):
+        try:
+            resp = await _HTTP_MIMIR.get(url, params=params)
+            if resp.status_code >= 400:
+                last_error = f"{url} -> HTTP {resp.status_code}"
+                continue
+            data = resp.json()
+            if data.get("status") == "success":
+                return data
+            last_error = f'{url} -> status="{data.get("status", "unknown")}"'
+        except Exception as e:
+            last_error = f"{url} -> {e}"
+
+    if last_error:
+        logger.warning("Mimir query failed [%s]: %s", api_path, last_error)
+    return None
 
 # ─── Bedrock client (lazy init) ───────────────────────────────────────────────
 
@@ -239,55 +285,132 @@ async def get_pods(namespace: str = "all"):
 
 @router.get("/metrics")
 async def get_metrics():
-    """
-    Mimir에서 최근 1시간 메트릭 조회 (12포인트, 5분 간격).
-    - rps: API 요청 수/초
-    - latency_p95: P95 응답시간 (ms)
-    - error_rate: 5xx 에러율 (%)
-    - kafka_lag: 전체 consumer group lag 합계
-    """
+    """최근 1시간 KPI 메트릭을 Mimir에서 조회한다."""
     step = "5m"
     end = datetime.now(timezone.utc)
     start = end - timedelta(hours=1)
 
-    queries = {
-        "rps": 'sum(rate(http_requests_total{namespace="tutum-app"}[2m]))',
-        "latency_p95": (
-            'histogram_quantile(0.95, sum by(le) '
-            '(rate(http_request_duration_seconds_bucket{namespace="tutum-app"}[2m]))) * 1000'
-        ),
-        "error_rate": (
-            'sum(rate(http_requests_total{namespace="tutum-app",status=~"5.."}[2m])) '
-            '/ sum(rate(http_requests_total{namespace="tutum-app"}[2m])) * 100'
-        ),
-        "kafka_lag": 'sum(kafka_consumergroup_lag)',
+    async def _query_range_values(query: str) -> list[float]:
+        data = await _mimir_query(
+            "/api/v1/query_range",
+            params={
+                "query": query,
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "step": step,
+            },
+        )
+        if not data:
+            return []
+
+        results = data.get("data", {}).get("result", [])
+        if not results:
+            return []
+
+        values: list[float] = []
+        for _, raw in results[0].get("values", []):
+            try:
+                num = float(raw)
+                if math.isfinite(num):
+                    values.append(round(num, 2))
+            except (TypeError, ValueError):
+                continue
+        return values[-12:] if len(values) >= 12 else values
+
+    async def _query_instant_value(query: str) -> float | None:
+        data = await _mimir_query(
+            "/api/v1/query",
+            params={"query": query, "time": end.isoformat()},
+        )
+        if not data:
+            return None
+
+        results = data.get("data", {}).get("result", [])
+        if not results:
+            return None
+
+        try:
+            num = float(results[0]["value"][1])
+            return round(num, 2) if math.isfinite(num) else None
+        except (TypeError, ValueError, IndexError, KeyError):
+            return None
+
+    query_candidates = {
+        "rps": [
+            'sum(rate(http_requests_total{namespace="tutum-app"}[2m]))',
+            "sum(rate(http_requests_total[2m]))",
+            'sum(rate(http_request_duration_seconds_count{namespace="tutum-app"}[2m]))',
+            "sum(rate(http_request_duration_seconds_count[2m]))",
+        ],
+        "latency_p95": [
+            (
+                'histogram_quantile(0.95, sum by(le) '
+                '(rate(http_request_duration_seconds_bucket{namespace="tutum-app"}[2m]))) * 1000'
+            ),
+            (
+                "histogram_quantile(0.95, sum by(le) "
+                "(rate(http_request_duration_seconds_bucket[2m]))) * 1000"
+            ),
+            (
+                'histogram_quantile(0.95, sum by(le) '
+                '(rate(http_request_duration_highr_seconds_bucket{namespace="tutum-app"}[2m]))) * 1000'
+            ),
+            (
+                "histogram_quantile(0.95, sum by(le) "
+                "(rate(http_request_duration_highr_seconds_bucket[2m]))) * 1000"
+            ),
+        ],
+        "error_rate": [
+            (
+                'sum(rate(http_requests_total{namespace="tutum-app",status=~"5.."}[2m])) '
+                '/ sum(rate(http_requests_total{namespace="tutum-app"}[2m])) * 100'
+            ),
+            (
+                'sum(rate(http_requests_total{status=~"5.."}[2m])) '
+                '/ sum(rate(http_requests_total[2m])) * 100'
+            ),
+            (
+                'sum(rate(http_requests_total{namespace="tutum-app",status_code=~"5.."}[2m])) '
+                '/ sum(rate(http_requests_total{namespace="tutum-app"}[2m])) * 100'
+            ),
+            (
+                'sum(rate(http_requests_total{status_code=~"5.."}[2m])) '
+                '/ sum(rate(http_requests_total[2m])) * 100'
+            ),
+            (
+                'sum(rate(http_server_request_duration_seconds_count{namespace="tutum-app",http_status=~"5.."}[2m])) '
+                '/ sum(rate(http_server_request_duration_seconds_count{namespace="tutum-app"}[2m])) * 100'
+            ),
+            (
+                'sum(rate(http_server_request_duration_seconds_count{http_status=~"5.."}[2m])) '
+                '/ sum(rate(http_server_request_duration_seconds_count[2m])) * 100'
+            ),
+        ],
+        "kafka_lag": [
+            "sum(kafka_consumergroup_lag)",
+            "sum(kafka_consumergroup_group_lag)",
+            "sum(kafka_consumergroup_lag_sum)",
+        ],
     }
 
-    result = {}
-    for key, query in queries.items():
-        try:
-            resp = await _HTTP_MIMIR.get(
-                f"{MIMIR_URL}/api/v1/query_range",
-                params={
-                    "query": query,
-                    "start": start.isoformat(),
-                    "end": end.isoformat(),
-                    "step": step,
-                },
-            )
-            data = resp.json()
-            if data.get("status") == "success":
-                results = data.get("data", {}).get("result", [])
-                if results:
-                    values = [round(float(v[1]), 2) for v in results[0]["values"]]
-                    result[key] = values[-12:] if len(values) >= 12 else values
-                else:
-                    result[key] = []
-            else:
-                result[key] = []
-        except Exception as e:
-            logger.warning("Mimir 쿼리 실패 [%s]: %s", key, e)
-            result[key] = []
+    result: dict[str, list[float]] = {}
+    for key, candidates in query_candidates.items():
+        values: list[float] = []
+        for query in candidates:
+            values = await _query_range_values(query)
+            if values:
+                break
+
+        if not values:
+            for query in candidates:
+                instant = await _query_instant_value(query)
+                if instant is not None:
+                    values = [instant] * 12
+                    break
+
+        if not values:
+            logger.warning("Mimir query returned no data [%s]", key)
+        result[key] = values
 
     return result
 
@@ -788,35 +911,41 @@ async def get_data_metrics():
     now = datetime.now(timezone.utc)
     instant_params = {"time": now.isoformat()}
 
-    queries = {
-        "redis_memory_used":    'redis_memory_used_bytes',
-        "redis_memory_max":     'redis_memory_max_bytes',
-        "redis_clients":        'redis_connected_clients',
-        "redis_hits":           'increase(redis_keyspace_hits_total[5m])',
-        "redis_misses":         'increase(redis_keyspace_misses_total[5m])',
-        "kafka_lag":            'sum(kafka_consumergroup_lag)',
-        "kafka_throughput":     'sum(rate(kafka_topic_partition_current_offset[5m])) * 60',
-        "es_indexing_rate":     'sum(rate(elasticsearch_indices_indexing_index_total[5m]))',
-        "es_jvm_heap_used":     'sum(elasticsearch_jvm_memory_used_bytes{area="heap"})',
-        "es_jvm_heap_max":      'sum(elasticsearch_jvm_memory_max_bytes{area="heap"})',
+    query_candidates = {
+        "redis_memory_used": ["redis_memory_used_bytes"],
+        "redis_memory_max": ["redis_memory_max_bytes"],
+        "redis_clients": ["redis_connected_clients"],
+        "redis_hits": ["increase(redis_keyspace_hits_total[5m])"],
+        "redis_misses": ["increase(redis_keyspace_misses_total[5m])"],
+        "kafka_lag": [
+            "sum(kafka_consumergroup_lag)",
+            "sum(kafka_consumergroup_group_lag)",
+            "sum(kafka_consumergroup_lag_sum)",
+        ],
+        "kafka_throughput": ["sum(rate(kafka_topic_partition_current_offset[5m])) * 60"],
+        "es_indexing_rate": ["sum(rate(elasticsearch_indices_indexing_index_total[5m]))"],
+        "es_jvm_heap_used": ['sum(elasticsearch_jvm_memory_used_bytes{area="heap"})'],
+        "es_jvm_heap_max": ['sum(elasticsearch_jvm_memory_max_bytes{area="heap"})'],
     }
 
     raw: dict = {}
-    for key, query in queries.items():
-        try:
-            resp = await _HTTP_MIMIR.get(
-                f"{MIMIR_URL}/api/v1/query",
-                params={"query": query, **instant_params},
-            )
-            data = resp.json()
-            if data.get("status") == "success":
+    for key, candidates in query_candidates.items():
+        raw[key] = None
+        for query in candidates:
+            try:
+                data = await _mimir_query(
+                    "/api/v1/query",
+                    params={"query": query, **instant_params},
+                )
+                if not data:
+                    continue
+
                 results = data.get("data", {}).get("result", [])
-                raw[key] = float(results[0]["value"][1]) if results else None
-            else:
-                raw[key] = None
-        except Exception as e:
-            logger.warning("data-metrics Mimir 실패 [%s]: %s", key, e)
-            raw[key] = None
+                if results:
+                    raw[key] = float(results[0]["value"][1])
+                    break
+            except Exception as e:
+                logger.warning("data-metrics Mimir 실패 [%s]: %s", key, e)
 
     # Redis hit rate
     hits = raw.get("redis_hits")
