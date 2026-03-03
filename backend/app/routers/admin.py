@@ -663,7 +663,15 @@ async def get_pipeline_diagnose():
 
     # 2. 프롬프트 구성
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    WORKER_KR = {"news-producer": "뉴스 수집", "news-consumer": "MongoDB 저장", "elastic-consumer": "ES 인덱싱"}
+    WORKER_KR = {
+        "news-producer": "news collection",
+        "news-consumer": "mongodb storage",
+        "elastic-consumer": "es indexing",
+        "price-producer": "price collection",
+        "price-consumer": "price storage",
+        "email-worker": "email worker",
+        "ocr-worker": "ocr worker",
+    }
 
     lines = [f"파이프라인 진단 요청 ({now_str})", ""]
     for w in _PIPELINE_WORKERS:

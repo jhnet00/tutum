@@ -196,6 +196,7 @@ export default function AdminDashboard() {
 
   // Pods tab filter
   const [nsFilter,  setNsFilter]  = useState("all");
+  const [nodeFilter, setNodeFilter] = useState("all");
   const [logNs,     setLogNs]     = useState("tutum-app");
   const [logLevel,  setLogLevel]  = useState("ALL");
   const [logPod,    setLogPod]    = useState("");
@@ -303,22 +304,31 @@ export default function AdminDashboard() {
 
   // Pod status breakdown for pie
   const podStats = (() => {
-    const counts: Record<string, number> = { Running: 0, Pending: 0, Failed: 0, Other: 0 };
+    const counts: Record<string, number> = { Running: 0, Pending: 0, Failed: 0, Evicted: 0 };
+    const pendingStates = new Set(["Pending", "ContainerCreating", "PodInitializing"]);
+    const failedStates = new Set(["Failed", "Error", "CrashLoopBackOff", "OOMKilled", "ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError"]);
+
     pods.forEach(p => {
       if (p.status === "Running") counts.Running++;
-      else if (p.status === "Pending") counts.Pending++;
-      else if (p.status === "Failed") counts.Failed++;
-      else counts.Other++;
+      else if (p.status === "Evicted") counts.Evicted++;
+      else if (pendingStates.has(p.status)) counts.Pending++;
+      else if (failedStates.has(p.status)) counts.Failed++;
+      else counts.Failed++;
     });
+
     return [
       { name: "Running", value: counts.Running, color: C.emerald },
       { name: "Pending", value: counts.Pending, color: C.amber },
       { name: "Failed",  value: counts.Failed,  color: C.red },
-      { name: "기타",    value: counts.Other,   color: C.slate },
+      { name: "Evicted", value: counts.Evicted, color: C.slate },
     ].filter(d => d.value > 0);
   })();
 
-  const filteredPods = pods.filter(p => nsFilter === "all" || p.namespace === nsFilter);
+  const podNodeOptions = ["all", ...Array.from(new Set(pods.map(p => p.node).filter(Boolean))).sort()];
+  const filteredPods = pods.filter(p =>
+    (nsFilter === "all" || p.namespace === nsFilter) &&
+    (nodeFilter === "all" || p.node === nodeFilter)
+  );
   const filteredLogs = logs.filter(l =>
     (logLevel === "ALL" || l.level === logLevel) &&
     (!logPod || l.pod.includes(logPod))
@@ -520,7 +530,7 @@ export default function AdminDashboard() {
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                   {nodes.map(n => (
                     <Card key={n.name} className="cursor-pointer hover:border-white/20 transition"
-                          onClick={() => { setActiveTab("infra"); setNsFilter("all"); }}>
+                          onClick={() => { setActiveTab("infra"); setNsFilter("all"); setNodeFilter(n.name); }}>
                       <div className="flex items-center justify-between mb-3">
                         <div>
                           <p className="font-semibold text-sm">{n.name}</p>
@@ -601,14 +611,25 @@ export default function AdminDashboard() {
 
             {/* Pod table */}
             <Card>
-              <div className="flex items-center justify-between mb-3">
-                <SectionTitle>파드 목록</SectionTitle>
-                <select value={nsFilter} onChange={e => setNsFilter(e.target.value)}
-                        className="text-xs bg-white/[0.05] border border-white/[0.08] rounded-lg px-2 py-1 text-white/60 outline-none">
-                  {["all", "tutum-app", "tutum-data", "monitoring", "keda"].map(ns => (
-                    <option key={ns} value={ns}>{ns}</option>
-                  ))}
-                </select>
+              <div className="flex items-center justify-between mb-3 gap-2">
+                <SectionTitle>
+                  파드 목록
+                  {nodeFilter !== "all" && <span className="text-xs text-blue-400/80 ml-2">node: {nodeFilter}</span>}
+                </SectionTitle>
+                <div className="flex items-center gap-2">
+                  <select value={nsFilter} onChange={e => setNsFilter(e.target.value)}
+                          className="text-xs bg-white/[0.05] border border-white/[0.08] rounded-lg px-2 py-1 text-white/60 outline-none">
+                    {["all", "tutum-app", "tutum-data", "monitoring", "keda"].map(ns => (
+                      <option key={ns} value={ns}>{ns}</option>
+                    ))}
+                  </select>
+                  <select value={nodeFilter} onChange={e => setNodeFilter(e.target.value)}
+                          className="text-xs bg-white/[0.05] border border-white/[0.08] rounded-lg px-2 py-1 text-white/60 outline-none">
+                    {podNodeOptions.map(node => (
+                      <option key={node} value={node}>{node}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               {loadingPods ? <Skel h="h-40" /> : (
                 <div className="overflow-x-auto">
