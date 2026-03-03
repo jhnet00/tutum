@@ -185,4 +185,3 @@ async def get_cached_portfolio(user_id: str) -> dict | None:
 
 async def invalidate_portfolio_cache(user_id: str):
     await cache_delete(f"portfolio:{user_id}")
-
