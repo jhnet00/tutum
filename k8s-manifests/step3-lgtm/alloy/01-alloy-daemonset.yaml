@@ -23,35 +23,62 @@ data:
     }
 
     // ============================================
-    // 2. Metrics → Mimir (192.168.56.30:9009)
+    // 2. Target 레이블 변환 (scrape 전 수행)
     // ============================================
+    // discovery.relabel: __meta_kubernetes_* 레이블을 scrape 전 target 레이블로 변환
+    // (prometheus.relabel은 scrape 후 메트릭에만 적용 → __meta_* 접근 불가)
+    discovery.relabel "pod_meta" {
+      targets = discovery.kubernetes.pods.targets
 
-    // Relabeling: __meta_kubernetes_* → actual metric labels
-    prometheus.relabel "k8s_pods_meta" {
-      forward_to = [prometheus.remote_write.mimir.receiver]
+      // prometheus.io/scrape: "true" 파드만 수집
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+        action        = "keep"
+        regex         = "true"
+      }
 
-      // namespace label (required for namespace-scoped queries)
+      // 커스텀 메트릭 경로 (prometheus.io/path 어노테이션)
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+        action        = "replace"
+        target_label  = "__metrics_path__"
+        regex         = "(.+)"
+      }
+
+      // 커스텀 포트 (prometheus.io/port 어노테이션)
+      rule {
+        source_labels = ["__address__", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+        action        = "replace"
+        regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+        replacement   = "$1:$2"
+        target_label  = "__address__"
+      }
+
+      // namespace 레이블
       rule {
         source_labels = ["__meta_kubernetes_namespace"]
         target_label  = "namespace"
       }
 
-      // pod name label
+      // pod 레이블
       rule {
         source_labels = ["__meta_kubernetes_pod_name"]
         target_label  = "pod"
       }
 
-      // app label from pod labels
+      // app 레이블
       rule {
         source_labels = ["__meta_kubernetes_pod_label_app"]
         target_label  = "app"
       }
     }
 
+    // ============================================
+    // 3. Metrics → Mimir (192.168.56.30:9009)
+    // ============================================
     prometheus.scrape "k8s_pods" {
-      targets         = discovery.kubernetes.pods.targets
-      forward_to      = [prometheus.relabel.k8s_pods_meta.receiver]
+      targets         = discovery.relabel.pod_meta.output
+      forward_to      = [prometheus.remote_write.mimir.receiver]
       scrape_interval = "30s"
     }
 
@@ -68,7 +95,7 @@ data:
     }
 
     // ============================================
-    // 3. Logs → Loki (192.168.56.30:3100)
+    // 4. Logs → Loki (192.168.56.30:3100)
     // ============================================
     loki.source.kubernetes "k8s_logs" {
       targets    = discovery.kubernetes.pods.targets
@@ -82,7 +109,7 @@ data:
     }
 
     // ============================================
-    // 4. Traces → Tempo (192.168.56.30:4317)
+    // 5. Traces → Tempo (192.168.56.30:4317)
     // ============================================
     otelcol.receiver.otlp "default" {
       grpc { endpoint = "0.0.0.0:4317" }

@@ -257,7 +257,7 @@ async def get_metrics():
             '(rate(http_request_duration_seconds_bucket{namespace="tutum-app"}[2m]))) * 1000'
         ),
         "error_rate": (
-            'sum(rate(http_requests_total{namespace="tutum-app",status_code=~"5.."}[2m])) '
+            'sum(rate(http_requests_total{namespace="tutum-app",status=~"5.."}[2m])) '
             '/ sum(rate(http_requests_total{namespace="tutum-app"}[2m])) * 100'
         ),
         "kafka_lag": 'sum(kafka_consumergroup_lag)',
