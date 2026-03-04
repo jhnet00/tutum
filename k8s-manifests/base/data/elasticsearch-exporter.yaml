@@ -30,8 +30,6 @@ spec:
           args:
             - --es.uri=http://elasticsearch.tutum-data.svc.cluster.local:9200
             - --es.all
-            - --es.indices
-            - --es.cluster_settings
           ports:
             - containerPort: 9114
               name: metrics
@@ -46,17 +44,17 @@ spec:
             httpGet:
               path: /healthz
               port: 9114
-            initialDelaySeconds: 10
+            initialDelaySeconds: 30
             periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 3
+            timeoutSeconds: 10
+            failureThreshold: 5
           livenessProbe:
             httpGet:
               path: /healthz
               port: 9114
-            initialDelaySeconds: 20
-            periodSeconds: 15
-            timeoutSeconds: 5
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 10
             failureThreshold: 5
 ---
 apiVersion: v1
