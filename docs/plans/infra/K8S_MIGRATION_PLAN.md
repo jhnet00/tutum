@@ -35,7 +35,7 @@
 - Kafka (KRaft): 메시지 브로커
 - Elasticsearch + Kibana: 검색/로그
 - MinIO: 오브젝트 스토리지
-- Workers: price_producer, news_producer, indexer_consumer, price_consumer
+- Workers: price_producer, news_producer, elastic_consumer, price_consumer
 
 ---
 
@@ -86,7 +86,7 @@
 **1. 기존 아키텍처와의 정합성**
 
 - Kafka가 이미 메시지 브로커로 도입되어 있음
-- Workers(price_producer, news_producer, indexer_consumer, price_consumer)가 이미 이벤트 기반으로 동작
+- Workers(price_producer, news_producer, elastic_consumer, price_consumer)가 이미 이벤트 기반으로 동작
 - 추가 인프라 없이 현재 구조를 자연스럽게 MSA로 확장 가능
 
 **2. 서비스 간 결합도**
@@ -116,7 +116,7 @@
 | Price Producer   | 외부 시세 수집 → Kafka 발행 | Kafka Produce    | 외부 API (KIS, Upbit) |
 | Price Consumer   | Kafka 시세 → Redis 캐싱     | Kafka Consume    | Redis                 |
 | News Producer    | 뉴스 수집 → Kafka 발행      | Kafka Produce    | 외부 API              |
-| Indexer Consumer | Kafka 뉴스 → ES 인덱싱      | Kafka Consume    | Elasticsearch         |
+| Elastic Consumer | Kafka 뉴스 → ES 인덱싱      | Kafka Consume    | Elasticsearch         |
 | Chat Service     | AI 채팅 (Bedrock)           | SSE Stream       | Bedrock, ES(RAG)      |
 
 ### 2.5 Kafka 토픽 설계
@@ -124,7 +124,7 @@
 | 토픽     | Producer       | Consumer              | 파티션 | 용도           |
 | -------- | -------------- | --------------------- | ------ | -------------- |
 | `prices` | price_producer | price_consumer        | 3      | 실시간 시세    |
-| `news`   | news_producer  | indexer_consumer      | 3      | 뉴스 데이터    |
+| `news.raw` | news_producer  | elastic_consumer      | 3      | 뉴스 원문 데이터 |
 | `alerts` | backend        | (향후) notification   | 1      | 가격 알림      |
 | `audit`  | backend        | (향후) audit_consumer | 1      | 거래 감사 로그 |
 
@@ -188,7 +188,7 @@
   │  │   │  │ (KIS/Upbit API) │  │  │  │ Kafka→Redis 캐싱     │ │   │   │
   │  │   │  └─────────────────┘  │  │  └──────────────────────┘ │   │   │
   │  │   │  ┌─────────────────┐  │  │  ┌──────────────────────┐ │   │   │
-  │  │   │  │ News Producer   │──┼──┼─▶│ Indexer Consumer     │ │   │   │
+  │  │   │  │ News Producer   │──┼──┼─▶│ Elastic Consumer     │ │   │   │
   │  │   │  │ (뉴스 수집 API) │  │  │  │ Kafka→Elasticsearch  │ │   │   │
   │  │   │  └─────────────────┘  │  │  └──────────────────────┘ │   │   │
   │  │   └───────────────────────┘  └────────────────────────────┘   │   │
@@ -262,16 +262,16 @@
 │   │   │ Upbit API   │        │             │               │   │
 │   │   │ (암호화폐)   │        │             │               │   │
 │   │   └──────┬──────┘        └──────┬──────┘               │   │
-│   │          │ 10초 간격             │ 5분 간격              │   │
+│   │          │ 10초 간격             │ 연속 수집(지속 실행)   │   │
 │   │          ▼                      ▼                       │   │
 │   │   ┌────────────┐        ┌────────────┐                 │   │
-│   │   │Topic:prices│        │Topic: news │                 │   │
+│   │   │Topic:prices│        │Topic: news.raw │             │   │
 │   │   └──────┬─────┘        └──────┬─────┘                 │   │
 │   └──────────┼─────────────────────┼────────────────────────┘   │
 │              │                     │                             │
 │   ┌──────────┼─────────────────────┼────────────────────────┐   │
 │   │          ▼                     ▼                         │   │
-│   │   Price Consumer         Indexer Consumer                │   │
+│   │   Price Consumer         Elastic Consumer                │   │
 │   │   ┌─────────────┐       ┌─────────────┐                │   │
 │   │   │ Kafka 메시지 │       │ Kafka 메시지 │                │   │
 │   │   │ → Redis 캐싱 │       │ → ES 인덱싱  │                │   │
@@ -1940,15 +1940,15 @@ spec:
         value: "70"
 
 ---
-# KEDA ScaledObject - Indexer Consumer Worker
+# KEDA ScaledObject - Elastic Consumer Worker
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
-  name: indexer-consumer-scaler
+  name: elastic-consumer-scaler
   namespace: tutum-app
 spec:
   scaleTargetRef:
-    name: indexer-consumer
+    name: elastic-consumer
   pollingInterval: 15
   cooldownPeriod: 120
   minReplicaCount: 0 # Scale to Zero 허용
@@ -1957,8 +1957,8 @@ spec:
     - type: kafka
       metadata:
         bootstrapServers: kafka-bootstrap.tutum-data.svc.cluster.local:9092
-        consumerGroup: indexer-consumer-group
-        topic: news
+        consumerGroup: elastic-consumer-group
+        topic: news.raw
         lagThreshold: "50"
         offsetResetPolicy: latest
 ```

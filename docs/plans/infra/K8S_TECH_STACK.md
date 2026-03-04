@@ -31,7 +31,7 @@
 - Elasticsearch + Kibana: 검색/로그
 - MinIO: 오브젝트 스토리지
 - Harbor: 컨테이너 레지스트리
-- Workers: price_producer, news_producer, indexer_consumer, price_consumer
+- Workers: price_producer, news_producer, elastic_consumer, price_consumer
 
 ## 한눈에 보기
 
@@ -57,7 +57,7 @@
 │                                                                     │
 │  ┌── Workers (Kafka Pipeline) ────────────────────────────────┐    │
 │  │  Price Producer → Kafka → Price Consumer → Redis            │    │
-│  │  News Producer  → Kafka → Indexer Consumer → Elasticsearch  │    │
+│  │  News Producer  → Kafka → Elastic Consumer → Elasticsearch  │    │
 │  └────────────────────────────────────────────────────────────┘    │
 │                                                                     │
 │  ┌── Storage ─────────┐  ┌── Auto Scaling ──┐  ┌── Security ──┐  │
