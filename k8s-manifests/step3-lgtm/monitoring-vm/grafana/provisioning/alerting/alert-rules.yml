@@ -1,0 +1,254 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: tutum-alerts
+    folder: CloudDX Alerts
+    interval: 1m
+    rules:
+      - uid: ffe6ow30laolca
+        title: BackendDown
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: PAE45454D0EDB9216
+            model:
+              expr: 'up{job=~".*backend.*"} == 0'
+              refId: A
+          - refId: C
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: classic_conditions
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+        noDataState: OK
+        execErrState: OK
+        for: 1m
+        annotations:
+          summary: Backend pod is down
+        labels:
+          severity: critical
+
+      - uid: efe6ow326qcjkd
+        title: HighErrorRate
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: PAE45454D0EDB9216
+            model:
+              expr: 'rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05'
+              refId: A
+          - refId: C
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: classic_conditions
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        annotations:
+          summary: "High error rate detected (5xx > 5%)"
+        labels:
+          severity: critical
+
+      - uid: bfe6ow33n67swa
+        title: KafkaConsumerLag
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: PAE45454D0EDB9216
+            model:
+              expr: 'kafka_consumer_group_lag > 1000'
+              refId: A
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: classic_conditions
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+        noDataState: OK
+        execErrState: OK
+        for: 10m
+        annotations:
+          summary: "Kafka consumer lag is high (>1000)"
+        labels:
+          severity: warning
+
+      - uid: bfe6ow353m328d
+        title: RedisMemoryHigh
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: PAE45454D0EDB9216
+            model:
+              expr: 'redis_memory_used_bytes / redis_memory_max_bytes > 0.8'
+              refId: A
+          - refId: C
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: classic_conditions
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        annotations:
+          summary: "Redis memory usage is high (>80%)"
+        labels:
+          severity: warning
+
+      - uid: afe6ow36mjuo0f
+        title: HighLatency
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: PAE45454D0EDB9216
+            model:
+              # 멘토 피드백: P95 레이턴시 100ms 이상 = 심각
+              expr: 'histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 0.1'
+              refId: A
+          - refId: C
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: classic_conditions
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        annotations:
+          summary: "High latency detected (P95 > 100ms)"
+        labels:
+          severity: warning
+
+      - uid: dfe6ow382zpxcd
+        title: NodeDiskFull
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: PAE45454D0EDB9216
+            model:
+              expr: '(1 - node_filesystem_avail_bytes / node_filesystem_size_bytes) > 0.85'
+              refId: A
+          - refId: C
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: classic_conditions
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        annotations:
+          summary: "Node disk usage is high (>85%)"
+        labels:
+          severity: warning
+
+      - uid: bfeyrytemblkwf
+        title: NodeCPUHigh
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: PAE45454D0EDB9216
+            model:
+              # 노드별 CPU 사용률 80% 초과 시 알림
+              expr: '100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80'
+              refId: A
+          - refId: C
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: classic_conditions
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        annotations:
+          summary: "Node CPU usage is high (> 80%) on {{ $labels.instance }}"
+        labels:
+          severity: warning
+
+      - uid: dfeyrz5mjftvkf
+        title: NodeMemoryHigh
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: PAE45454D0EDB9216
+            model:
+              # 노드별 메모리 사용률 85% 초과 시 알림
+              expr: '(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85'
+              refId: A
+          - refId: C
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: classic_conditions
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+        noDataState: OK
+        execErrState: OK
+        for: 5m
+        annotations:
+          summary: "Node memory usage is high (> 85%) on {{ $labels.instance }}"
+        labels:
+          severity: warning
+
+contactPoints:
+  - orgId: 1
+    name: slack-alerts
+    receivers:
+      - uid: slack-alerts
+        type: slack
+        disableResolveMessage: false
+
+policies:
+  - receiver: slack-alerts
+    group_by: [grafana_folder, alertname]

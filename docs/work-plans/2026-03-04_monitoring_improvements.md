@@ -59,32 +59,32 @@
 
 | # | 작업 | 파일 | 상태 |
 |---|------|------|------|
-| 1 | 에러율 % → **건수(Count)** 로 변경 | `admin.py`, `page.tsx` | `[ ]` |
-| 2 | 에러 시계열 그래프 추가 (x:시간, y:건수, 400/500 구분) | `admin.py`, `page.tsx` | `[ ]` |
-| 3 | 파드 목록 age → startTime(절대 시각) 으로 변경 | `admin.py`, `page.tsx` | `[ ]` |
-| 4 | 파드 downtime 추가 (restartCount > 0 이면 마지막 재시작 시각 기반) | `admin.py`, `page.tsx` | `[ ]` |
+| 1 | 에러율 % → **건수(Count)** 로 변경 | `admin.py`, `page.tsx` | `[x]` |
+| 2 | 에러 시계열 그래프 추가 (x:시간, y:건수, 400/500 구분) | `admin.py`, `page.tsx` | `[x]` |
+| 3 | 파드 목록 age → startTime(절대 시각) 으로 변경 | `admin.py`, `page.tsx` | `[x]` |
+| 4 | 파드 downtime 추가 (restartCount > 0 이면 마지막 재시작 시각 기반) | `admin.py`, `page.tsx` | `[x]` |
 
 ### 🟡 Priority 2 — Pipeline 탭 지표 보강
 
 | # | 작업 | 파일 | 상태 |
 |---|------|------|------|
-| 5 | Redis 커넥션 수 추가 (`redis INFO clients` → `connected_clients`) | `admin.py`, `page.tsx` | `[ ]` |
-| 6 | Elasticsearch 메모리 사용량 추가 (`/_nodes/stats` JVM heap) | `admin.py`, `page.tsx` | `[ ]` |
+| 5 | Redis 커넥션 수 추가 (`redis INFO clients` → `connected_clients`) | `admin.py`, `page.tsx` | `[x]` |
+| 6 | Elasticsearch 메모리 사용량 추가 (`/_nodes/stats` JVM heap) | `admin.py`, `page.tsx` | `[x]` |
 | 7 | Kafka lag 표시에 **근거 코멘트** 추가 (UI 툴팁 or 발표 자료) | `page.tsx` / PPT | `[ ]` |
 
 ### 🟡 Priority 3 — Infra 탭 시계열
 
 | # | 작업 | 파일 | 상태 |
 |---|------|------|------|
-| 8 | 노드별 CPU/Memory **24시간 시계열 그래프** (Mimir query_range) | `admin.py`, `page.tsx` | `[ ]` |
+| 8 | 노드별 CPU/Memory **24시간 시계열 그래프** (Mimir query_range) | `admin.py`, `page.tsx` | `[x]` |
 | 9 | 레이턴시 임계치 100ms 기준선 그래프에 표시 | `page.tsx` | `[ ]` |
 
 ### 🟢 Priority 4 — 알림 (Alerting)
 
 | # | 작업 | 파일 | 상태 |
 |---|------|------|------|
-| 10 | CPU/Memory 임계치 초과 시 Slack 알림 (Grafana Alerting or Alloy rule) | k8s-manifests / Grafana | `[ ]` |
-| 11 | P95 레이턴시 > 100ms 알림 | k8s-manifests / Grafana | `[ ]` |
+| 10 | CPU/Memory 임계치 초과 시 Slack 알림 (Grafana Alerting or Alloy rule) | k8s-manifests / Grafana | `[x]` |
+| 11 | P95 레이턴시 > 100ms 알림 | k8s-manifests / Grafana | `[x]` |
 
 ### 🔵 Priority 5 — 보안 강화
 
