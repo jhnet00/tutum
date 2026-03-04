@@ -1,0 +1,85 @@
+# MongoDB 일일 백업 CronJob
+# 매일 02:00 KST (17:00 UTC) 실행
+# mongodump → gzip → MinIO (tutum-backups/mongodb/YYYY-MM-DD/)
+# 보관: 30일 (MinIO lifecycle 정책으로 관리)
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mongodb-backup
+  namespace: tutum-data
+  labels:
+    app: mongodb-backup
+    app.kubernetes.io/part-of: tutum
+spec:
+  schedule: "0 17 * * *"   # 02:00 KST
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: mongodb-backup
+              image: mongo:7.0
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -e
+                  DATE=$(date +%Y-%m-%d)
+                  BACKUP_DIR="/tmp/mongodb-backup-${DATE}"
+
+                  echo "[$(date)] MongoDB 백업 시작: ${DATE}"
+
+                  # mongodump (replica set primary)
+                  mongodump \
+                    --host "mongodb-0.mongodb-headless.tutum-data.svc.cluster.local:27017" \
+                    --out "${BACKUP_DIR}" \
+                    --gzip
+
+                  echo "[$(date)] mongodump 완료"
+
+                  # mc 설치 및 MinIO 업로드
+                  curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
+                  chmod +x /usr/local/bin/mc
+
+                  mc alias set minio \
+                    http://minio.tutum-storage.svc.cluster.local:9000 \
+                    "${MINIO_ROOT_USER}" \
+                    "${MINIO_ROOT_PASSWORD}"
+
+                  # 버킷 생성 (없으면)
+                  mc mb --ignore-existing minio/tutum-backups
+
+                  # 업로드
+                  mc cp --recursive "${BACKUP_DIR}" "minio/tutum-backups/mongodb/${DATE}/"
+
+                  echo "[$(date)] MinIO 업로드 완료: tutum-backups/mongodb/${DATE}/"
+
+                  # 30일 이전 백업 정리
+                  mc rm --recursive --force --older-than 720h \
+                    "minio/tutum-backups/mongodb/" 2>/dev/null || true
+
+                  echo "[$(date)] MongoDB 백업 완료"
+              env:
+                - name: MINIO_ROOT_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-secret
+                      key: MINIO_ROOT_USER
+                - name: MINIO_ROOT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-secret
+                      key: MINIO_ROOT_PASSWORD
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi

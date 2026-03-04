@@ -1,0 +1,114 @@
+# etcd 일일 스냅샷 백업 CronJob
+# 매일 02:30 KST (17:30 UTC) 실행
+# etcdctl snapshot save → gzip → MinIO (tutum-backups/etcd/YYYY-MM-DD/)
+# 보관: 30일
+
+# MinIO 접근 크리덴셜 (kube-system 네임스페이스용 복사본)
+# minio-secret은 tutum-storage에 있어 직접 참조 불가 — kube-system에 별도 보관
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-backup-secret
+  namespace: kube-system
+type: Opaque
+stringData:
+  MINIO_ROOT_USER: minioadmin
+  MINIO_ROOT_PASSWORD: minioadmin
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etcd-backup
+  namespace: kube-system
+  labels:
+    app: etcd-backup
+    app.kubernetes.io/part-of: tutum
+spec:
+  schedule: "30 17 * * *"   # 02:30 KST
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          # cp-1 노드에서만 실행 (etcd 인증서 hostPath 접근)
+          nodeSelector:
+            kubernetes.io/hostname: cp-1
+          tolerations:
+            - key: node-role.kubernetes.io/control-plane
+              operator: Exists
+              effect: NoSchedule
+          hostNetwork: true
+          volumes:
+            - name: etcd-certs
+              hostPath:
+                path: /etc/kubernetes/pki/etcd
+                type: Directory
+          containers:
+            - name: etcd-backup
+              image: registry.k8s.io/etcd:3.5.10-0
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  DATE=$(date +%Y-%m-%d)
+                  SNAPSHOT="/tmp/etcd-snapshot-${DATE}.db"
+
+                  echo "[$(date)] etcd 스냅샷 시작: ${DATE}"
+
+                  ETCDCTL_API=3 etcdctl snapshot save "${SNAPSHOT}" \
+                    --endpoints=https://127.0.0.1:2379 \
+                    --cacert=/etc/etcd-certs/ca.crt \
+                    --cert=/etc/etcd-certs/healthcheck-client.crt \
+                    --key=/etc/etcd-certs/healthcheck-client.key
+
+                  echo "[$(date)] etcd 스냅샷 완료: $(du -sh ${SNAPSHOT})"
+
+                  gzip "${SNAPSHOT}"
+
+                  # mc 설치 및 MinIO 업로드
+                  wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O /usr/local/bin/mc
+                  chmod +x /usr/local/bin/mc
+
+                  mc alias set minio \
+                    http://minio.tutum-storage.svc.cluster.local:9000 \
+                    "${MINIO_ROOT_USER}" \
+                    "${MINIO_ROOT_PASSWORD}"
+
+                  mc mb --ignore-existing minio/tutum-backups
+
+                  mc cp "${SNAPSHOT}.gz" "minio/tutum-backups/etcd/${DATE}/"
+
+                  echo "[$(date)] MinIO 업로드 완료: tutum-backups/etcd/${DATE}/"
+
+                  # 30일 이전 백업 정리
+                  mc rm --recursive --force --older-than 720h \
+                    "minio/tutum-backups/etcd/" 2>/dev/null || true
+
+                  echo "[$(date)] etcd 백업 완료"
+              env:
+                - name: MINIO_ROOT_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-backup-secret
+                      key: MINIO_ROOT_USER
+                - name: MINIO_ROOT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-backup-secret
+                      key: MINIO_ROOT_PASSWORD
+              volumeMounts:
+                - name: etcd-certs
+                  mountPath: /etc/etcd-certs
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 300m
+                  memory: 256Mi

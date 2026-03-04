@@ -34,3 +34,5 @@ resources:
   - autoscaling/keda-scaledobjects.yaml
   - autoscaling/pdb.yaml
   - security/network-policy.yaml
+  - backup/mongodb-backup.yaml
+  - backup/etcd-backup.yaml
