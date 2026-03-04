@@ -1124,48 +1124,71 @@ TEMPO_URL = os.getenv("TEMPO_URL", "http://192.168.0.230:3200")
 @router.get("/traces")
 async def get_traces(limit: int = 20, min_duration_ms: int = 50):
     """
-    Tempo에서 최근 슬로우 요청 트레이스 조회.
-    service.name=tutum-backend, 최근 1시간 내.
+    Tempo에서 트레이스 조회.
+    - traces: 느린 요청 (>= min_duration_ms)
+    - error_traces: 5xx 에러가 발생한 트레이스
     """
     end_s = int(datetime.now(timezone.utc).timestamp())
     start_s = end_s - 3600  # 1시간
 
-    try:
-        resp = await _HTTP_MISC.get(
-            f"{TEMPO_URL}/api/search",
-            params={
-                "service.name": "tutum-backend",
-                "limit":         limit,
-                "start":         start_s,
-                "end":           end_s,
-                "minDuration":   f"{min_duration_ms}ms",
-            },
-        )
-        if resp.status_code != 200:
-            return {"traces": [], "available": False}
-        data = resp.json()
-    except Exception as e:
-        logger.warning("Tempo 조회 실패: %s", e)
-        return {"traces": [], "available": False}
-
-    traces = []
-    for t in data.get("traces", []):
-        duration_ms = round(int(t.get("durationMs", 0)))
-        start_time_ms = int(t.get("startTimeUnixNano", 0)) // 1_000_000
-        trace_id = t.get("traceID", "")
-        grafana_url = (
+    def _grafana_url(trace_id: str) -> str:
+        return (
             "http://192.168.0.230:3000/explore?datasource=tempo&left="
             "{\"queries\":[{\"refId\":\"A\",\"datasource\":{\"type\":\"tempo\"},"
             f"\"queryType\":\"traceql\",\"query\":\"{trace_id}\",\"tableType\":\"traces\"}}]}}"
         )
-        traces.append({
-            "traceID": trace_id,
-            "rootServiceName": t.get("rootServiceName", "tutum-backend"),
-            "rootTraceName": t.get("rootTraceName", "-"),
-            "durationMs": duration_ms,
-            "startTimeMs": start_time_ms,
-            "grafana_url": grafana_url,
-        })
 
-    traces.sort(key=lambda x: x["durationMs"], reverse=True)
-    return {"traces": traces, "available": True}
+    def _format(t: dict, is_error: bool = False) -> dict:
+        duration_ms = round(int(t.get("durationMs", 0)))
+        start_time_ms = int(t.get("startTimeUnixNano", 0)) // 1_000_000
+        trace_id = t.get("traceID", "")
+        # rootTraceName 예: "GET /api/v1/news" → 경로/메서드 분리
+        root_name = t.get("rootTraceName", "-")
+        return {
+            "traceID":         trace_id,
+            "rootServiceName": t.get("rootServiceName", "tutum-backend"),
+            "rootTraceName":   root_name,
+            "durationMs":      duration_ms,
+            "startTimeMs":     start_time_ms,
+            "isError":         is_error,
+            "grafana_url":     _grafana_url(trace_id),
+        }
+
+    async def _search(params: dict) -> list[dict]:
+        try:
+            resp = await _HTTP_MISC.get(f"{TEMPO_URL}/api/search", params=params)
+            if resp.status_code != 200:
+                return []
+            return resp.json().get("traces", [])
+        except Exception:
+            return []
+
+    base_params = {"service.name": "tutum-backend", "start": start_s, "end": end_s}
+
+    # 느린 요청 트레이스 (>= min_duration_ms)
+    slow_raw = await _search({**base_params, "limit": limit, "minDuration": f"{min_duration_ms}ms"})
+    # 5xx 에러 트레이스 — TraceQL 사용
+    error_raw = await _search({**base_params, "q": '{span.http.status_code >= 500}', "limit": 10})
+    # 4xx 클라이언트 에러 트레이스
+    client_error_raw = await _search({**base_params, "q": '{span.http.status_code >= 400 && span.http.status_code < 500}', "limit": 5})
+
+    error_ids = {t.get("traceID") for t in error_raw}
+    client_error_ids = {t.get("traceID") for t in client_error_raw}
+
+    traces = sorted(
+        [_format(t, is_error=t.get("traceID") in error_ids) for t in slow_raw],
+        key=lambda x: x["durationMs"], reverse=True,
+    )
+    error_traces = [_format(t, is_error=True) for t in error_raw]
+    error_traces.sort(key=lambda x: x["startTimeMs"], reverse=True)
+
+    client_error_traces = [_format(t, is_error=False) for t in client_error_raw
+                           if t.get("traceID") not in error_ids]
+    client_error_traces.sort(key=lambda x: x["startTimeMs"], reverse=True)
+
+    return {
+        "traces":             traces,
+        "error_traces":       error_traces,       # 5xx — 서버 에러
+        "client_error_traces": client_error_traces,  # 4xx — 클라이언트 에러
+        "available":          True,
+    }

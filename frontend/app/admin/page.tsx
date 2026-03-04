@@ -45,7 +45,8 @@ type DataMetrics = {
   kafka:         { consumer_lag: number|null; throughput_msg_per_min: number|null; available: boolean };
   elasticsearch: { indexing_rate: number|null; jvm_heap_used_gb: number|null; jvm_heap_max_gb: number|null; jvm_heap_pct: number|null; available: boolean };
 };
-type TraceEntry = { traceID: string; rootServiceName: string; rootTraceName: string; durationMs: number; startTimeMs: number; grafana_url: string };
+type TraceEntry = { traceID: string; rootServiceName: string; rootTraceName: string; durationMs: number; startTimeMs: number; isError: boolean; grafana_url: string };
+type TracesData = { traces: TraceEntry[]; error_traces: TraceEntry[]; client_error_traces: TraceEntry[]; available: boolean };
 
 // ─── Worker meta ──────────────────────────────────────────────────────────────
 const WORKER_META: Record<string, { label: string; desc: string; icon: string; color: string; group: string }> = {
@@ -197,7 +198,7 @@ export default function AdminDashboard() {
   const [dataMetrics,  setDataMetrics]  = useState<DataMetrics | null>(null);
   const [nodeHistory,  setNodeHistory]  = useState<{ cpu: Record<string, {t:string;v:number|null}[]>; memory: Record<string, {t:string;v:number|null}[]>; available: boolean } | null>(null);
   const [loadingNodeH, setLoadingNodeH] = useState(true);
-  const [traces,       setTraces]       = useState<TraceEntry[]>([]);
+  const [tracesData,   setTracesData]   = useState<TracesData | null>(null);
   const [pipeline,     setPipeline]     = useState<PipelineData | null>(null);
   const [logs,         setLogs]         = useState<LogEntry[]>([]);
   const [diagnosis,    setDiagnosis]    = useState<Diagnosis | null>(null);
@@ -299,7 +300,7 @@ export default function AdminDashboard() {
   const fetchTraces = useCallback(async () => {
     try {
       const r = await fetch(`${API_BASE}/api/v1/admin/traces?limit=20&min_duration_ms=50`);
-      if (r.ok) { const d = await r.json(); setTraces(d.traces || []); }
+      if (r.ok) { setTracesData(await r.json()); }
       else showError("트레이스 조회 실패");
     } catch (e) { console.error("fetchTraces", e); }
     finally { setLoadingTraces(false); }
@@ -1017,62 +1018,116 @@ export default function AdminDashboard() {
         {/* ══════════════════════════════════════════════════════════════════
             TAB: TRACES
         ══════════════════════════════════════════════════════════════════ */}
-        {activeTab === "traces" && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-white/40">tutum-backend 서비스 · 최근 1시간 · 50ms 이상 · 60초 자동갱신</p>
-              <a href={`${GRAFANA}/explore`} target="_blank" rel="noopener noreferrer"
-                 className="text-xs text-blue-400 hover:underline">Grafana Tempo →</a>
-            </div>
-
-            <Card className="p-0 overflow-hidden">
-              {loadingTraces ? (
-                <div className="p-4 space-y-2">{[...Array(8)].map((_, i) => <Skel key={i} h="h-8" />)}</div>
-              ) : traces.length === 0 ? (
-                <div className="h-48 flex flex-col items-center justify-center text-white/20 gap-2">
-                  <span className="text-3xl">∿</span>
-                  <p className="text-sm">트레이스 없음</p>
-                  <p className="text-xs text-white/15">OTel이 방금 활성화됐습니다. 요청 후 잠시 기다려 주세요.</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
+        {activeTab === "traces" && (() => {
+          const TraceTable = ({ rows, emptyMsg }: { rows: TraceEntry[]; emptyMsg: string }) => (
+            rows.length === 0
+              ? <p className="text-xs text-white/20 py-4 text-center">{emptyMsg}</p>
+              : <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-white/30 text-left border-b border-white/[0.06] bg-white/[0.02]">
-                        {["Duration", "엔드포인트", "Trace ID", "시각"].map(h => (
-                          <th key={h} className="px-4 py-2 font-medium">{h}</th>
+                        {["상태", "Duration", "엔드포인트 (경로)", "Trace ID", "시각"].map(h => (
+                          <th key={h} className="px-3 py-2 font-medium">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {traces.map(t => {
+                      {rows.map(t => {
                         const dColor = t.durationMs > 500 ? C.red : t.durationMs > 200 ? C.amber : C.emerald;
                         const ts = new Date(t.startTimeMs).toLocaleTimeString("ko-KR", { hour12: false });
                         return (
-                          <tr key={t.traceID} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition">
-                            <td className="px-4 py-2">
-                              <span className="font-mono font-bold text-sm" style={{ color: dColor }}>
-                                {t.durationMs}ms
+                          <tr key={t.traceID} className={`border-b border-white/[0.03] hover:bg-white/[0.02] transition ${t.isError ? "bg-red-500/[0.04]" : ""}`}>
+                            <td className="px-3 py-2">
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${t.isError ? "bg-red-500/20 text-red-400" : "bg-emerald-500/20 text-emerald-400"}`}>
+                                {t.isError ? "5xx" : "OK"}
                               </span>
                             </td>
-                            <td className="px-4 py-2 font-mono text-white/70 max-w-[300px] truncate">{t.rootTraceName}</td>
-                            <td className="px-4 py-2">
+                            <td className="px-3 py-2">
+                              <span className="font-mono font-bold" style={{ color: dColor }}>{t.durationMs}ms</span>
+                            </td>
+                            <td className="px-3 py-2 font-mono text-white/70 max-w-[280px] truncate" title={t.rootTraceName}>
+                              {t.rootTraceName}
+                            </td>
+                            <td className="px-3 py-2">
                               <a href={t.grafana_url} target="_blank" rel="noopener noreferrer"
-                                 className="font-mono text-blue-400 hover:underline truncate block max-w-[140px]">
-                                {t.traceID.slice(0, 16)}…
+                                 className="font-mono text-blue-400 hover:underline truncate block max-w-[120px]" title="Grafana Tempo에서 전체 trace 보기">
+                                {t.traceID.slice(0, 14)}…
                               </a>
                             </td>
-                            <td className="px-4 py-2 text-white/30 font-mono">{ts}</td>
+                            <td className="px-3 py-2 text-white/30 font-mono">{ts}</td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
                 </div>
+          );
+
+          return (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-white/40">tutum-backend · 최근 1시간 · 60초 자동갱신</p>
+                <a href={`${GRAFANA}/explore`} target="_blank" rel="noopener noreferrer"
+                   className="text-xs text-blue-400 hover:underline">Grafana Tempo →</a>
+              </div>
+
+              {loadingTraces ? (
+                <div className="space-y-2">{[...Array(6)].map((_, i) => <Skel key={i} h="h-8" />)}</div>
+              ) : !tracesData?.available ? (
+                <Card>
+                  <div className="h-32 flex flex-col items-center justify-center text-white/20 gap-2">
+                    <span className="text-3xl">∿</span>
+                    <p className="text-sm">Tempo 연결 불가</p>
+                    <p className="text-xs text-white/15">OTel이 활성화됐는지, Alloy → Tempo 파이프라인을 확인해 주세요.</p>
+                  </div>
+                </Card>
+              ) : (
+                <>
+                  {/* 5xx 에러 트레이스 — "어디서 끊겼는지" 핵심 */}
+                  <Card className="border border-red-500/20 p-0 overflow-hidden">
+                    <div className="px-4 pt-3 pb-2 border-b border-white/[0.04]">
+                      <SectionTitle>
+                        서버 에러 트레이스 (5xx)
+                        <Info tip={"요청이 서버 에러로 끊긴 trace 목록\n엔드포인트 컬럼 = 에러가 발생한 경로\nTrace ID 클릭 → Grafana Tempo에서 span tree 전체 확인"} />
+                      </SectionTitle>
+                    </div>
+                    <div className="px-4 pb-3">
+                      <TraceTable rows={tracesData.error_traces} emptyMsg="최근 1시간 5xx 에러 없음 ✓" />
+                    </div>
+                  </Card>
+
+                  {/* 4xx 클라이언트 에러 */}
+                  {(tracesData.client_error_traces?.length ?? 0) > 0 && (
+                    <Card className="border border-amber-500/20 p-0 overflow-hidden">
+                      <div className="px-4 pt-3 pb-2 border-b border-white/[0.04]">
+                        <SectionTitle>
+                          클라이언트 에러 트레이스 (4xx)
+                          <Info tip={"잘못된 요청·인증 실패 등 클라이언트 측 에러\n4xx 급증 = API 오용 또는 클라이언트 버그 의심"} />
+                        </SectionTitle>
+                      </div>
+                      <div className="px-4 pb-3">
+                        <TraceTable rows={tracesData.client_error_traces} emptyMsg="4xx 에러 없음" />
+                      </div>
+                    </Card>
+                  )}
+
+                  {/* 느린 요청 전체 */}
+                  <Card className="p-0 overflow-hidden">
+                    <div className="px-4 pt-3 pb-2 border-b border-white/[0.04]">
+                      <SectionTitle>
+                        전체 트레이스 (50ms 이상)
+                        <Info tip={"응답시간 50ms 이상 요청 전체\n빨강 > 500ms (심각), 주황 > 200ms, 초록 정상\nTrace ID → Grafana에서 span별 상세 경로 확인"} />
+                      </SectionTitle>
+                    </div>
+                    <div className="px-4 pb-3">
+                      <TraceTable rows={tracesData.traces} emptyMsg="느린 요청 없음 (모든 요청 < 50ms)" />
+                    </div>
+                  </Card>
+                </>
               )}
-            </Card>
-          </div>
-        )}
+            </div>
+          );
+        })()}
 
         {/* ══════════════════════════════════════════════════════════════════
             TAB: AI
