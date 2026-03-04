@@ -70,14 +70,14 @@
 |---|------|------|------|
 | 5 | Redis 커넥션 수 추가 (`redis INFO clients` → `connected_clients`) | `admin.py`, `page.tsx` | `[x]` |
 | 6 | Elasticsearch 메모리 사용량 추가 (`/_nodes/stats` JVM heap) | `admin.py`, `page.tsx` | `[x]` |
-| 7 | Kafka lag 표시에 **근거 코멘트** 추가 (UI 툴팁 or 발표 자료) | `page.tsx` / PPT | `[ ]` |
+| 7 | Kafka lag 표시에 **근거 코멘트** 추가 (UI 툴팁 or 발표 자료) | `page.tsx` / PPT | `[x]` |
 
 ### 🟡 Priority 3 — Infra 탭 시계열
 
 | # | 작업 | 파일 | 상태 |
 |---|------|------|------|
 | 8 | 노드별 CPU/Memory **24시간 시계열 그래프** (Mimir query_range) | `admin.py`, `page.tsx` | `[x]` |
-| 9 | 레이턴시 임계치 100ms 기준선 그래프에 표시 | `page.tsx` | `[ ]` |
+| 9 | 레이턴시 임계치 100ms 기준선 그래프에 표시 | `page.tsx` | `[x]` |
 
 ### 🟢 Priority 4 — 알림 (Alerting)
 

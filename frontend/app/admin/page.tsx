@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, type ComponentProps } from "r
 import {
   LineChart, Line, AreaChart, Area, BarChart, Bar,
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer,
+  Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -511,6 +511,9 @@ export default function AdminDashboard() {
                     <Legend wrapperStyle={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }} />
                     <Line yAxisId="l" type="monotone" dataKey="rps" name="RPS" stroke={C.blue}   strokeWidth={2} dot={false} isAnimationActive={false} />
                     <Line yAxisId="r" type="monotone" dataKey="lat" name="P95 ms" stroke={C.violet} strokeWidth={2} dot={false} isAnimationActive={false} />
+                    {/* 멘토 피드백: P95 레이턴시 100ms 이상 = 심각 */}
+                    <ReferenceLine yAxisId="r" y={100} stroke={C.red} strokeDasharray="4 2"
+                      label={{ value: "100ms 임계치", position: "insideTopRight", fill: C.red, fontSize: 10 }} />
                   </LineChart>
                 </ResponsiveContainer>
               )}
@@ -536,7 +539,10 @@ export default function AdminDashboard() {
                 )}
               </Card>
               <Card>
-                <SectionTitle>Kafka Consumer Lag</SectionTitle>
+                <SectionTitle>Kafka Consumer Lag
+                  <span className="ml-2 text-xs text-white/30 font-normal cursor-help"
+                    title="Consumer Lag = 미처리 메시지 수&#10;lag 급증 → 뉴스 수집/인덱싱 지연&#10;lag 고착 → consumer 장애 (파이프라인 중단)&#10;임계치: lag > 1000 시 Slack 알림">ⓘ</span>
+                </SectionTitle>
                 {loadingMetrics ? <Skel h="h-36" /> : metricsChartData.length === 0 ? (
                   <div className="h-36 flex items-center justify-center text-white/20 text-sm">데이터 없음</div>
                 ) : (
