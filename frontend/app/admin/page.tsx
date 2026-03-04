@@ -130,7 +130,9 @@ function Info({ tip }: { tip: string }) {
   const calcPos = () => {
     if (spanRef.current) {
       const r = spanRef.current.getBoundingClientRect();
-      setPos({ x: r.left, y: r.top });
+      const tooltipW = 288; // w-72
+      const x = Math.min(r.left, window.innerWidth - tooltipW - 12);
+      setPos({ x: Math.max(8, x), y: r.top });
     }
   };
 
