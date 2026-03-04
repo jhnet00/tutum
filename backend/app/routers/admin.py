@@ -121,17 +121,18 @@ def _get_k8s_clients():
 
 # ─── 헬퍼 ─────────────────────────────────────────────────────────────────────
 
-def _pod_age(creation_ts) -> str:
-    if creation_ts is None:
-        return "-"
-    now = datetime.now(timezone.utc)
-    delta = now - creation_ts
-    s = int(delta.total_seconds())
-    if s < 3600:
-        return f"{s // 60}m"
-    if s < 86400:
-        return f"{s // 3600}h"
-    return f"{s // 86400}d"
+def _pod_downtime_sec(container_statuses) -> int:
+    """마지막 재시작 시 다운되어 있었던 시간(초). 재시작 이력 없으면 0."""
+    for cs in container_statuses:
+        if cs.last_state and cs.last_state.terminated:
+            finished = cs.last_state.terminated.finished_at
+            started = None
+            if cs.state and cs.state.running:
+                started = cs.state.running.started_at
+            if finished and started:
+                delta = (started - finished).total_seconds()
+                return max(0, int(delta))
+    return 0
 
 
 def _node_role(node) -> str:
@@ -259,21 +260,25 @@ async def get_pods(namespace: str = "all"):
                     break
             display_status = waiting_reason if waiting_reason else phase
 
-            # 재시작 횟수
-            restarts = sum(cs.restart_count for cs in container_statuses)
-
             # Ready 컨테이너 수
             ready_count = sum(1 for cs in container_statuses if cs.ready)
             total_count = len(container_statuses)
+
+            # 기동 시각 (ISO)
+            start_ts = pod.status.start_time or pod.metadata.creation_timestamp
+            start_time = start_ts.isoformat() if start_ts else "-"
+
+            # 다운타임 (초): 마지막 재시작 전 죽어있던 시간
+            downtime_sec = _pod_downtime_sec(container_statuses)
 
             result.append({
                 "name": pod.metadata.name,
                 "namespace": ns,
                 "status": display_status,
-                "restarts": restarts,
                 "node": pod.spec.node_name or "-",
-                "age": _pod_age(pod.metadata.creation_timestamp),
                 "ready": f"{ready_count}/{total_count}",
+                "start_time": start_time,
+                "downtime_sec": downtime_sec,
             })
 
         return {"pods": result}
@@ -390,6 +395,18 @@ async def get_metrics():
             "sum(kafka_consumergroup_lag)",
             "sum(kafka_consumergroup_group_lag)",
             "sum(kafka_consumergroup_lag_sum)",
+        ],
+        "error_5xx": [
+            'sum(increase(http_requests_total{namespace="tutum-app",status=~"5.."}[5m]))',
+            'sum(increase(http_requests_total{status=~"5.."}[5m]))',
+            'sum(increase(http_requests_total{namespace="tutum-app",status_code=~"5.."}[5m]))',
+            'sum(increase(http_requests_total{status_code=~"5.."}[5m]))',
+        ],
+        "error_4xx": [
+            'sum(increase(http_requests_total{namespace="tutum-app",status=~"4.."}[5m]))',
+            'sum(increase(http_requests_total{status=~"4.."}[5m]))',
+            'sum(increase(http_requests_total{namespace="tutum-app",status_code=~"4.."}[5m]))',
+            'sum(increase(http_requests_total{status_code=~"4.."}[5m]))',
         ],
     }
 
@@ -661,7 +678,7 @@ _PIPELINE_WORKERS = _ALL_WORKERS
 async def _collect_pipeline_data() -> dict:
     """파이프라인 전체 워커 상태 수집 (pipeline / pipeline-diagnose 공용)."""
     out: dict = {
-        "workers": {w: {"status": "Unknown", "restarts": 0, "age": "-", "running": False} for w in _ALL_WORKERS},
+        "workers": {w: {"status": "Unknown", "start_time": "-", "downtime_sec": 0, "running": False} for w in _ALL_WORKERS},
         "mongodb": {"news_total": 0, "news_last_1h": 0, "available": False},
         "elasticsearch": {"news_docs": 0, "available": False},
         "recent_logs": {w: [] for w in _ALL_WORKERS},
@@ -683,15 +700,17 @@ async def _collect_pipeline_data() -> dict:
                         if cs.state and cs.state.waiting:
                             waiting_reason = cs.state.waiting.reason
                             break
-                    restarts = sum(cs.restart_count for cs in cs_list)
+                    start_ts = pod.status.start_time or pod.metadata.creation_timestamp
+                    start_time = start_ts.isoformat() if start_ts else "-"
+                    downtime_sec = _pod_downtime_sec(cs_list)
                     out["workers"][label] = {
                         "status": waiting_reason or phase,
-                        "restarts": restarts,
-                        "age": _pod_age(pod.metadata.creation_timestamp),
+                        "start_time": start_time,
+                        "downtime_sec": downtime_sec,
                         "running": (waiting_reason is None and phase == "Running"),
                     }
                 else:
-                    out["workers"][label] = {"status": "Stopped", "restarts": 0, "age": "-", "running": False}
+                    out["workers"][label] = {"status": "Stopped", "start_time": "-", "downtime_sec": 0, "running": False}
             except Exception:
                 pass
     except Exception as e:

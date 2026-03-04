@@ -24,12 +24,12 @@ const C = {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type NodeInfo  = { name: string; role: string; status: string; cpu_percent: number; memory_percent: number; ip: string };
-type PodInfo   = { name: string; namespace: string; status: string; restarts: number; node: string; age: string; ready: string };
+type PodInfo   = { name: string; namespace: string; status: string; node: string; ready: string; start_time: string; downtime_sec: number };
 type LogEntry  = { time: string; timestamp: number; level: string; namespace: string; pod: string; msg: string };
 type DiagIssue = { level: "WARN" | "ERROR"; title: string; detail: string };
 type DiagRec   = { priority: "HIGH" | "MEDIUM" | "LOW"; action: string };
 type Diagnosis = { severity: "OK" | "WARN" | "CRITICAL"; summary: string; issues: DiagIssue[]; recommendations: DiagRec[] };
-type WorkerStatus = { status: string; restarts: number; age: string; running: boolean };
+type WorkerStatus = { status: string; start_time: string; downtime_sec: number; running: boolean };
 type PipelineData = {
   workers: Record<string, WorkerStatus>;
   mongodb: { news_total: number; news_last_1h: number; available: boolean };
@@ -38,7 +38,7 @@ type PipelineData = {
 };
 type PipelineComponent = { name: string; label: string; status: "OK" | "WARN" | "ERROR"; summary: string; issues: { title: string; detail: string }[]; actions: { priority: string; action: string }[] };
 type PipelineDiagnosis = { overall: "OK" | "WARN" | "CRITICAL"; components: PipelineComponent[] };
-type MetricsData = { rps: number[]; latency_p95: number[]; error_rate: number[]; kafka_lag: number[] };
+type MetricsData = { rps: number[]; latency_p95: number[]; error_rate: number[]; kafka_lag: number[]; error_5xx: number[]; error_4xx: number[] };
 type PvcInfo    = { name: string; namespace: string; status: string; capacity: string; storage_class: string; volume: string };
 type DataMetrics = {
   redis:         { memory_used_gb: number|null; memory_max_gb: number|null; memory_pct: number|null; clients: number|null; hit_rate_pct: number|null; available: boolean };
@@ -338,6 +338,8 @@ export default function AdminDashboard() {
       lat: metrics.latency_p95[i] ?? 0,
       err: metrics.error_rate[i] ?? 0,
       lag: metrics.kafka_lag[i] ?? 0,
+      e5xx: Math.round(metrics.error_5xx?.[i] ?? 0),
+      e4xx: Math.round(metrics.error_4xx?.[i] ?? 0),
     }));
   })();
 
@@ -506,7 +508,7 @@ export default function AdminDashboard() {
             {/* Error rate + Kafka lag */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <Card>
-                <SectionTitle>에러율 (5xx %)</SectionTitle>
+                <SectionTitle>에러 건수 (5xx / 4xx)</SectionTitle>
                 {loadingMetrics ? <Skel h="h-36" /> : metricsChartData.length === 0 ? (
                   <div className="h-36 flex items-center justify-center text-white/20 text-sm">데이터 없음</div>
                 ) : (
@@ -515,8 +517,9 @@ export default function AdminDashboard() {
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
                       <XAxis dataKey="t" tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 9 }} axisLine={false} tickLine={false} />
                       <YAxis tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 9 }} axisLine={false} tickLine={false} />
-                      <Tooltip content={<ChartTooltip unit="%" />} />
-                      <Bar dataKey="err" name="Error %" fill={C.red} fillOpacity={0.7} radius={[2, 2, 0, 0]} isAnimationActive={false} />
+                      <Tooltip content={<ChartTooltip unit="건" />} />
+                      <Bar dataKey="e5xx" name="5xx" stackId="err" fill={C.red} fillOpacity={0.8} radius={[0, 0, 0, 0]} isAnimationActive={false} />
+                      <Bar dataKey="e4xx" name="4xx" stackId="err" fill={C.amber} fillOpacity={0.7} radius={[2, 2, 0, 0]} isAnimationActive={false} />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -689,7 +692,7 @@ export default function AdminDashboard() {
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-white/30 text-left border-b border-white/[0.06]">
-                        {["이름","네임스페이스","상태","Ready","재시작","노드","나이"].map(h => (
+                        {["이름","네임스페이스","상태","Ready","다운타임","노드","기동 시각"].map(h => (
                           <th key={h} className="pb-2 pr-4 font-medium">{h}</th>
                         ))}
                       </tr>
@@ -703,10 +706,14 @@ export default function AdminDashboard() {
                           <td className="py-1.5 pr-4"><StatusBadge status={p.status} /></td>
                           <td className="py-1.5 pr-4 font-mono text-white/50">{p.ready}</td>
                           <td className="py-1.5 pr-4">
-                            <span className={p.restarts > 0 ? "text-amber-400 font-bold" : "text-white/30"}>{p.restarts}</span>
+                            {p.downtime_sec > 0
+                              ? <span className="text-amber-400 font-bold">{p.downtime_sec < 60 ? `${p.downtime_sec}s` : `${Math.round(p.downtime_sec / 60)}m`}</span>
+                              : <span className="text-white/20">-</span>}
                           </td>
                           <td className="py-1.5 pr-4 text-white/50">{p.node}</td>
-                          <td className="py-1.5 text-white/30">{p.age}</td>
+                          <td className="py-1.5 text-white/30 font-mono text-xs">
+                            {p.start_time !== "-" ? new Date(p.start_time).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) : "-"}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -752,8 +759,12 @@ export default function AdminDashboard() {
                           <Skel h="h-4" />
                         ) : (
                           <div className="flex gap-4 text-xs text-white/40">
-                            <span>재시작 <span className={wdata?.restarts ? "text-amber-400 font-bold" : "text-white/30"}>{wdata?.restarts ?? 0}</span></span>
-                            <span>가동 <span className="text-white/60">{wdata?.age ?? "-"}</span></span>
+                            {(wdata?.downtime_sec ?? 0) > 0
+                              ? <span>다운타임 <span className="text-amber-400 font-bold">{wdata!.downtime_sec < 60 ? `${wdata!.downtime_sec}s` : `${Math.round(wdata!.downtime_sec / 60)}m`}</span></span>
+                              : <span className="text-white/20">다운타임 없음</span>}
+                            {wdata?.start_time && wdata.start_time !== "-" && (
+                              <span>기동 <span className="text-white/60">{new Date(wdata.start_time).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false })}</span></span>
+                            )}
                           </div>
                         )}
                         {/* 최근 로그 */}
