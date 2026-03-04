@@ -411,6 +411,32 @@ async def get_metrics():
         ],
     }
 
+    async def _query_top_endpoints(query: str) -> list[dict]:
+        """handler 레이블별 벡터 결과를 반환한다 (엔드포인트별 에러 집계용)."""
+        data = await _mimir_query(
+            "/api/v1/query",
+            params={"query": query, "time": end.isoformat()},
+        )
+        if not data:
+            return []
+        results = data.get("data", {}).get("result", [])
+        out = []
+        for r in results:
+            metric = r.get("metric", {})
+            handler = (
+                metric.get("handler")
+                or metric.get("path")
+                or metric.get("route")
+                or ""
+            )
+            try:
+                val = float(r["value"][1])
+            except (TypeError, ValueError, KeyError, IndexError):
+                val = 0.0
+            if math.isfinite(val) and val > 0 and handler:
+                out.append({"endpoint": handler, "count": round(val, 1)})
+        return sorted(out, key=lambda x: -x["count"])[:5]
+
     result: dict[str, list[float]] = {}
     for key, candidates in query_candidates.items():
         values: list[float] = []
@@ -430,7 +456,18 @@ async def get_metrics():
             logger.warning("Mimir query returned no data [%s]", key)
         result[key] = values
 
-    return result
+    # 엔드포인트별 5xx 에러 Top 5 (지난 1시간)
+    top_5xx: list[dict] = []
+    for q in [
+        'topk(5, sum(increase(http_requests_total{namespace="tutum-app",status=~"5.."}[1h])) by (handler))',
+        'topk(5, sum(increase(http_requests_total{status=~"5.."}[1h])) by (handler))',
+        'topk(5, sum(increase(http_requests_total{namespace="tutum-app",status_code=~"5.."}[1h])) by (handler))',
+    ]:
+        top_5xx = await _query_top_endpoints(q)
+        if top_5xx:
+            break
+
+    return {**result, "top_5xx_endpoints": top_5xx}
 
 
 @router.get("/logs")

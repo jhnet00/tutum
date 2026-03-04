@@ -38,7 +38,7 @@ type PipelineData = {
 };
 type PipelineComponent = { name: string; label: string; status: "OK" | "WARN" | "ERROR"; summary: string; issues: { title: string; detail: string }[]; actions: { priority: string; action: string }[] };
 type PipelineDiagnosis = { overall: "OK" | "WARN" | "CRITICAL"; components: PipelineComponent[] };
-type MetricsData = { rps: number[]; latency_p95: number[]; error_rate: number[]; kafka_lag: number[]; error_5xx: number[]; error_4xx: number[] };
+type MetricsData = { rps: number[]; latency_p95: number[]; error_rate: number[]; kafka_lag: number[]; error_5xx: number[]; error_4xx: number[]; top_5xx_endpoints?: { endpoint: string; count: number }[] };
 type PvcInfo    = { name: string; namespace: string; status: string; capacity: string; storage_class: string; volume: string };
 type DataMetrics = {
   redis:         { memory_used_gb: number|null; memory_max_gb: number|null; memory_pct: number|null; clients: number|null; hit_rate_pct: number|null; available: boolean };
@@ -541,6 +541,22 @@ export default function AdminDashboard() {
                       <Bar dataKey="e4xx" name="4xx" stackId="err" fill={C.amber} fillOpacity={0.7} radius={[2, 2, 0, 0]} isAnimationActive={false} />
                     </BarChart>
                   </ResponsiveContainer>
+                )}
+                {/* 5xx 발생 엔드포인트 Top 5 */}
+                {metrics?.top_5xx_endpoints && metrics.top_5xx_endpoints.length > 0 && (
+                  <div className="mt-3 border-t border-white/5 pt-3">
+                    <p className="text-[10px] text-white/30 mb-1.5">5xx 발생 경로 (최근 1h)</p>
+                    <table className="w-full text-xs">
+                      <tbody>
+                        {metrics.top_5xx_endpoints.map((ep, i) => (
+                          <tr key={i} className="border-b border-white/5 last:border-0">
+                            <td className="py-1 text-white/40 pr-2 font-mono truncate max-w-[180px]" title={ep.endpoint}>{ep.endpoint}</td>
+                            <td className="py-1 text-right text-red-400 font-semibold">{ep.count.toFixed(0)}건</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </Card>
               <Card>
