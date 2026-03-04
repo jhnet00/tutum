@@ -3,6 +3,7 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { FavoritesProvider } from "@/context/FavoritesContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { AssetProvider } from "@/context/AssetContext";
+import { MarketPriceProvider } from "@/context/MarketPriceContext";
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -41,8 +42,10 @@ export default function RootLayout({
           <AuthProvider>
             <FavoritesProvider>
                 <AssetProvider>
-                {children}
-            </AssetProvider>
+                  <MarketPriceProvider>
+                    {children}
+                  </MarketPriceProvider>
+                </AssetProvider>
             </FavoritesProvider>
           </AuthProvider>
         </ThemeProvider>

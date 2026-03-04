@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { mockWatchlist, type WatchlistItem } from "@/lib/mock-data";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { useMarketPriceContext } from "@/context/MarketPriceContext";
 
 // 주식/코인 심볼 목록
 const STOCK_SYMBOLS = ["005930", "TSLA", "NVDA", "AAPL"];
@@ -35,70 +34,27 @@ export default function WatchlistSidebar({
 }) {
   const [activeTab, setActiveTab] = useState<"popular" | "assets" | "watchlist">("popular");
   const [selectedSymbol, setSelectedSymbol] = useState("005930");
-  const [watchlistData, setWatchlistData] = useState<WatchlistData>(mockWatchlist);
-  const [loading, setLoading] = useState(true);
 
-  const fetchWatchlistData = useCallback(async () => {
-    try {
-      // 코인 시세 조회
-      const cryptoResponse = await fetch(
-        `${API_BASE_URL}/api/v1/market/prices/crypto?tickers=${CRYPTO_SYMBOLS.join(",")}`
-      );
-      const cryptoData = cryptoResponse.ok ? await cryptoResponse.json() : { prices: [] };
+  const { priceMap } = useMarketPriceContext();
+  const loading = Object.keys(priceMap).length === 0;
 
-      // 주식 시세 조회
-      const stockResponse = await fetch(
-        `${API_BASE_URL}/api/v1/market/prices/stocks?symbols=${STOCK_SYMBOLS.join(",")}`
-      );
-      const stockData = stockResponse.ok ? await stockResponse.json() : { prices: [] };
-
-      // 코인 데이터 변환
-      const cryptoItems: WatchlistItem[] = cryptoData.prices
-        ?.filter((p: any) => !p.error)
-        .map((p: any) => {
-          const symbol = p.ticker?.replace("KRW-", "") || "";
-          return {
-            name: CRYPTO_NAMES[symbol] || symbol,
-            symbol: symbol,
-            price: p.price || 0,
-            change: 0, // 단일 시세 조회에서는 변동액 계산 불가
-            changePercent: p.change_percent || 0,
-            data: [], // 히스토리 데이터는 별도 API 필요
-          };
-        }) || [];
-
-      // 주식 데이터 변환
-      const stockItems: WatchlistItem[] = stockData.prices
-        ?.filter((p: any) => !p.error && p.price)
-        .map((p: any) => ({
-          name: STOCK_NAMES[p.code] || p.code,
-          symbol: p.code,
-          price: p.price || 0,
-          change: p.change || 0,
-          changePercent: p.price > 0 && p.change ? (p.change / (p.price - p.change)) * 100 : 0,
-          data: [],
-        })) || [];
-
-      // 데이터가 있으면 업데이트, 없으면 mock 유지
-      setWatchlistData({
-        crypto: cryptoItems.length > 0 ? cryptoItems : mockWatchlist.crypto,
-        stocks: stockItems.length > 0 ? stockItems : mockWatchlist.stocks,
-      });
-    } catch (error) {
-      console.error("관심종목 데이터 로드 실패:", error);
-      // 에러 시 mock 데이터 유지
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchWatchlistData();
-
-    // 30초마다 자동 갱신
-    const interval = setInterval(fetchWatchlistData, 30000);
-    return () => clearInterval(interval);
-  }, [fetchWatchlistData]);
+  const watchlistData = useMemo<WatchlistData>(() => {
+    const stocks: WatchlistItem[] = STOCK_SYMBOLS.map(sym => {
+      const p = priceMap[sym];
+      const base = mockWatchlist.stocks.find(s => s.symbol === sym)
+        ?? { name: STOCK_NAMES[sym] || sym, symbol: sym, price: 0, change: 0, changePercent: 0, data: [] };
+      if (!p) return base;
+      return { ...base, price: p.price, changePercent: p.changePercent, change: 0 };
+    });
+    const crypto: WatchlistItem[] = CRYPTO_SYMBOLS.map(sym => {
+      const p = priceMap[sym];
+      const base = mockWatchlist.crypto.find(c => c.symbol === sym)
+        ?? { name: CRYPTO_NAMES[sym] || sym, symbol: sym, price: 0, change: 0, changePercent: 0, data: [] };
+      if (!p) return base;
+      return { ...base, price: p.price, changePercent: p.changePercent, change: 0 };
+    });
+    return { stocks, crypto };
+  }, [priceMap]);
 
   const handleSelectSymbol = (symbol: string) => {
     setSelectedSymbol(symbol);
@@ -213,7 +169,7 @@ export default function WatchlistSidebar({
               </span>
             </div>
             <p className="mt-1 text-xs text-gray-500">
-              실시간 자동 갱신 (30초)
+              실시간 자동 갱신 (컨텍스트)
             </p>
           </div>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { ChevronRight, ChevronLeft } from "lucide-react";
 import Sparkline from "./Sparkline";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useRef } from "react"; // Keep original useRef import
 import Link from "next/link";
 import { useAuth } from "@/contexts/AuthContext";
+import { useMarketPriceContext } from "@/context/MarketPriceContext";
 
 interface Asset {
     name: string;
@@ -44,6 +45,7 @@ function saveToCache(data: WatchlistData) {
 
 export default function WatchlistPreview() {
     const { user } = useAuth();
+    const { priceMap } = useMarketPriceContext();
     const [data, setData] = useState<WatchlistData | null>(null);
     const [loading, setLoading] = useState(true);
     const [isStale, setIsStale] = useState(false);
@@ -121,6 +123,16 @@ export default function WatchlistPreview() {
         }
         loadData();
     }, []);
+
+    // priceMap에서 실시간 가격으로 덮어쓰기 (스파크라인·히스토리는 유지)
+    const patchedData = useMemo(() => {
+        if (!data) return null;
+        const patch = (assets: Asset[]) => assets.map(a => ({
+            ...a,
+            price: priceMap[a.symbol]?.price ?? a.price,
+        }));
+        return { stocks: patch(data.stocks), crypto: patch(data.crypto) };
+    }, [data, priceMap]);
 
     const AssetCard = ({ asset, rank }: { asset: Asset; rank: number }) => {
         const isPositive = asset.change >= 0;
@@ -317,8 +329,8 @@ export default function WatchlistPreview() {
                     )}
                 </div>
 
-                <Section title="주식" assets={data.stocks} />
-                <Section title="코인" assets={data.crypto} />
+                <Section title="주식" assets={patchedData?.stocks ?? []} />
+                <Section title="코인" assets={patchedData?.crypto ?? []} />
             </div>
         </section>
     );

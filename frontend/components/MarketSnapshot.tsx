@@ -1,123 +1,58 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import LoadingSkeleton from "./LoadingSkeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ArrowUp, ArrowDown, RefreshCcw, AlertCircle } from "lucide-react";
+import { useMarketPriceContext } from "@/context/MarketPriceContext";
 
 interface MarketIndex {
     symbol: string;
     name: string;
-    price: number | string;
+    price: number;
     change?: number; // percent
-    volume?: number;
     currency: string;
     type: 'STOCK' | 'CRYPTO';
 }
 
-const SNAPSHOT_CACHE_KEY = "market_snapshot_cache";
-const SNAPSHOT_TTL_MS = 3 * 60 * 1000; // 3분
-
-function loadSnapshotCache(): { indices: MarketIndex[]; ts: number; expired: boolean } | null {
-    try {
-        const raw = sessionStorage.getItem(SNAPSHOT_CACHE_KEY);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        return { ...parsed, expired: Date.now() - parsed.ts > SNAPSHOT_TTL_MS };
-    } catch { return null; }
-}
-
-function saveSnapshotCache(indices: MarketIndex[]) {
-    try {
-        sessionStorage.setItem(SNAPSHOT_CACHE_KEY, JSON.stringify({ indices, ts: Date.now() }));
-    } catch { /* ignore */ }
-}
-
 export default function MarketSnapshot() {
-    const [indices, setIndices] = useState<MarketIndex[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-    const [isStale, setIsStale] = useState(false);
+    const { priceMap, streamStatus, lastUpdated, refresh } = useMarketPriceContext();
 
-    const fetchData = async () => {
-        setLoading(true);
-        try {
-            const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const loading = Object.keys(priceMap).length === 0;
+    const isStale = streamStatus === "reconnecting";
 
-            const [samsungRes, btcRes] = await Promise.allSettled([
-                fetch(`${API_URL}/api/v1/market/price/domestic/005930`),
-                fetch(`${API_URL}/api/v1/market/price/crypto/KRW-BTC`)
-            ]);
-
-            const newIndices: MarketIndex[] = [];
-
-            // 1. 삼성전자
-            if (samsungRes.status === "fulfilled" && samsungRes.value.ok) {
-                const data = await samsungRes.value.json();
-                const price = Number(data.price || data.output?.stck_prpr || 0);
-                const change = Number(data.raw?.output?.prdy_ctrt || 0);
-                newIndices.push({
-                    symbol: "005930", name: "삼성전자",
-                    price, change,
-                    currency: String(data.currency || "KRW").toUpperCase(),
-                    type: 'STOCK'
-                });
-            }
-
-            // 2. Bitcoin
-            if (btcRes.status === "fulfilled" && btcRes.value.ok) {
-                const data = await btcRes.value.json();
-                newIndices.push({
-                    symbol: "BTC", name: "Bitcoin",
-                    price: Number(data.price || 0),
-                    change: data.change_percent,
-                    currency: String(data.currency || "KRW").toUpperCase(),
-                    type: 'CRYPTO'
-                });
-            }
-
-            if (newIndices.length > 0) {
-                setIndices(newIndices);
-                setLastUpdated(new Date());
-                setIsStale(false);
-                saveSnapshotCache(newIndices);
-            } else {
-                // 응답이 전혀 없으면 캐시 유지
-                const cached = loadSnapshotCache();
-                if (cached?.indices?.length) {
-                    setIndices(cached.indices);
-                    setIsStale(true);
-                }
-            }
-        } catch (err) {
-            console.error("Market data fetch error:", err);
-            const cached = loadSnapshotCache();
-            if (cached?.indices?.length) {
-                setIndices(cached.indices);
-                setIsStale(true);
-            }
-        } finally {
-            setLoading(false);
+    const indices = useMemo<MarketIndex[]>(() => {
+        const result: MarketIndex[] = [];
+        if (priceMap["005930"]) {
+            result.push({
+                symbol: "005930", name: "삼성전자",
+                price: priceMap["005930"].price,
+                change: priceMap["005930"].changePercent,
+                currency: "KRW",
+                type: "STOCK",
+            });
         }
-    };
+        if (priceMap["BTC"]) {
+            result.push({
+                symbol: "BTC", name: "Bitcoin",
+                price: priceMap["BTC"].price,
+                change: priceMap["BTC"].changePercent,
+                currency: "KRW",
+                type: "CRYPTO",
+            });
+        }
+        return result;
+    }, [priceMap]);
 
-    useEffect(() => {
-        fetchData();
-        // Refresh every 30 seconds
-        const interval = setInterval(fetchData, 30000);
-        return () => clearInterval(interval);
-    }, []);
-
-    const formatPrice = (price: number | string, currency: string) => {
-        if (typeof price === 'string') return price;
+    const formatPrice = (price: number, currency: string) => {
         return new Intl.NumberFormat('ko-KR', { style: 'currency', currency }).format(price);
     };
 
     const formatChange = (change: number | undefined) => {
         if (change === undefined) return null;
         const isPositive = change > 0;
-        const colorClass = isPositive ? "text-profit" : (change < 0 ? "text-loss" : "text-zinc-500"); // User Custom: Mint=Up, Burgundy=Down
+        const colorClass = isPositive ? "text-profit" : (change < 0 ? "text-loss" : "text-zinc-500");
         const Icon = isPositive ? ArrowUp : (change < 0 ? ArrowDown : null);
 
         return (
@@ -128,7 +63,7 @@ export default function MarketSnapshot() {
         );
     };
 
-    if (loading && indices.length === 0) {
+    if (loading) {
         return (
             <section className="bg-background px-4 py-20 sm:px-6 lg:px-8">
                 <div className="mx-auto max-w-7xl">
@@ -157,7 +92,7 @@ export default function MarketSnapshot() {
                     </div>
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         {lastUpdated && <span>{lastUpdated.toLocaleTimeString()} 기준</span>}
-                        <button onClick={fetchData} className="p-1 hover:bg-muted rounded-full transition-colors">
+                        <button onClick={refresh} className="p-1 hover:bg-muted rounded-full transition-colors">
                             <RefreshCcw className="h-3 w-3" />
                         </button>
                     </div>
