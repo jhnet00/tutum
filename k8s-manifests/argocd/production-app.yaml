@@ -19,7 +19,9 @@ spec:
     server: https://kubernetes.default.svc
     namespace: tutum-app
   syncPolicy:
-    # production은 수동 승인 후 sync (automated 없음)
+    automated:
+      prune: true
+      selfHeal: true
     syncOptions:
       - CreateNamespace=true
       - ApplyOutOfSyncOnly=true
