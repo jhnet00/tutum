@@ -1,0 +1,53 @@
+# cert-manager 자체 서명 CA 구성
+# 로컬/프라이빗 환경 (VirtualBox, 192.168.0.x) - Let's Encrypt 불가
+#
+# 구성 순서:
+#   1. selfsigned  ClusterIssuer  → 자체 서명 인증서 발급 (CA 부트스트랩용)
+#   2. tutum-ca    Certificate    → CA 루트 인증서 (self-signed)
+#   3. tutum-ca    ClusterIssuer  → tutum-ca Secret 기반 CA 발급자
+#
+# 이 CA로 서명된 인증서를 신뢰하려면:
+#   kubectl get secret tutum-ca -n cert-manager -o jsonpath='{.data.tls\.crt}' \
+#     | base64 -d > tutum-ca.crt
+#   # 각 PC의 OS/브라우저에 tutum-ca.crt 신뢰 추가
+
+---
+# Step 1: 자체 서명 클러스터 발급자 (CA 인증서 생성용 부트스트랩)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned
+spec:
+  selfSigned: {}
+---
+# Step 2: 자체 서명 CA 루트 인증서
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tutum-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: tutum-ca
+  subject:
+    organizations:
+      - tutum
+  secretName: tutum-ca
+  duration: 87600h   # 10년
+  renewBefore: 720h  # 30일 전 갱신
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: selfsigned
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+# Step 3: CA 기반 클러스터 발급자
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: tutum-ca
+spec:
+  ca:
+    secretName: tutum-ca
