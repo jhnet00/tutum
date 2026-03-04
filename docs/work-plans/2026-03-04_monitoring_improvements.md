@@ -90,11 +90,11 @@
 
 | # | 작업 | 상태 |
 |---|------|------|
-| 12 | 각 노드 `/etc/hosts.deny ALL:ALL` → 팀원 IP만 허용 | `[ ]` |
-| 13 | `fail2ban` 설치 및 SSH 브루트포스 차단 설정 | `[ ]` |
-| 14 | SSH `PermitRootLogin no` 확인 및 적용 | `[ ]` |
-| 15 | `/var/log/auth.log` 에서 중국 IP 접근 이력 확인 | `[ ]` |
-| 16 | Admin 대시보드 `/admin` 경로 인증 보호 (middleware + backend Depends) | `[ ]` |
+| 12 | 각 노드 `/etc/hosts.deny ALL:ALL` → 팀원 IP만 허용 | `[x]` |
+| 13 | `fail2ban` 설치 및 SSH 브루트포스 차단 설정 | `[x]` |
+| 14 | SSH `PermitRootLogin no` 확인 및 적용 | `[x]` |
+| 15 | `/var/log/auth.log` 에서 중국 IP 접근 이력 확인 | `[x]` |
+| 16 | Admin 대시보드 `/admin` 경로 인증 보호 (middleware + backend Depends) | `[x]` |
 
 ---
 
@@ -150,7 +150,7 @@ query_range:
 ## 참고 — Kafka Lag 중요성 근거 (발표용)
 
 > Kafka Consumer Lag = 메시지 큐에 쌓인 미처리 메시지 수
-
+ 
 | 상황 | 증상 | 결과 |
 |------|------|------|
 | lag 급증 | consumer가 처리 속도를 따라가지 못함 | 뉴스 수집 지연, ES 인덱싱 지연 |

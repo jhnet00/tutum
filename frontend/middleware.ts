@@ -12,6 +12,7 @@ export function middleware(request: NextRequest) {
         '/direct-input',
         '/confirm-input',
         '/asset-upload',
+        '/admin',
     ];
 
     // Auth routes - redirect to portfolio if already logged in
@@ -48,6 +49,7 @@ export const config = {
         '/direct-input/:path*',
         '/confirm-input/:path*',
         '/asset-upload/:path*',
+        '/admin/:path*',
         '/login',
         '/register',
     ],

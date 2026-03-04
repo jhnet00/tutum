@@ -22,11 +22,12 @@ from datetime import datetime, timezone, timedelta
 import boto3
 import httpx
 from botocore.config import Config
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..database import get_news_collection
+from .auth import get_current_user
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(get_current_user)])
 logger = logging.getLogger(__name__)
 
 MIMIR_URL = os.getenv("MIMIR_URL", "http://192.168.0.230:9009/prometheus")
