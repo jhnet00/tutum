@@ -919,6 +919,75 @@ async def get_storage():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ─── 노드 24시간 시계열 ──────────────────────────────────────────────────────────
+
+@router.get("/node-history")
+async def get_node_history():
+    """
+    Mimir에서 노드별 CPU/Memory 24시간 시계열 조회.
+    node-exporter 메트릭(node_memory_MemAvailable_bytes, node_cpu_seconds_total) 사용.
+    instance 레이블: 노드 IP (192.168.0.220~225)
+    """
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(hours=24)
+    step = "10m"  # 24h / 10m = 144 포인트
+
+    NODE_MAP = {
+        "192.168.0.220": "cp-1",
+        "192.168.0.221": "cp-2",
+        "192.168.0.222": "cp-3",
+        "192.168.0.223": "worker1",
+        "192.168.0.224": "worker2",
+        "192.168.0.225": "worker3",
+    }
+
+    async def _range(query: str) -> dict[str, list]:
+        data = await _mimir_query(
+            "/api/v1/query_range",
+            params={"query": query, "start": start.isoformat(), "end": end.isoformat(), "step": step},
+        )
+        if not data:
+            return {}
+        out: dict[str, list] = {}
+        for series in data.get("data", {}).get("result", []):
+            instance = series["metric"].get("instance", "").split(":")[0]
+            name = NODE_MAP.get(instance, instance)
+            out[name] = [
+                {"t": ts, "v": round(float(val), 1) if val != "NaN" else None}
+                for ts, val in series["values"]
+            ]
+        return out
+
+    # CPU 사용률 %: 100 - (idle %)
+    cpu_data = await _range(
+        '100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)'
+    )
+    # Memory 사용률 %: (total - available) / total * 100
+    mem_data = await _range(
+        '(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100'
+    )
+
+    # 타임스탬프를 "HH:mm" 포맷으로 변환 (프론트 표시용)
+    def fmt_series(raw: dict[str, list]) -> dict[str, list]:
+        result = {}
+        for node, points in raw.items():
+            result[node] = [
+                {
+                    "t": datetime.fromtimestamp(p["t"], tz=timezone.utc)
+                          .strftime("%m-%d %H:%M"),
+                    "v": p["v"],
+                }
+                for p in points
+            ]
+        return result
+
+    return {
+        "cpu": fmt_series(cpu_data),
+        "memory": fmt_series(mem_data),
+        "available": bool(cpu_data or mem_data),
+    }
+
+
 # ─── 데이터 레이어 메트릭 ────────────────────────────────────────────────────────
 
 @router.get("/data-metrics")

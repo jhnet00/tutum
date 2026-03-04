@@ -190,6 +190,8 @@ export default function AdminDashboard() {
   const [metrics,      setMetrics]      = useState<MetricsData | null>(null);
   const [pvcs,         setPvcs]         = useState<PvcInfo[]>([]);
   const [dataMetrics,  setDataMetrics]  = useState<DataMetrics | null>(null);
+  const [nodeHistory,  setNodeHistory]  = useState<{ cpu: Record<string, {t:string;v:number|null}[]>; memory: Record<string, {t:string;v:number|null}[]>; available: boolean } | null>(null);
+  const [loadingNodeH, setLoadingNodeH] = useState(true);
   const [traces,       setTraces]       = useState<TraceEntry[]>([]);
   const [pipeline,     setPipeline]     = useState<PipelineData | null>(null);
   const [logs,         setLogs]         = useState<LogEntry[]>([]);
@@ -281,6 +283,14 @@ export default function AdminDashboard() {
     finally { setLoadingDataM(false); }
   }, []);
 
+  const fetchNodeHistory = useCallback(async () => {
+    try {
+      const r = await fetch(`${API_BASE}/api/v1/admin/node-history`);
+      if (r.ok) setNodeHistory(await r.json());
+    } catch (e) { console.error("fetchNodeHistory", e); }
+    finally { setLoadingNodeH(false); }
+  }, []);
+
   const fetchTraces = useCallback(async () => {
     try {
       const r = await fetch(`${API_BASE}/api/v1/admin/traces?limit=20&min_duration_ms=50`);
@@ -310,12 +320,13 @@ export default function AdminDashboard() {
 
   // Initial + polling
   useEffect(() => {
-    fetchNodes(); fetchPods(); fetchMetrics(); fetchStorage(); fetchDataMetrics(); fetchTraces(); fetchPipeline(); fetchLogs();
+    fetchNodes(); fetchPods(); fetchMetrics(); fetchStorage(); fetchDataMetrics(); fetchTraces(); fetchPipeline(); fetchLogs(); fetchNodeHistory();
     const id30 = setInterval(() => { fetchNodes(); fetchPods(); fetchMetrics(); fetchStorage(); fetchDataMetrics(); fetchPipeline(); }, 30_000);
     const id10 = setInterval(() => fetchLogs(), 10_000);
     const id60 = setInterval(() => fetchTraces(), 60_000);
-    return () => { clearInterval(id30); clearInterval(id10); clearInterval(id60); };
-  }, [fetchNodes, fetchPods, fetchMetrics, fetchStorage, fetchDataMetrics, fetchTraces, fetchPipeline, fetchLogs]);
+    const id5m = setInterval(() => fetchNodeHistory(), 300_000); // 5분마다 갱신
+    return () => { clearInterval(id30); clearInterval(id10); clearInterval(id60); clearInterval(id5m); };
+  }, [fetchNodes, fetchPods, fetchMetrics, fetchStorage, fetchDataMetrics, fetchTraces, fetchPipeline, fetchLogs, fetchNodeHistory]);
 
   // Scroll logs to top when new entries arrive (newest-first order)
   useEffect(() => {
@@ -611,6 +622,44 @@ export default function AdminDashboard() {
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Node 24h time series */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {(["cpu", "memory"] as const).map(metric => (
+                <Card key={metric}>
+                  <SectionTitle>노드 {metric === "cpu" ? "CPU" : "메모리"} 사용률 (24h)</SectionTitle>
+                  {loadingNodeH ? <Skel h="h-40" /> : !nodeHistory?.available ? (
+                    <div className="h-40 flex items-center justify-center text-white/20 text-xs">
+                      node-exporter 데이터 수집 중 (배포 후 10분 소요)
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={160}>
+                      <LineChart margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
+                        data={(() => {
+                          const series = nodeHistory[metric];
+                          const workerKeys = Object.keys(series).filter(k => k.startsWith("worker"));
+                          const len = Math.max(...workerKeys.map(k => series[k]?.length ?? 0));
+                          return Array.from({ length: len }, (_, i) => {
+                            const pt: Record<string, string | number | null> = { t: series[workerKeys[0]]?.[i]?.t ?? "" };
+                            workerKeys.forEach(k => { pt[k] = series[k]?.[i]?.v ?? null; });
+                            return pt;
+                          });
+                        })()}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+                        <XAxis dataKey="t" tick={{ fill: "rgba(255,255,255,0.2)", fontSize: 8 }} axisLine={false} tickLine={false} interval={23} />
+                        <YAxis domain={[0, 100]} tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 9 }} axisLine={false} tickLine={false} unit="%" />
+                        <Tooltip formatter={(v: number) => [`${v?.toFixed(1)}%`]} labelStyle={{ color: "rgba(255,255,255,0.5)" }} contentStyle={{ background: "#1e2330", border: "1px solid rgba(255,255,255,0.08)" }} />
+                        {Object.keys(nodeHistory[metric]).filter(k => k.startsWith("worker")).map((k, i) => (
+                          <Line key={k} type="monotone" dataKey={k} name={k}
+                            stroke={[C.blue, C.violet, C.emerald][i % 3]} strokeWidth={1.5}
+                            dot={false} isAnimationActive={false} connectNulls />
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </Card>
+              ))}
             </div>
 
             {/* Pod status pie + PVC table */}
