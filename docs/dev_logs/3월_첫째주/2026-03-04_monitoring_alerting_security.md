@@ -1,6 +1,7 @@
 # Dev Log: 모니터링 알림 규칙 + 보안 강화
 
 > 작성일: 2026-03-04
+> 작성자: kyungyoonkim
 > 브랜치: `develop`
 > 근거: `docs/work-plans/2026-03-04_monitoring_improvements.md` (Priority 4-5)
 
@@ -80,9 +81,9 @@
 | P5 | fail2ban 설치 (전체 노드) | ✅ |
 | P5 | PermitRootLogin no | ✅ |
 | P5 | auth.log 조사 | ✅ |
-| P2 | Kafka lag UI 툴팁/코멘트 | 🔲 |
-| P3 | 레이턴시 100ms 기준선 그래프 표시 | 🔲 |
-| P5 | Admin `/admin` 경로 인증 보호 | 🔲 |
+| P2 | Kafka lag UI 툴팁/코멘트 | ✅ |
+| P3 | 레이턴시 100ms 기준선 그래프 표시 | ✅ |
+| P5 | Admin `/admin` 경로 인증 보호 | ✅ |
 
 ---
 
