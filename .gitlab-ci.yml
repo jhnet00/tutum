@@ -197,6 +197,9 @@ build:frontend:
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
+  variables:
+    KUBERNETES_EPHEMERAL_STORAGE_REQUEST: "8Gi"
+    KUBERNETES_EPHEMERAL_STORAGE_LIMIT: "10Gi"
   before_script:
     - mkdir -p /kaniko/.docker
     - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
@@ -206,6 +209,7 @@ build:frontend:
       --dockerfile "${CI_PROJECT_DIR}/frontend/Dockerfile"
       --destination "${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}"
       --destination "${FRONTEND_IMAGE}:latest"
+      --compressed-caching=false
   rules:
     - changes:
         - frontend/**/*
@@ -216,6 +220,9 @@ build:backend:
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
+  variables:
+    KUBERNETES_EPHEMERAL_STORAGE_REQUEST: "8Gi"
+    KUBERNETES_EPHEMERAL_STORAGE_LIMIT: "10Gi"
   before_script:
     - mkdir -p /kaniko/.docker
     - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
@@ -225,6 +232,7 @@ build:backend:
       --dockerfile "${CI_PROJECT_DIR}/backend/Dockerfile"
       --destination "${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}"
       --destination "${BACKEND_IMAGE}:latest"
+      --compressed-caching=false
   rules:
     - changes:
         - frontend/**/*
@@ -236,6 +244,9 @@ build:workers:
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
+  variables:
+    KUBERNETES_EPHEMERAL_STORAGE_REQUEST: "4Gi"
+    KUBERNETES_EPHEMERAL_STORAGE_LIMIT: "6Gi"
   before_script:
     - mkdir -p /kaniko/.docker
     - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
@@ -245,6 +256,7 @@ build:workers:
       --dockerfile "${CI_PROJECT_DIR}/backend/workers/Dockerfile"
       --destination "${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}"
       --destination "${WORKERS_IMAGE}:latest"
+      --compressed-caching=false
   rules:
     - changes:
         - frontend/**/*
@@ -262,6 +274,7 @@ security:frontend:
   variables:
     TRIVY_USERNAME: ${CI_REGISTRY_USER}
     TRIVY_PASSWORD: ${CI_REGISTRY_PASSWORD}
+    TRIVY_DB_REPOSITORY: "ghcr.io/aquasecurity/trivy-db:2"
   script:
     - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
@@ -280,6 +293,7 @@ security:backend:
   variables:
     TRIVY_USERNAME: ${CI_REGISTRY_USER}
     TRIVY_PASSWORD: ${CI_REGISTRY_PASSWORD}
+    TRIVY_DB_REPOSITORY: "ghcr.io/aquasecurity/trivy-db:2"
   script:
     - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
@@ -299,6 +313,7 @@ security:workers:
   variables:
     TRIVY_USERNAME: ${CI_REGISTRY_USER}
     TRIVY_PASSWORD: ${CI_REGISTRY_PASSWORD}
+    TRIVY_DB_REPOSITORY: "ghcr.io/aquasecurity/trivy-db:2"
   script:
     - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true

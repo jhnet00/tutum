@@ -385,7 +385,8 @@ async def get_metrics():
                 '/ sum(rate(http_requests_total[2m])) * 100'
             ),
             (
-                '(sum(rate(http_server_request_duration_seconds_count{namespace="tutum-app",http_status=~"5.."}[2m])) or on() vector(0)) '
+                '(sum(rate(http_server_request_duration_seconds_count'
+                '{namespace="tutum-app",http_status=~"5.."}[2m])) or on() vector(0)) '
                 '/ sum(rate(http_server_request_duration_seconds_count{namespace="tutum-app"}[2m])) * 100'
             ),
             (
@@ -544,7 +545,10 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
             for e in err_logs:
                 pod = e["pod"]
                 if pod not in pod_stat:
-                    pod_stat[pod] = {"count": 0, "last_time": e["time"], "last_msg": e["msg"][:80], "namespace": e["namespace"]}
+                    pod_stat[pod] = {
+                        "count": 0, "last_time": e["time"],
+                        "last_msg": e["msg"][:80], "namespace": e["namespace"],
+                    }
                 pod_stat[pod]["count"] += 1
             error_summary = sorted(
                 [{"pod": k, **v} for k, v in pod_stat.items()],
