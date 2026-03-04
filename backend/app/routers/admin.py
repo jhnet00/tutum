@@ -1183,10 +1183,13 @@ async def get_traces(limit: int = 20, min_duration_ms: int = 50):
     # 5xx 에러 트레이스 — TraceQL 사용
     error_raw = await _search({**base_params, "q": '{span.http.status_code >= 500}', "limit": 10})
     # 4xx 클라이언트 에러 트레이스
-    client_error_raw = await _search({**base_params, "q": '{span.http.status_code >= 400 && span.http.status_code < 500}', "limit": 5})
+    client_error_raw = await _search({
+        **base_params,
+        "q": '{span.http.status_code >= 400 && span.http.status_code < 500}',
+        "limit": 5,
+    })
 
     error_ids = {t.get("traceID") for t in error_raw}
-    client_error_ids = {t.get("traceID") for t in client_error_raw}
 
     traces = sorted(
         [_format(t, is_error=t.get("traceID") in error_ids) for t in slow_raw],

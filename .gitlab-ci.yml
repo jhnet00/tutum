@@ -194,14 +194,18 @@ sonar:backend:
 
 build:frontend:
   stage: build
-  image: docker:24-dind
-  services:
-    - docker:24-dind
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  before_script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
   script:
-    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
-    - docker build -t ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${FRONTEND_IMAGE}:latest ./frontend
-    - docker push ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
-    - docker push ${FRONTEND_IMAGE}:latest
+    - /kaniko/executor
+      --context "${CI_PROJECT_DIR}/frontend"
+      --dockerfile "${CI_PROJECT_DIR}/frontend/Dockerfile"
+      --destination "${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}"
+      --destination "${FRONTEND_IMAGE}:latest"
   rules:
     - changes:
         - frontend/**/*
@@ -209,14 +213,18 @@ build:frontend:
 
 build:backend:
   stage: build
-  image: docker:24-dind
-  services:
-    - docker:24-dind
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  before_script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
   script:
-    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
-    - docker build -t ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${BACKEND_IMAGE}:latest ./backend
-    - docker push ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
-    - docker push ${BACKEND_IMAGE}:latest
+    - /kaniko/executor
+      --context "${CI_PROJECT_DIR}/backend"
+      --dockerfile "${CI_PROJECT_DIR}/backend/Dockerfile"
+      --destination "${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}"
+      --destination "${BACKEND_IMAGE}:latest"
   rules:
     - changes:
         - frontend/**/*
@@ -225,14 +233,18 @@ build:backend:
 
 build:workers:
   stage: build
-  image: docker:24-dind
-  services:
-    - docker:24-dind
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  before_script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
   script:
-    - docker login -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD} ${CI_REGISTRY}
-    - docker build -t ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA} -t ${WORKERS_IMAGE}:latest ./backend/workers
-    - docker push ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
-    - docker push ${WORKERS_IMAGE}:latest
+    - /kaniko/executor
+      --context "${CI_PROJECT_DIR}/backend/workers"
+      --dockerfile "${CI_PROJECT_DIR}/backend/workers/Dockerfile"
+      --destination "${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}"
+      --destination "${WORKERS_IMAGE}:latest"
   rules:
     - changes:
         - frontend/**/*
