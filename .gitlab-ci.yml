@@ -26,6 +26,9 @@ workflow:
     - if: '$CI_PIPELINE_SOURCE == "web"'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
+default:
+  tags: [k8s]  # 자체 러너 사용 (공유 러너 분 소모 방지)
+
 variables:
   # GitLab Container Registry (CI_REGISTRY_IMAGE 자동 제공)
   FRONTEND_IMAGE: "${CI_REGISTRY_IMAGE}/frontend"
