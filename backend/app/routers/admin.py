@@ -474,51 +474,28 @@ async def get_metrics():
 @router.get("/logs")
 async def get_logs(namespace: str = "tutum-app", limit: int = 50):
     """
-    Loki에서 실시간 로그 조회.
-    instance 레이블 형식: "namespace/pod-name:container"
-
-    namespace 파라미터:
-      - "tutum-app": 앱 파드 로그
-      - "tutum-data": 데이터 파드 로그
-      - "all": tutum-app + tutum-data 전체
+    Loki에서 실시간 로그 조회 + 최근 1시간 에러 이력 요약.
+    namespace: "tutum-app" | "tutum-data" | "all"
     """
-    if namespace == "all":
-        log_query = '{job="loki.source.kubernetes.k8s_logs", instance=~"(tutum-app|tutum-data)/.*"}'
-    else:
-        log_query = f'{{job="loki.source.kubernetes.k8s_logs", instance=~"{namespace}/.*"}}'
+    ns_pattern = "(tutum-app|tutum-data)" if namespace == "all" else namespace
+    base_selector = f'{{job="loki.source.kubernetes.k8s_logs", instance=~"{ns_pattern}/.*"}}'
+    log_query = base_selector  # 실시간 스트림 (최근 10분)
+    error_query = f'{base_selector} |= "ERROR"'  # 에러 이력 (최근 1시간)
 
     end_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
-    start_ns = end_ns - 600_000_000_000  # 최근 10분
 
-    try:
-        resp = await _HTTP_LOKI.get(
-            f"{LOKI_URL}/loki/api/v1/query_range",
-            params={
-                "query":     log_query,
-                "limit":     limit,
-                "start":     start_ns,
-                "end":       end_ns,
-                "direction": "backward",
-            },
-        )
-        data = resp.json()
-
-        if data.get("status") != "success":
-            return {"logs": []}
-
+    def _parse_streams(result: list, default_level: str = "INFO") -> list[dict]:
+        """Loki query_range result → log entry list."""
         logs = []
-        for stream in data.get("data", {}).get("result", []):
+        for stream in result:
             labels = stream["stream"]
             instance = labels.get("instance", "")
-            level = labels.get("level", "info").upper()
-
-            # instance: "tutum-app/backend-xxx:backend" → ns, pod 추출
-            ns_pod = instance.split(":")[0]  # "tutum-app/backend-xxx"
+            level = labels.get("level", default_level).upper()
+            ns_pod = instance.split(":")[0]
             parts = ns_pod.split("/", 1)
             ns_name = parts[0] if len(parts) == 2 else ""
             pod_name = parts[1] if len(parts) == 2 else instance
-
-            for ts_ns, msg in stream["values"]:
+            for ts_ns, msg in stream.get("values", []):
                 ts = datetime.fromtimestamp(int(ts_ns) / 1_000_000_000, tz=timezone.utc)
                 logs.append({
                     "time":      ts.strftime("%H:%M:%S"),
@@ -528,8 +505,28 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
                     "pod":       pod_name,
                     "msg":       msg.rstrip("\n"),
                 })
+        return logs
 
-        # 최신순 정렬, 중복 제거
+    try:
+        # 1) 실시간 스트림 — 최근 10분
+        stream_resp, error_resp = await asyncio.gather(
+            _HTTP_LOKI.get(
+                f"{LOKI_URL}/loki/api/v1/query_range",
+                params={"query": log_query, "limit": limit,
+                        "start": end_ns - 600_000_000_000, "end": end_ns, "direction": "backward"},
+            ),
+            _HTTP_LOKI.get(
+                f"{LOKI_URL}/loki/api/v1/query_range",
+                params={"query": error_query, "limit": 500,
+                        "start": end_ns - 3_600_000_000_000, "end": end_ns, "direction": "backward"},
+            ),
+            return_exceptions=True,
+        )
+
+        # 실시간 로그 파싱
+        logs: list[dict] = []
+        if not isinstance(stream_resp, Exception) and stream_resp.json().get("status") == "success":
+            logs = _parse_streams(stream_resp.json()["data"]["result"])
         logs.sort(key=lambda x: x["timestamp"], reverse=True)
         unique, seen = [], set()
         for log in logs:
@@ -538,11 +535,27 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
                 seen.add(key)
                 unique.append(log)
 
-        return {"logs": unique[:limit]}
+        # 에러 이력 집계 (1시간, pod별 ERROR 건수 + 마지막 발생)
+        error_summary: list[dict] = []
+        if not isinstance(error_resp, Exception) and error_resp.json().get("status") == "success":
+            err_logs = _parse_streams(error_resp.json()["data"]["result"], default_level="ERROR")
+            # pod별 집계
+            pod_stat: dict[str, dict] = {}
+            for e in err_logs:
+                pod = e["pod"]
+                if pod not in pod_stat:
+                    pod_stat[pod] = {"count": 0, "last_time": e["time"], "last_msg": e["msg"][:80], "namespace": e["namespace"]}
+                pod_stat[pod]["count"] += 1
+            error_summary = sorted(
+                [{"pod": k, **v} for k, v in pod_stat.items()],
+                key=lambda x: -x["count"],
+            )
+
+        return {"logs": unique[:limit], "error_summary": error_summary}
 
     except Exception as e:
         logger.error("get_logs Loki 오류: %s", e)
-        return {"logs": []}
+        return {"logs": [], "error_summary": []}
 
 
 # ─── AI 진단 ───────────────────────────────────────────────────────────────────

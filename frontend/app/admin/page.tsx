@@ -25,7 +25,8 @@ const C = {
 // ─── Types ────────────────────────────────────────────────────────────────────
 type NodeInfo  = { name: string; role: string; status: string; cpu_percent: number; memory_percent: number; ip: string };
 type PodInfo   = { name: string; namespace: string; status: string; node: string; ready: string; start_time: string; downtime_sec: number };
-type LogEntry  = { time: string; timestamp: number; level: string; namespace: string; pod: string; msg: string };
+type LogEntry    = { time: string; timestamp: number; level: string; namespace: string; pod: string; msg: string };
+type ErrorSummary = { pod: string; namespace: string; count: number; last_time: string; last_msg: string };
 type DiagIssue = { level: "WARN" | "ERROR"; title: string; detail: string };
 type DiagRec   = { priority: "HIGH" | "MEDIUM" | "LOW"; action: string };
 type Diagnosis = { severity: "OK" | "WARN" | "CRITICAL"; summary: string; issues: DiagIssue[]; recommendations: DiagRec[] };
@@ -201,6 +202,7 @@ export default function AdminDashboard() {
   const [tracesData,   setTracesData]   = useState<TracesData | null>(null);
   const [pipeline,     setPipeline]     = useState<PipelineData | null>(null);
   const [logs,         setLogs]         = useState<LogEntry[]>([]);
+  const [errorSummary, setErrorSummary] = useState<ErrorSummary[]>([]);
   const [diagnosis,    setDiagnosis]    = useState<Diagnosis | null>(null);
   const [pipelineDiag, setPipelineDiag] = useState<PipelineDiagnosis | null>(null);
 
@@ -318,8 +320,11 @@ export default function AdminDashboard() {
   const fetchLogs = useCallback(async () => {
     try {
       const r = await fetch(`${API_BASE}/api/v1/admin/logs?namespace=${logNs}&limit=100`);
-      if (r.ok) { const d = await r.json(); setLogs(d.logs || []); }
-      else showError("로그 조회 실패");
+      if (r.ok) {
+        const d = await r.json();
+        setLogs(d.logs || []);
+        setErrorSummary(d.error_summary || []);
+      } else showError("로그 조회 실패");
     } catch (e) { console.error("fetchLogs", e); }
     finally { setLoadingLogs(false); }
   }, [logNs]);
@@ -971,6 +976,39 @@ export default function AdminDashboard() {
         ══════════════════════════════════════════════════════════════════ */}
         {activeTab === "logs" && (
           <div className="space-y-4">
+            {/* 에러 이력 요약 — 최근 1시간, 파드별 ERROR 건수 */}
+            {errorSummary.length > 0 && (
+              <Card className="border border-red-500/20">
+                <SectionTitle>
+                  에러 발생 이력 (최근 1시간)
+                  <Info tip={"파드별 ERROR 로그 건수 집계 (Loki 1h 쿼리)\n건수 많은 순 정렬 / 클릭 시 해당 파드 필터 적용\n'마지막 발생'은 가장 최근 에러 로그 시각"} />
+                </SectionTitle>
+                <table className="w-full text-xs mt-2">
+                  <thead>
+                    <tr className="text-white/30 text-left border-b border-white/[0.06]">
+                      {["파드", "네임스페이스", "ERROR 건수", "마지막 발생", "마지막 메시지"].map(h => (
+                        <th key={h} className="pb-2 pr-4 font-medium">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {errorSummary.map((s, i) => (
+                      <tr key={i} className="border-b border-white/[0.03] hover:bg-white/[0.02] cursor-pointer transition"
+                          onClick={() => setLogPod(s.pod)}>
+                        <td className="py-1.5 pr-4 font-mono text-white/70 truncate max-w-[160px]" title={s.pod}>{s.pod}</td>
+                        <td className="py-1.5 pr-4 text-white/30">{s.namespace}</td>
+                        <td className="py-1.5 pr-4">
+                          <span className="px-2 py-0.5 rounded bg-red-500/20 text-red-400 font-bold">{s.count}</span>
+                        </td>
+                        <td className="py-1.5 pr-4 font-mono text-white/40">{s.last_time}</td>
+                        <td className="py-1.5 text-white/40 truncate max-w-[240px]" title={s.last_msg}>{s.last_msg}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            )}
+
             {/* Filters */}
             <div className="flex flex-wrap gap-3">
               {(["tutum-app", "tutum-data", "all"] as const).map(ns => (
