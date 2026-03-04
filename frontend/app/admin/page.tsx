@@ -123,8 +123,31 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-3">{children}</h3>;
 }
 function Info({ tip }: { tip: string }) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const spanRef = useRef<HTMLSpanElement>(null);
   return (
-    <span className="ml-1.5 text-xs text-white/25 font-normal normal-case tracking-normal cursor-help hover:text-white/50 transition-colors" title={tip}>ⓘ</span>
+    <span
+      ref={spanRef}
+      className="ml-1.5 inline-block align-middle"
+      onMouseEnter={() => {
+        if (spanRef.current) {
+          const r = spanRef.current.getBoundingClientRect();
+          setPos({ x: r.left, y: r.top });
+        }
+      }}
+      onMouseLeave={() => setPos(null)}
+    >
+      <span className={`text-xs font-normal normal-case tracking-normal cursor-help transition-colors select-none ${pos ? "text-white/60" : "text-white/25"}`}>ⓘ</span>
+      {pos && (
+        <div
+          className="fixed z-[9999] w-64 bg-[#1a1f2e] border border-white/10 rounded-lg px-3 py-2.5 shadow-2xl whitespace-pre-line leading-relaxed pointer-events-none"
+          style={{ left: pos.x, top: pos.y - 8, transform: "translateY(-100%)" }}
+        >
+          <p className="text-xs text-white/70">{tip}</p>
+          <div className="absolute top-full left-3 w-0 h-0 border-l-[5px] border-r-[5px] border-t-[5px] border-l-transparent border-r-transparent border-t-[#1a1f2e]" />
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -423,7 +446,7 @@ export default function AdminDashboard() {
           {/* Cluster health */}
           <div className="flex items-center gap-2 px-3 py-1 rounded-full border text-xs font-medium"
                style={{
-                 borderColor: clusterHealth === "OK" ? "#10b981/30" : clusterHealth === "WARN" ? "#f59e0b/30" : "#ef4444/30",
+                 borderColor: clusterHealth === "OK" ? "rgba(16,185,129,0.3)" : clusterHealth === "WARN" ? "rgba(245,158,11,0.3)" : "rgba(239,68,68,0.3)",
                  color: clusterHealth === "OK" ? C.emerald : clusterHealth === "WARN" ? C.amber : C.red,
                  background: clusterHealth === "OK" ? "rgba(16,185,129,0.08)" : clusterHealth === "WARN" ? "rgba(245,158,11,0.08)" : "rgba(239,68,68,0.08)",
                }}>
