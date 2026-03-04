@@ -120,6 +120,11 @@ function Card({ children, className = "", ...props }: ComponentProps<"div">) {
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-3">{children}</h3>;
 }
+function Info({ tip }: { tip: string }) {
+  return (
+    <span className="ml-1.5 text-xs text-white/25 font-normal normal-case tracking-normal cursor-help hover:text-white/50 transition-colors" title={tip}>ⓘ</span>
+  );
+}
 
 function Val({ v, unit = "", decimals = 1 }: { v: number | null | undefined; unit?: string; decimals?: number }) {
   if (v == null) return <span className="text-white/20">N/A</span>;
@@ -495,7 +500,7 @@ export default function AdminDashboard() {
 
             {/* RPS + Latency combined line chart */}
             <Card>
-              <SectionTitle>API 처리량 / 응답시간 (최근 1시간)</SectionTitle>
+              <SectionTitle>API 처리량 / 응답시간 (최근 1시간)<Info tip={"RPS: 초당 처리 요청 수. 급등 → 트래픽 폭증, 급감 → 서비스 장애\nP95 Latency: 상위 5% 느린 요청의 응답시간\n임계치: 100ms 초과 시 심각 (Slack 알림)"} /></SectionTitle>
               {loadingMetrics ? (
                 <Skel h="h-48" />
               ) : metricsChartData.length === 0 ? (
@@ -522,7 +527,7 @@ export default function AdminDashboard() {
             {/* Error rate + Kafka lag */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <Card>
-                <SectionTitle>에러 건수 (5xx / 4xx)</SectionTitle>
+                <SectionTitle>에러 건수 (5xx / 4xx)<Info tip={"5xx: 서버 오류 (백엔드 버그·크래시·타임아웃)\n4xx: 클라이언트 오류 (잘못된 요청·인증 실패)\n5xx 급증 → 즉각 대응 필요 / 4xx 급증 → API 오용 또는 클라이언트 버그 의심"} /></SectionTitle>
                 {loadingMetrics ? <Skel h="h-36" /> : metricsChartData.length === 0 ? (
                   <div className="h-36 flex items-center justify-center text-white/20 text-sm">데이터 없음</div>
                 ) : (
@@ -539,10 +544,7 @@ export default function AdminDashboard() {
                 )}
               </Card>
               <Card>
-                <SectionTitle>Kafka Consumer Lag
-                  <span className="ml-2 text-xs text-white/30 font-normal cursor-help"
-                    title="Consumer Lag = 미처리 메시지 수&#10;lag 급증 → 뉴스 수집/인덱싱 지연&#10;lag 고착 → consumer 장애 (파이프라인 중단)&#10;임계치: lag > 1000 시 Slack 알림">ⓘ</span>
-                </SectionTitle>
+                <SectionTitle>Kafka Consumer Lag<Info tip={"Consumer Lag = 미처리 메시지 수\nlag 급증 → 뉴스 수집/인덱싱 지연\nlag 고착 → consumer 장애 (파이프라인 중단)\n임계치: lag > 1000 시 Slack 알림"} /></SectionTitle>
                 {loadingMetrics ? <Skel h="h-36" /> : metricsChartData.length === 0 ? (
                   <div className="h-36 flex items-center justify-center text-white/20 text-sm">데이터 없음</div>
                 ) : (
@@ -594,7 +596,7 @@ export default function AdminDashboard() {
 
             {/* Node grid */}
             <div>
-              <SectionTitle>노드 ({nodes.length})</SectionTitle>
+              <SectionTitle>노드 ({nodes.length})<Info tip={"클러스터 물리 노드 현황\ncp = 컨트롤 플레인 (K8s API·스케줄러·etcd)\nworker = 앱·데이터 파드 실행 노드\nCPU > 80% 또는 Memory > 85% 시 Slack 알림\n카드 클릭 → 해당 노드 파드 목록 필터링"} /></SectionTitle>
               {loadingNodes ? (
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                   {[...Array(6)].map((_, i) => <Card key={i}><Skel h="h-20" /></Card>)}
@@ -634,7 +636,7 @@ export default function AdminDashboard() {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {(["cpu", "memory"] as const).map(metric => (
                 <Card key={metric}>
-                  <SectionTitle>노드 {metric === "cpu" ? "CPU" : "메모리"} 사용률 (24h)</SectionTitle>
+                  <SectionTitle>노드 {metric === "cpu" ? "CPU" : "메모리"} 사용률 (24h)<Info tip={metric === "cpu" ? "node-exporter로 수집한 24시간 워커 노드 CPU 추이\n임계치: 80% 초과 5분 지속 시 Slack 알림\nCPU 스파이크: 스크래핑·빌드 작업 시 일시적 급등 가능" : "node-exporter로 수집한 24시간 워커 노드 메모리 추이\n임계치: 85% 초과 5분 지속 시 Slack 알림\n과거 worker3 메모리 92% 사태 → Kibana·SonarQube 이전 후 54%로 안정화"} /></SectionTitle>
                   {loadingNodeH ? <Skel h="h-40" /> : !nodeHistory?.available ? (
                     <div className="h-40 flex items-center justify-center text-white/20 text-xs">
                       node-exporter 데이터 수집 중 (배포 후 10분 소요)
@@ -671,7 +673,7 @@ export default function AdminDashboard() {
             {/* Pod status pie + PVC table */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <Card>
-                <SectionTitle>파드 상태 분포 ({pods.length}개)</SectionTitle>
+                <SectionTitle>파드 상태 분포 ({pods.length}개)<Info tip={"Running: 정상 실행 중\nPending: 스케줄링 대기 (리소스 부족·노드 선택 실패)\nFailed / CrashLoopBackOff: 재시작 반복 → 즉각 로그 확인 필요"} /></SectionTitle>
                 {loadingPods ? <Skel h="h-48" /> : (
                   <div className="flex items-center gap-6">
                     <ResponsiveContainer width={160} height={160}>
@@ -697,7 +699,7 @@ export default function AdminDashboard() {
               </Card>
 
               <Card>
-                <SectionTitle>스토리지 (PVC)</SectionTitle>
+                <SectionTitle>스토리지 (PVC)<Info tip={"PVC(Persistent Volume Claim): 파드가 사용하는 영구 저장소\nBound = 볼륨 정상 할당\nPending = 볼륨 미할당 (StorageClass 설정 오류 가능)\nLost = 기존 볼륨 유실 → 데이터 복구 필요"} /></SectionTitle>
                 {loadingStorage ? <Skel h="h-48" /> : pvcs.length === 0 ? (
                   <p className="text-white/20 text-sm">PVC 없음</p>
                 ) : (
@@ -724,7 +726,7 @@ export default function AdminDashboard() {
             <Card>
               <div className="flex items-center justify-between mb-3 gap-2">
                 <SectionTitle>
-                  파드 목록
+                  파드 목록<Info tip={"다운타임: 마지막 재시작으로 인한 컨테이너 중단 시간 (restartCount > 0인 경우)\n기동 시각: 파드가 마지막으로 시작된 절대 시각\nReady: 트래픽을 받을 준비가 된 컨테이너 수 / 전체 컨테이너 수"} />
                   {nodeFilter !== "all" && <span className="text-xs text-blue-400/80 ml-2">node: {nodeFilter}</span>}
                 </SectionTitle>
                 <div className="flex items-center gap-2">
@@ -787,12 +789,12 @@ export default function AdminDashboard() {
 
             {/* Worker groups */}
             {[
-              { title: "뉴스 파이프라인",  workers: ["news-producer", "news-consumer", "elastic-consumer"] },
-              { title: "시세 파이프라인",  workers: ["price-producer", "price-consumer"] },
-              { title: "기타 워커",        workers: ["email-worker", "ocr-worker"] },
+              { title: "뉴스 파이프라인",  workers: ["news-producer", "news-consumer", "elastic-consumer"], tip: "news-producer → Kafka → news-consumer(MongoDB 저장) → elastic-consumer(ES 인덱싱)\n전체 흐름이 멈추면 사용자에게 최신 뉴스 미노출\nlag 급증 또는 consumer 중단 시 파이프라인 진단 탭 확인" },
+              { title: "시세 파이프라인",  workers: ["price-producer", "price-consumer"], tip: "price-producer → Kafka → price-consumer → DB\n중단 시 주가·환율 실시간 업데이트 불가\nKafka lag 함께 확인" },
+              { title: "기타 워커",        workers: ["email-worker", "ocr-worker"], tip: "email-worker: 알림 이메일 발송 담당\nocr-worker: 이미지 뉴스 텍스트 추출 (MinIO → OCR → ES 인덱싱)\n독립 실행 — 다운 시 해당 기능만 중단" },
             ].map(group => (
               <div key={group.title}>
-                <SectionTitle>{group.title}</SectionTitle>
+                <SectionTitle>{group.title}<Info tip={group.tip} /></SectionTitle>
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                   {group.workers.map(wid => {
                     const meta   = WORKER_META[wid];
@@ -837,7 +839,7 @@ export default function AdminDashboard() {
 
             {/* Data layer metrics */}
             <div>
-              <SectionTitle>데이터 레이어</SectionTitle>
+              <SectionTitle>데이터 레이어<Info tip={"MongoDB: 뉴스·자산·사용자 원본 데이터 저장\nElasticsearch: 뉴스 전문 검색 인덱스 (JVM Heap > 80% 시 성능 저하)\nRedis: API 캐시·세션 저장 (커넥션 수 급증 → 커넥션 풀 부족 의심)"} /></SectionTitle>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {/* MongoDB */}
                 <Card>
@@ -1066,7 +1068,7 @@ export default function AdminDashboard() {
               {/* Cluster diagnosis */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <SectionTitle>클러스터 AI 진단</SectionTitle>
+                  <SectionTitle>클러스터 AI 진단<Info tip={"Claude AI가 노드·파드·메트릭을 종합 분석\nSeverity: OK / WARN / CRITICAL\n이상 징후 감지 + 우선순위별 조치 권고사항 제공\n진단 실행 버튼 클릭 시 실시간 분석 (약 5~10초 소요)"} /></SectionTitle>
                   <button onClick={async () => {
                     setLoadingDiag(true);
                     try {
@@ -1123,7 +1125,7 @@ export default function AdminDashboard() {
               {/* Pipeline diagnosis */}
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <SectionTitle>파이프라인 AI 진단</SectionTitle>
+                  <SectionTitle>파이프라인 AI 진단<Info tip={"워커 상태 + MongoDB·ES·Redis 지표를 종합 분석\n데이터 흐름 이상 원인 및 해결 방안 제시\nKafka lag 급증·consumer 중단·DB 미응답 등 감지\n진단 실행 버튼 클릭 시 실시간 분석 (약 5~10초 소요)"} /></SectionTitle>
                   <button onClick={async () => {
                     setLoadingPDiag(true);
                     try {
