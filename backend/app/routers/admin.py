@@ -678,7 +678,10 @@ _PIPELINE_WORKERS = _ALL_WORKERS
 async def _collect_pipeline_data() -> dict:
     """파이프라인 전체 워커 상태 수집 (pipeline / pipeline-diagnose 공용)."""
     out: dict = {
-        "workers": {w: {"status": "Unknown", "start_time": "-", "downtime_sec": 0, "running": False} for w in _ALL_WORKERS},
+        "workers": {
+            w: {"status": "Unknown", "start_time": "-", "downtime_sec": 0, "running": False}
+            for w in _ALL_WORKERS
+        },
         "mongodb": {"news_total": 0, "news_last_1h": 0, "available": False},
         "elasticsearch": {"news_docs": 0, "available": False},
         "recent_logs": {w: [] for w in _ALL_WORKERS},
@@ -710,7 +713,9 @@ async def _collect_pipeline_data() -> dict:
                         "running": (waiting_reason is None and phase == "Running"),
                     }
                 else:
-                    out["workers"][label] = {"status": "Stopped", "start_time": "-", "downtime_sec": 0, "running": False}
+                    out["workers"][label] = {
+                        "status": "Stopped", "start_time": "-", "downtime_sec": 0, "running": False
+                    }
             except Exception:
                 pass
     except Exception as e:
@@ -973,8 +978,7 @@ async def get_node_history():
         for node, points in raw.items():
             result[node] = [
                 {
-                    "t": datetime.fromtimestamp(p["t"], tz=timezone.utc)
-                          .strftime("%m-%d %H:%M"),
+                    "t": datetime.fromtimestamp(p["t"], tz=timezone.utc).strftime("%m-%d %H:%M"),
                     "v": p["v"],
                 }
                 for p in points
