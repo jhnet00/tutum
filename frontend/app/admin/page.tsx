@@ -554,12 +554,12 @@ export default function AdminDashboard() {
                   <LineChart data={metricsChartData} margin={{ top: 4, right: 40, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
                     <XAxis dataKey="t" tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 10 }} axisLine={false} tickLine={false} />
-                    <YAxis yAxisId="l" tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 10 }} axisLine={false} tickLine={false} />
-                    <YAxis yAxisId="r" orientation="right" tick={{ fill: "rgba(255,255,255,0.3)", fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <YAxis yAxisId="l" tick={{ fill: "rgba(34,211,238,0.9)", fontSize: 10 }} axisLine={false} tickLine={false} />
+                    <YAxis yAxisId="r" orientation="right" tick={{ fill: "rgba(244,114,182,0.9)", fontSize: 10 }} axisLine={false} tickLine={false} />
                     <Tooltip content={<ChartTooltip />} />
                     <Legend wrapperStyle={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }} />
-                    <Line yAxisId="l" type="monotone" dataKey="rps" name="RPS" stroke={C.blue}   strokeWidth={2} dot={false} isAnimationActive={false} />
-                    <Line yAxisId="r" type="monotone" dataKey="lat" name="P95 ms" stroke={C.violet} strokeWidth={2} dot={false} isAnimationActive={false} />
+                    <Line yAxisId="l" type="monotone" dataKey="rps" name="RPS" stroke={C.cyan} strokeWidth={2.4} dot={false} isAnimationActive={false} />
+                    <Line yAxisId="r" type="monotone" dataKey="lat" name="P95 ms" stroke={C.pink} strokeWidth={2.4} strokeDasharray="6 4" dot={false} isAnimationActive={false} />
                     {/* 멘토 피드백: P95 레이턴시 100ms 이상 = 심각 */}
                     <ReferenceLine yAxisId="r" y={100} stroke={C.red} strokeDasharray="4 2"
                       label={{ value: "100ms 임계치", position: "insideTopRight", fill: C.red, fontSize: 10 }} />
