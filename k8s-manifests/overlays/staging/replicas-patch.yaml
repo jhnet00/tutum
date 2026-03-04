@@ -1,10 +1,10 @@
+# staging 리소스 제한 패치 (KEDA 관리 대상인 backend/frontend는 replicas 제거)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: frontend
   namespace: tutum-app
 spec:
-  replicas: 1
   template:
     spec:
       containers:
@@ -23,7 +23,6 @@ metadata:
   name: backend
   namespace: tutum-app
 spec:
-  replicas: 1
   template:
     spec:
       containers:
@@ -35,27 +34,3 @@ spec:
             limits:
               cpu: 500m
               memory: 1Gi
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: price-producer
-  namespace: tutum-app
-spec:
-  replicas: 1
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: price-consumer
-  namespace: tutum-app
-spec:
-  replicas: 1
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: email-worker
-  namespace: tutum-app
-spec:
-  replicas: 1

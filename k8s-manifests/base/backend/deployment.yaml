@@ -108,5 +108,4 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 6
       imagePullSecrets:
-        - name: harbor-secret
         - name: gitlab-registry-secret
