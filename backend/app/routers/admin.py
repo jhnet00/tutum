@@ -366,28 +366,29 @@ async def get_metrics():
             ),
         ],
         "error_rate": [
+            # or on() vector(0): 5xx 요청이 없을 때 빈 벡터 대신 0 반환 → N/A 방지
             (
-                'sum(rate(http_requests_total{namespace="tutum-app",status=~"5.."}[2m])) '
+                '(sum(rate(http_requests_total{namespace="tutum-app",status=~"5.."}[2m])) or on() vector(0)) '
                 '/ sum(rate(http_requests_total{namespace="tutum-app"}[2m])) * 100'
             ),
             (
-                'sum(rate(http_requests_total{status=~"5.."}[2m])) '
+                '(sum(rate(http_requests_total{status=~"5.."}[2m])) or on() vector(0)) '
                 '/ sum(rate(http_requests_total[2m])) * 100'
             ),
             (
-                'sum(rate(http_requests_total{namespace="tutum-app",status_code=~"5.."}[2m])) '
+                '(sum(rate(http_requests_total{namespace="tutum-app",status_code=~"5.."}[2m])) or on() vector(0)) '
                 '/ sum(rate(http_requests_total{namespace="tutum-app"}[2m])) * 100'
             ),
             (
-                'sum(rate(http_requests_total{status_code=~"5.."}[2m])) '
+                '(sum(rate(http_requests_total{status_code=~"5.."}[2m])) or on() vector(0)) '
                 '/ sum(rate(http_requests_total[2m])) * 100'
             ),
             (
-                'sum(rate(http_server_request_duration_seconds_count{namespace="tutum-app",http_status=~"5.."}[2m])) '
+                '(sum(rate(http_server_request_duration_seconds_count{namespace="tutum-app",http_status=~"5.."}[2m])) or on() vector(0)) '
                 '/ sum(rate(http_server_request_duration_seconds_count{namespace="tutum-app"}[2m])) * 100'
             ),
             (
-                'sum(rate(http_server_request_duration_seconds_count{http_status=~"5.."}[2m])) '
+                '(sum(rate(http_server_request_duration_seconds_count{http_status=~"5.."}[2m])) or on() vector(0)) '
                 '/ sum(rate(http_server_request_duration_seconds_count[2m])) * 100'
             ),
         ],
