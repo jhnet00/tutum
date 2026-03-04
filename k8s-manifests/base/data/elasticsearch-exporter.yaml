@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elasticsearch-exporter
+  namespace: tutum-data
+  labels:
+    app: elasticsearch-exporter
+    app.kubernetes.io/name: elasticsearch-exporter
+    app.kubernetes.io/part-of: tutum
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticsearch-exporter
+  template:
+    metadata:
+      labels:
+        app: elasticsearch-exporter
+        app.kubernetes.io/name: elasticsearch-exporter
+        app.kubernetes.io/part-of: tutum
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9114"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: elasticsearch-exporter
+          image: quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --es.uri=http://elasticsearch.tutum-data.svc.cluster.local:9200
+            - --es.all
+            - --es.indices
+            - --es.cluster_settings
+          ports:
+            - containerPort: 9114
+              name: metrics
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9114
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9114
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch-exporter
+  namespace: tutum-data
+  labels:
+    app: elasticsearch-exporter
+    app.kubernetes.io/name: elasticsearch-exporter
+    app.kubernetes.io/part-of: tutum
+spec:
+  selector:
+    app: elasticsearch-exporter
+  ports:
+    - name: metrics
+      port: 9114
+      targetPort: 9114
+      protocol: TCP
