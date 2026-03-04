@@ -952,9 +952,11 @@ export default function AdminDashboard() {
                       <div className="flex justify-between text-sm">
                         <span className="text-white/50">JVM Heap</span>
                         <span className="font-mono" style={{ color: (dataMetrics?.elasticsearch.jvm_heap_pct ?? 0) > 80 ? C.red : C.emerald }}>
-                          {dataMetrics?.elasticsearch.available
+                          {dataMetrics?.elasticsearch.jvm_heap_pct != null
                             ? <Val v={dataMetrics.elasticsearch.jvm_heap_pct} unit="%" decimals={0} />
-                            : "N/A"}
+                            : dataMetrics?.elasticsearch.jvm_heap_used_gb != null
+                              ? <Val v={dataMetrics.elasticsearch.jvm_heap_used_gb} unit="GB" decimals={1} />
+                              : <span className="text-white/20">exporter 미배포</span>}
                         </span>
                       </div>
                     </div>
@@ -983,7 +985,11 @@ export default function AdminDashboard() {
                       <div className="flex justify-between text-sm">
                         <span className="text-white/50">메모리</span>
                         <span className="font-mono" style={{ color: C.blue }}>
-                          <Val v={dataMetrics.redis.memory_pct} unit="%" decimals={0} />
+                          {dataMetrics.redis.memory_pct != null
+                            ? <Val v={dataMetrics.redis.memory_pct} unit="%" decimals={0} />
+                            : dataMetrics.redis.memory_used_gb != null
+                              ? <Val v={dataMetrics.redis.memory_used_gb} unit="GB" decimals={2} />
+                              : <span className="text-white/20">N/A</span>}
                         </span>
                       </div>
                     </div>

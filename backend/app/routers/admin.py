@@ -1061,7 +1061,7 @@ async def get_data_metrics():
 
     query_candidates = {
         "redis_memory_used": ["redis_memory_used_bytes"],
-        "redis_memory_max": ["redis_memory_max_bytes"],
+        "redis_memory_max": ["redis_config_maxmemory", "redis_memory_max_bytes"],
         "redis_clients": ["redis_connected_clients"],
         "redis_hits": ["increase(redis_keyspace_hits_total[5m])"],
         "redis_misses": ["increase(redis_keyspace_misses_total[5m])"],
