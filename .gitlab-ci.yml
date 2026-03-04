@@ -192,6 +192,61 @@ aws:ecr-bootstrap:
       when: manual
     - when: never
 
+aws:ecr-push-check:
+  stage: test
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  tags: [k8s]
+  when: manual
+  script:
+    - apk add --no-cache python3 py3-pip
+    - pip3 install --no-cache-dir awscli
+    - |
+      set -e
+      test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
+      test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
+      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+      test -n "${AWS_ACCOUNT_ID:-}" || { echo "ERROR: AWS_ACCOUNT_ID is missing"; exit 1; }
+
+      ECR_REGISTRY_EFFECTIVE="${ECR_REGISTRY:-${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com}"
+      ECR_REPO_EFFECTIVE="${ECR_REPOSITORY_BACKEND:-tutum/backend}"
+      TEST_TAG="ci-smoke-${CI_PIPELINE_ID}-${CI_JOB_ID}"
+
+      echo "Using registry: ${ECR_REGISTRY_EFFECTIVE}"
+      echo "Using repo: ${ECR_REPO_EFFECTIVE}"
+      echo "Using tag: ${TEST_TAG}"
+
+      aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" | \
+        docker login --username AWS --password-stdin "${ECR_REGISTRY_EFFECTIVE}"
+
+      aws ecr describe-repositories \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-names "${ECR_REPO_EFFECTIVE}" >/dev/null 2>&1 || \
+      aws ecr create-repository \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-name "${ECR_REPO_EFFECTIVE}" >/dev/null
+
+      docker pull alpine:3.20
+      docker tag alpine:3.20 "${ECR_REGISTRY_EFFECTIVE}/${ECR_REPO_EFFECTIVE}:${TEST_TAG}"
+      docker push "${ECR_REGISTRY_EFFECTIVE}/${ECR_REPO_EFFECTIVE}:${TEST_TAG}"
+
+      aws ecr describe-images \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-name "${ECR_REPO_EFFECTIVE}" \
+        --image-ids imageTag="${TEST_TAG}" \
+        --query "imageDetails[0].imageTags"
+
+      # Keep repository clean after smoke check.
+      aws ecr batch-delete-image \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-name "${ECR_REPO_EFFECTIVE}" \
+        --image-ids imageTag="${TEST_TAG}" >/dev/null || true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
+
 # ============================================
 # Stage 3: SonarQube Scan
 # ============================================
