@@ -200,8 +200,7 @@ aws:ecr-push-check:
   tags: [k8s]
   when: manual
   script:
-    - apk add --no-cache python3 py3-pip
-    - pip3 install --no-cache-dir awscli
+    - apk add --no-cache aws-cli
     - |
       set -e
       test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
