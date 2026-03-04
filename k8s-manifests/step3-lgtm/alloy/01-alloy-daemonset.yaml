@@ -147,6 +147,7 @@ rules:
       - services
       - endpoints
       - pods
+      - pods/log
       - namespaces
     verbs: ["get", "list", "watch"]
   - apiGroups: ["networking.k8s.io"]
