@@ -38,3 +38,6 @@ spec:
                       MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEQB0CTxfmiWUmcHj9cLeVx1+TlWJs
                       8ePq0NrC06ITTozDWsXA5kNh83vCYB8IwSZxTopP1t1ufj+3B2SYxCdC3g==
                       -----END PUBLIC KEY-----
+                    secret:
+                      name: gitlab-registry-secret
+                      namespace: kyverno

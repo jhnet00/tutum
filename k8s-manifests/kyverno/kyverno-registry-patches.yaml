@@ -1,0 +1,51 @@
+# Kyverno registry credential patches
+# Purpose: Allow Kyverno to verify cosign signatures on private GitLab registry images
+#
+# Apply order:
+# 1. Create registry secret in kyverno namespace (from tutum-app namespace):
+#    kubectl get secret gitlab-registry-secret -n tutum-app -o json \
+#      | python3 -c "import json,sys; s=json.load(sys.stdin); s['metadata']={'name':'gitlab-registry-secret','namespace':'kyverno'}; print(json.dumps(s))" \
+#      | kubectl apply -f -
+#
+# 2. Apply admission-controller patch:
+#    kubectl patch deployment kyverno-admission-controller -n kyverno --type=json \
+#      -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--imagePullSecrets=gitlab-registry-secret"}]'
+#
+# 3. Apply background-controller patch:
+#    kubectl patch deployment kyverno-background-controller -n kyverno --type=json \
+#      -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--imagePullSecrets=gitlab-registry-secret"}]'
+#
+# NOTE: These patches are applied directly to the live deployments (Kyverno is Helm-managed).
+# Re-apply after any `helm upgrade kyverno` if the args are reset.
+#
+# Verification:
+#   kubectl get deployment kyverno-admission-controller -n kyverno \
+#     -o jsonpath='{.spec.template.spec.containers[0].args}' | grep imagePull
+---
+# Strategic merge patch for kyverno-admission-controller
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kyverno-admission-controller
+  namespace: kyverno
+spec:
+  template:
+    spec:
+      containers:
+        - name: kyverno
+          args:
+            - --imagePullSecrets=gitlab-registry-secret
+---
+# Strategic merge patch for kyverno-background-controller
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kyverno-background-controller
+  namespace: kyverno
+spec:
+  template:
+    spec:
+      containers:
+        - name: controller
+          args:
+            - --imagePullSecrets=gitlab-registry-secret
