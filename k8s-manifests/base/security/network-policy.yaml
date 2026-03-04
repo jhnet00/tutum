@@ -49,7 +49,26 @@ spec:
               kubernetes.io/metadata.name: monitoring
 
 ---
-# 4. 네임스페이스 내부 허용 (redis-exporter→Redis, kafka-exporter→Kafka, MongoDB 레플리카 통신)
+# 4. keda 허용 (KEDA operator → Kafka Consumer Lag 메트릭 수집)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-keda
+  namespace: tutum-data
+spec:
+  podSelector:
+    matchLabels:
+      app: kafka
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: keda
+
+---
+# 5. 네임스페이스 내부 허용 (redis-exporter→Redis, kafka-exporter→Kafka, MongoDB 레플리카 통신)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -69,7 +88,7 @@ spec:
 # 허용: istio-system (Gateway), monitoring (Alloy 스크랩), 네임스페이스 내부
 # ==========================================================
 
-# 5. 기본 차단 (tutum-app)
+# 6. 기본 차단 (tutum-app)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
