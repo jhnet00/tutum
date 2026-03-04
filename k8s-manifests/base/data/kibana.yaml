@@ -36,7 +36,7 @@ spec:
         app: kibana
     spec:
       nodeSelector:
-        workload: data
+        workload: app
       containers:
         - name: kibana
           image: docker.elastic.co/kibana/kibana:8.17.0
