@@ -123,27 +123,50 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="text-xs font-semibold text-white/40 uppercase tracking-widest mb-3">{children}</h3>;
 }
 function Info({ tip }: { tip: string }) {
+  const [pinned, setPinned] = useState(false);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const spanRef = useRef<HTMLSpanElement>(null);
+
+  const calcPos = () => {
+    if (spanRef.current) {
+      const r = spanRef.current.getBoundingClientRect();
+      setPos({ x: r.left, y: r.top });
+    }
+  };
+
+  const visible = pinned || pos !== null;
+
   return (
     <span
       ref={spanRef}
       className="ml-1.5 inline-block align-middle"
-      onMouseEnter={() => {
-        if (spanRef.current) {
-          const r = spanRef.current.getBoundingClientRect();
-          setPos({ x: r.left, y: r.top });
+      onMouseEnter={() => { calcPos(); }}
+      onMouseLeave={() => { if (!pinned) setPos(null); }}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (pinned) {
+          setPinned(false);
+          setPos(null);
+        } else {
+          calcPos();
+          setPinned(true);
         }
       }}
-      onMouseLeave={() => setPos(null)}
     >
-      <span className={`text-xs font-normal normal-case tracking-normal cursor-help transition-colors select-none ${pos ? "text-white/60" : "text-white/25"}`}>ⓘ</span>
-      {pos && (
+      <span className={`text-xs font-normal normal-case tracking-normal cursor-pointer transition-colors select-none ${visible ? "text-blue-400" : "text-white/30 hover:text-white/60"}`}>ⓘ</span>
+      {visible && pos && (
         <div
-          className="fixed z-[9999] w-64 bg-[#1a1f2e] border border-white/10 rounded-lg px-3 py-2.5 shadow-2xl whitespace-pre-line leading-relaxed pointer-events-none"
+          className="fixed z-[9999] w-72 bg-[#1a1f2e] border border-white/10 rounded-lg px-3 py-2.5 shadow-2xl whitespace-pre-line leading-relaxed"
           style={{ left: pos.x, top: pos.y - 8, transform: "translateY(-100%)" }}
+          onClick={(e) => e.stopPropagation()}
         >
           <p className="text-xs text-white/70">{tip}</p>
+          {pinned && (
+            <button
+              className="mt-2 text-[10px] text-white/30 hover:text-white/60"
+              onClick={() => { setPinned(false); setPos(null); }}
+            >닫기 ×</button>
+          )}
           <div className="absolute top-full left-3 w-0 h-0 border-l-[5px] border-r-[5px] border-t-[5px] border-l-transparent border-r-transparent border-t-[#1a1f2e]" />
         </div>
       )}
