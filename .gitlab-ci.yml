@@ -145,6 +145,51 @@ test:backend:
     - if: '$CI_PIPELINE_SOURCE == "api"'
 
 # ============================================
+# Stage 2: AWS Precheck (Manual)
+# ============================================
+
+aws:precheck:
+  stage: test
+  image: amazon/aws-cli:2.15.44
+  tags: [k8s]
+  when: manual
+  script:
+    - test -n "${AWS_ACCESS_KEY_ID:-}" || (echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1)
+    - test -n "${AWS_SECRET_ACCESS_KEY:-}" || (echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1)
+    - test -n "${AWS_DEFAULT_REGION:-}" || (echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1)
+    - test -n "${AWS_ACCOUNT_ID:-}" || (echo "ERROR: AWS_ACCOUNT_ID is missing"; exit 1)
+    - aws --version
+    - aws sts get-caller-identity --region "${AWS_DEFAULT_REGION}"
+    - aws ecr describe-repositories --region "${AWS_DEFAULT_REGION}" --query "repositories[].repositoryName" || true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
+
+aws:ecr-bootstrap:
+  stage: test
+  image: amazon/aws-cli:2.15.44
+  tags: [k8s]
+  when: manual
+  script:
+    - test -n "${AWS_DEFAULT_REGION:-}" || (echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1)
+    - |
+      for repo in tutum/frontend tutum/backend tutum/workers; do
+        aws ecr describe-repositories \
+          --region "${AWS_DEFAULT_REGION}" \
+          --repository-names "$repo" >/dev/null 2>&1 || \
+        aws ecr create-repository \
+          --region "${AWS_DEFAULT_REGION}" \
+          --repository-name "$repo"
+      done
+    - aws ecr describe-repositories --region "${AWS_DEFAULT_REGION}" --query "repositories[].repositoryName"
+    - aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" >/dev/null
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
+
+# ============================================
 # Stage 3: SonarQube Scan
 # ============================================
 
