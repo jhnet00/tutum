@@ -996,8 +996,8 @@ async def get_traces(limit: int = 20, min_duration_ms: int = 50):
     Tempo에서 최근 슬로우 요청 트레이스 조회.
     service.name=tutum-backend, 최근 1시간 내.
     """
-    end_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
-    start_ns = end_ns - 3_600_000_000_000  # 1시간
+    end_s = int(datetime.now(timezone.utc).timestamp())
+    start_s = end_s - 3600  # 1시간
 
     try:
         resp = await _HTTP_MISC.get(
@@ -1005,8 +1005,8 @@ async def get_traces(limit: int = 20, min_duration_ms: int = 50):
             params={
                 "service.name": "tutum-backend",
                 "limit":         limit,
-                "start":         start_ns,
-                "end":           end_ns,
+                "start":         start_s,
+                "end":           end_s,
                 "minDuration":   f"{min_duration_ms}ms",
             },
         )
