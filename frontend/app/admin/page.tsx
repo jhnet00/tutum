@@ -824,6 +824,14 @@ export default function AdminDashboard() {
                             : "N/A"}
                         </span>
                       </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">JVM Heap</span>
+                        <span className="font-mono" style={{ color: (dataMetrics?.elasticsearch.jvm_heap_pct ?? 0) > 80 ? C.red : C.emerald }}>
+                          {dataMetrics?.elasticsearch.available
+                            ? <Val v={dataMetrics.elasticsearch.jvm_heap_pct} unit="%" decimals={0} />
+                            : "N/A"}
+                        </span>
+                      </div>
                     </div>
                   )}
                 </Card>
@@ -835,6 +843,12 @@ export default function AdminDashboard() {
                     <p className="text-xs text-white/20">메트릭 없음</p>
                   ) : (
                     <div className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">커넥션</span>
+                        <span className="font-mono font-bold" style={{ color: (dataMetrics.redis.clients ?? 0) > 50 ? C.amber : C.emerald }}>
+                          {dataMetrics.redis.clients ?? "N/A"}
+                        </span>
+                      </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-white/50">Hit Rate</span>
                         <span className="font-mono font-bold" style={{ color: C.emerald }}>
