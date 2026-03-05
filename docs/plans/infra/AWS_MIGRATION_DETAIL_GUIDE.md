@@ -25,7 +25,7 @@
 | **MariaDB** | 211.46.52.153:15432 (학원 공인 IP) | **변경 없음** (EKS NAT GW → 직접 접속) |
 | **Redis** | K8s StatefulSet (tutum-data, 3-replica) | EKS StatefulSet 그대로 이식 |
 | **Kafka** | K8s StatefulSet, KRaft 3-replica | EKS StatefulSet 그대로 이식 |
-| **Elasticsearch** | Node3 Docker (192.168.56.13:9200) | EC2 Docker (VPC 내) 또는 OpenSearch Service |
+| **Elasticsearch** | K8s StatefulSet (tutum-data, PVC 30Gi) | EKS StatefulSet 그대로 이식 + S3 스냅샷 복원 |
 | **MinIO** | K8s StatefulSet 4-pod (tutum-storage) | S3 버킷으로 대체 |
 | **모니터링** | Docker Compose on 192.168.0.230 | EC2 Docker Compose (EKS VPC private subnet) |
 | **GitOps** | GitLab CI → ArgoCD → on-prem K8s | GitLab CI → ECR → ArgoCD → EKS |
@@ -48,7 +48,7 @@
   ├─ tutum-data (Redis, Kafka, MongoDB-backup) → EKS tutum-data ns
   ├─ tutum-storage (MinIO 4-pod)           →  S3 버킷
   ├─ monitoring VM (192.168.0.230 LGTM)    →  EC2 (EKS VPC private subnet)
-  └─ Elasticsearch (Node3 Docker)          →  EC2 (VPC 내)
+  └─ Elasticsearch (K8s StatefulSet)        →  EKS StatefulSet (그대로 이식)
 
 마이그레이션 순서:
 Phase A (D+0~3)  : AWS 기반 준비 (계정, ECR, VPC 설계)
@@ -779,41 +779,47 @@ kubectl apply -f k8s-manifests/base/messaging/kafka-topics.yaml
 
 ### D-4. Elasticsearch 이전
 
-**현재 위치**: Node3 VM Docker (192.168.56.13:9200)
-**이전 선택지**:
-- (A) EC2 Docker (EKS VPC private subnet 내) — 현재 설정과 동일, 비용 저렴
-- (B) Amazon OpenSearch Service — 관리형, 비용 증가
+**현재 위치**: K8s StatefulSet (`tutum-data/elasticsearch`, PVC `es-data-elasticsearch-0` 30Gi)
 
-**권장: (A) EC2 Docker** (팀 프로젝트 규모 적합)
+> ES는 이미 K8s 워크로드 — EC2 Docker 이전 불필요.
+> EKS에도 동일한 `elasticsearch.yaml` StatefulSet 배포 + S3 스냅샷으로 데이터 복원.
 
 ```bash
-# EKS VPC private subnet에 EC2 생성 (t3.large — ES는 메모리 필요)
-aws ec2 run-instances \
-  --image-id ami-0c9c942bd7bf113a2 \
-  --instance-type t3.large \
-  --subnet-id <eks-vpc-private-subnet-10.0.4.0/24> \
-  --security-group-ids <es-sg> \
-  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=tutum-elasticsearch}]'
+# ── Step 1: 온프레미스 ES → S3 스냅샷 (이전용 임시) ──
+# repository-s3 플러그인이 설치된 경우 (elasticsearch.yaml initContainer 필요)
+ES="http://elasticsearch.tutum-data.svc.cluster.local:9200"
 
-# Elasticsearch 스냅샷 생성 (온프레미스 Node3에서)
-# 스냅샷 저장소를 S3로 설정 (이전용 임시)
-curl -X PUT "http://localhost:9200/_snapshot/s3_backup" -H 'Content-Type: application/json' -d '{
-  "type": "s3",
-  "settings": {
-    "bucket": "tutum-prod-storage",
-    "region": "ap-northeast-2",
-    "base_path": "elasticsearch-snapshots"
-  }
-}'
+curl -X PUT "${ES}/_snapshot/s3_migration" \
+  -H 'Content-Type: application/json' -d '{
+    "type": "s3",
+    "settings": {
+      "bucket": "tutum-prod-storage",
+      "region": "ap-northeast-2",
+      "base_path": "elasticsearch-migration"
+    }
+  }'
 
-curl -X PUT "http://localhost:9200/_snapshot/s3_backup/migration_snap?wait_for_completion=true"
+curl -X PUT "${ES}/_snapshot/s3_migration/onprem_final?wait_for_completion=true"
 
-# 새 EC2에서 복원
-curl -X POST "http://localhost:9200/_snapshot/s3_backup/migration_snap/_restore"
+# ── Step 2: EKS에 StatefulSet 그대로 배포 ──
+kubectl apply -f k8s-manifests/base/data/elasticsearch.yaml
+kubectl rollout status statefulset elasticsearch -n tutum-data
 
-# 백엔드 환경변수 업데이트
-# ELASTICSEARCH_URL=http://192.168.56.13:9200
-# → ELASTICSEARCH_URL=http://10.0.4.x:9200  (EKS VPC private subnet EC2 내부 IP)
+# ── Step 3: EKS ES에서 S3 스냅샷 복원 ──
+curl -X PUT "${ES}/_snapshot/s3_migration" \
+  -H 'Content-Type: application/json' -d '{
+    "type": "s3",
+    "settings": {
+      "bucket": "tutum-prod-storage",
+      "region": "ap-northeast-2",
+      "base_path": "elasticsearch-migration"
+    }
+  }'
+
+curl -X POST "${ES}/_snapshot/s3_migration/onprem_final/_restore"
+
+# 백엔드 환경변수: 변경 없음 (K8s 서비스명 동일)
+# ELASTICSEARCH_URL=http://elasticsearch.tutum-data.svc.cluster.local:9200
 ```
 
 ---

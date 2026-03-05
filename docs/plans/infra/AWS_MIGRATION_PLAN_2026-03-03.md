@@ -24,7 +24,7 @@
 
 > **단일 VPC 채택 이유**: GitLab은 SaaS(gitlab.com)이고 GitLab Runner는 EKS 내 pod로 실행.
 > Jenkins/GitLab self-hosted 서버가 없으므로 별도 CI/CD VPC가 불필요.
-> Monitoring EC2, Elasticsearch EC2도 EKS VPC 내 private subnet에 배치.
+> Monitoring EC2만 EKS VPC private subnet에 배치. Elasticsearch는 EKS 내 StatefulSet.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
