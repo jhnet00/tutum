@@ -1,0 +1,132 @@
+# Elasticsearch 일일 스냅샷 백업 CronJob
+# 매일 03:00 KST (18:00 UTC) 실행
+# 방식: ES Snapshot API → MinIO (S3 호환 repository)
+# 보관: 14일
+#
+# 사전 조건:
+#   ES 컨테이너에 repository-s3 플러그인 설치 필요
+#   Node3에서: docker exec elasticsearch elasticsearch-plugin install repository-s3
+#   → 설치 후 컨테이너 재시작 필요 (1회만)
+#
+# MinIO 스냅샷 저장 경로: tutum-backups/elasticsearch/
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: elasticsearch-backup
+  namespace: tutum-data
+  labels:
+    app: elasticsearch-backup
+    app.kubernetes.io/part-of: tutum
+spec:
+  schedule: "0 18 * * *"   # 03:00 KST
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: elasticsearch-backup
+              image: curlimages/curl:8.5.0
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  DATE=$(date +%Y-%m-%d)
+                  SNAPSHOT="snap-${DATE}"
+                  ES_HOST="${ELASTICSEARCH_HOST:-192.168.56.13}"
+                  ES_PORT="${ELASTICSEARCH_PORT:-9200}"
+                  ES_URL="http://${ES_HOST}:${ES_PORT}"
+                  REPO_NAME="minio_backup"
+
+                  echo "[$(date)] Elasticsearch 백업 시작: ${DATE}"
+
+                  # ── Step 1: S3(MinIO) 스냅샷 저장소 등록 (없으면 생성) ──
+                  REPO_EXISTS=$(curl -s -o /dev/null -w "%{http_code}" \
+                    "${ES_URL}/_snapshot/${REPO_NAME}")
+
+                  if [ "$REPO_EXISTS" != "200" ]; then
+                    echo "[$(date)] 스냅샷 저장소 등록: ${REPO_NAME}"
+                    curl -sf -X PUT "${ES_URL}/_snapshot/${REPO_NAME}" \
+                      -H 'Content-Type: application/json' \
+                      -d "{
+                        \"type\": \"s3\",
+                        \"settings\": {
+                          \"endpoint\": \"http://minio.tutum-storage.svc.cluster.local:9000\",
+                          \"protocol\": \"http\",
+                          \"bucket\": \"tutum-backups\",
+                          \"base_path\": \"elasticsearch\",
+                          \"path_style_access\": true,
+                          \"access_key\": \"${MINIO_ROOT_USER}\",
+                          \"secret_key\": \"${MINIO_ROOT_PASSWORD}\"
+                        }
+                      }"
+                    echo "[$(date)] 저장소 등록 완료"
+                  else
+                    echo "[$(date)] 저장소 이미 존재: ${REPO_NAME}"
+                  fi
+
+                  # ── Step 2: 스냅샷 생성 (완료까지 대기) ──
+                  echo "[$(date)] 스냅샷 생성: ${SNAPSHOT}"
+                  RESULT=$(curl -sf -X PUT \
+                    "${ES_URL}/_snapshot/${REPO_NAME}/${SNAPSHOT}?wait_for_completion=true" \
+                    -H 'Content-Type: application/json' \
+                    -d '{"include_global_state": false}')
+
+                  echo "[$(date)] 스냅샷 결과: ${RESULT}"
+
+                  # 실패 확인
+                  STATE=$(echo "$RESULT" | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4)
+                  if [ "$STATE" != "SUCCESS" ]; then
+                    echo "[ERROR] 스냅샷 상태: ${STATE} (SUCCESS 아님)"
+                    exit 1
+                  fi
+
+                  echo "[$(date)] 스냅샷 완료: ${SNAPSHOT} (${STATE})"
+
+                  # ── Step 3: 14일 이전 스냅샷 삭제 ──
+                  CUTOFF=$(date -d "14 days ago" +%Y-%m-%d 2>/dev/null || \
+                            date -v-14d +%Y-%m-%d)
+
+                  echo "[$(date)] 14일 이전 스냅샷 정리 (기준: ${CUTOFF})"
+
+                  # 전체 스냅샷 목록 조회 후 오래된 것 삭제
+                  SNAPSHOTS=$(curl -sf "${ES_URL}/_snapshot/${REPO_NAME}/_all" | \
+                    grep -o '"snapshot":"snap-[^"]*"' | cut -d'"' -f4)
+
+                  for SNAP in $SNAPSHOTS; do
+                    SNAP_DATE=$(echo "$SNAP" | sed 's/snap-//')
+                    if [ "$SNAP_DATE" \< "$CUTOFF" ]; then
+                      echo "[$(date)] 삭제: ${SNAP}"
+                      curl -sf -X DELETE "${ES_URL}/_snapshot/${REPO_NAME}/${SNAP}" || true
+                    fi
+                  done
+
+                  echo "[$(date)] Elasticsearch 백업 완료"
+              env:
+                - name: ELASTICSEARCH_HOST
+                  value: "192.168.56.13"
+                - name: ELASTICSEARCH_PORT
+                  value: "9200"
+                - name: MINIO_ROOT_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-secret
+                      key: MINIO_ROOT_USER
+                - name: MINIO_ROOT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-secret
+                      key: MINIO_ROOT_PASSWORD
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi

@@ -241,6 +241,103 @@ groups:
         labels:
           severity: warning
 
+      # ──────────────────────────────────────────
+      # 백업 모니터링 알림
+      # ──────────────────────────────────────────
+
+      - uid: bkp001cronjobfail
+        title: BackupCronJobFailed
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: PAE45454D0EDB9216
+            model:
+              # backup CronJob 실패 (mongodb-backup, etcd-backup, elasticsearch-backup)
+              expr: 'kube_job_status_failed{namespace=~"tutum-.*|kube-system", job_name=~".*backup.*"} > 0'
+              refId: A
+          - refId: C
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: classic_conditions
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+        noDataState: OK
+        execErrState: Alerting
+        for: 0s
+        annotations:
+          summary: "백업 CronJob 실패: {{ $labels.job_name }} ({{ $labels.namespace }})"
+          description: "백업 작업이 실패했습니다. 즉시 확인이 필요합니다."
+        labels:
+          severity: critical
+
+      - uid: bkp002miniousage
+        title: MinIOStorageHigh
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: PAE45454D0EDB9216
+            model:
+              # MinIO 사용량 80% 초과 (minio_cluster_capacity_usable_free_bytes 기준)
+              expr: '1 - (minio_cluster_capacity_usable_free_bytes / minio_cluster_capacity_usable_total_bytes) > 0.8'
+              refId: A
+          - refId: C
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: classic_conditions
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+        noDataState: OK
+        execErrState: OK
+        for: 10m
+        annotations:
+          summary: "MinIO 사용량 80% 초과 — 백업 공간 부족 위험"
+          description: "MinIO 스토리지 사용량이 80%를 넘었습니다. 오래된 백업 정리 또는 용량 확장이 필요합니다."
+        labels:
+          severity: warning
+
+      - uid: bkp003missedbackup
+        title: BackupMissed3Days
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange: {from: 259200, to: 0}   # 72시간 = 3일
+            datasourceUid: PAE45454D0EDB9216
+            model:
+              # 최근 3일간 backup job이 한 번도 성공하지 않은 경우
+              expr: 'sum(kube_job_status_succeeded{namespace=~"tutum-.*|kube-system", job_name=~".*backup.*"}) == 0'
+              refId: A
+          - refId: C
+            relativeTimeRange: {from: 259200, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: classic_conditions
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [A]}
+                  reducer: {params: [], type: last}
+        noDataState: Alerting   # 데이터 없으면 = 백업 자체가 안 돌았을 가능성
+        execErrState: Alerting
+        for: 0s
+        annotations:
+          summary: "3일 연속 백업 누락 — 즉각 점검 필요"
+          description: "최근 72시간 내 성공한 백업 CronJob이 없습니다."
+        labels:
+          severity: critical
+
 contactPoints:
   - orgId: 1
     name: slack-alerts
@@ -248,7 +345,28 @@ contactPoints:
       - uid: slack-alerts
         type: slack
         disableResolveMessage: false
+        settings:
+          # Slack Incoming Webhook URL
+          # Slack App 설정: https://api.slack.com/apps → Incoming Webhooks
+          # 채널: #tutum-alerts
+          # docker-compose.yml 환경변수 GF_SLACK_WEBHOOK_URL 로 주입
+          url: "${SLACK_WEBHOOK_URL}"
+          title: |
+            [{{ .Status | toUpper }}{{ if eq .Status "firing" }} ({{ .Alerts.Firing | len }}){{ end }}] {{ .CommonLabels.alertname }}
+          text: |
+            {{ range .Alerts }}
+            *심각도*: {{ .Labels.severity }}
+            *요약*: {{ .Annotations.summary }}
+            {{ if .Annotations.description }}*상세*: {{ .Annotations.description }}{{ end }}
+            {{ end }}
+          mentionChannel: "here"   # critical 알림 시 @here 멘션
 
 policies:
   - receiver: slack-alerts
     group_by: [grafana_folder, alertname]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    # critical 알림은 바로, warning은 그룹핑 후 전송
+    matchers:
+      - alertname != ""

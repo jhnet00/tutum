@@ -75,6 +75,11 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=tutum2026!
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+      # Slack Incoming Webhook URL — alert-rules.yml에서 ${SLACK_WEBHOOK_URL}로 참조
+      # 발급: https://api.slack.com/apps → 앱 선택 → Incoming Webhooks → Add New Webhook
+      # 채널: #tutum-alerts
+      # 형식: https://hooks.slack.com/services/T.../B.../...
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
     depends_on:
       loki:
         condition: service_healthy
