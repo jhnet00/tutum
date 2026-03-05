@@ -54,19 +54,20 @@ async function handler(request: NextRequest, path: string[]) {
     if ([301, 302, 307, 308].includes(upstream.status)) {
       const location = upstream.headers.get("location");
       if (location) {
+        const redirectHeaders = new Headers();
+        // Set-Cookie 전달 (OAuth state 쿠키 포함)
+        const setCookiesOnRedirect = (upstream.headers as any).getSetCookie?.() ?? [];
+        for (const cookie of setCookiesOnRedirect) {
+          redirectHeaders.append("set-cookie", cookie);
+        }
         const normalizedBase = baseUrl.replace(/\/$/, "");
         if (location.startsWith(normalizedBase)) {
           const internalPath = location.slice(normalizedBase.length);
-          const rewritten = `/api/proxy${internalPath}`;
-          return new Response(null, {
-            status: upstream.status,
-            headers: { location: rewritten },
-          });
+          redirectHeaders.set("location", `/api/proxy${internalPath}`);
+        } else {
+          redirectHeaders.set("location", location);
         }
-        return new Response(null, {
-          status: upstream.status,
-          headers: { location },
-        });
+        return new Response(null, { status: upstream.status, headers: redirectHeaders });
       }
     }
 
