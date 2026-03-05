@@ -261,6 +261,47 @@ aws:ecr-push-check:
       when: manual
     - when: never
 
+aws:eks-cluster-check:
+  stage: test
+  image: amazon/aws-cli:2.15.44
+  tags: [k8s]
+  when: manual
+  script:
+    - |
+      set -e
+      test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
+      test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
+      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+      test -n "${AWS_ACCOUNT_ID:-}" || { echo "ERROR: AWS_ACCOUNT_ID is missing"; exit 1; }
+      test -n "${EKS_CLUSTER_NAME_STG:-}" || { echo "ERROR: EKS_CLUSTER_NAME_STG is missing"; exit 1; }
+
+      echo "Checking AWS identity..."
+      aws sts get-caller-identity --region "${AWS_DEFAULT_REGION}"
+
+      echo "Checking EKS cluster: ${EKS_CLUSTER_NAME_STG}"
+      aws eks describe-cluster \
+        --region "${AWS_DEFAULT_REGION}" \
+        --name "${EKS_CLUSTER_NAME_STG}" \
+        --query "cluster.{name:name,status:status,version:version,platformVersion:platformVersion,endpoint:endpoint}"
+
+      echo "Checking nodegroups..."
+      NG_LIST="$(aws eks list-nodegroups --region "${AWS_DEFAULT_REGION}" --cluster-name "${EKS_CLUSTER_NAME_STG}" --query 'nodegroups' --output text)"
+      if [ -z "${NG_LIST}" ] || [ "${NG_LIST}" = "None" ]; then
+        echo "WARNING: No nodegroups found for cluster ${EKS_CLUSTER_NAME_STG}"
+      else
+        for ng in ${NG_LIST}; do
+          aws eks describe-nodegroup \
+            --region "${AWS_DEFAULT_REGION}" \
+            --cluster-name "${EKS_CLUSTER_NAME_STG}" \
+            --nodegroup-name "${ng}" \
+            --query "nodegroup.{name:nodegroupName,status:status,desired:scalingConfig.desiredSize,min:scalingConfig.minSize,max:scalingConfig.maxSize}"
+        done
+      fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
+
 # ============================================
 # Stage 3: SonarQube Scan
 # ============================================
