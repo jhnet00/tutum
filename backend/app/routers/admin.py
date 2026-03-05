@@ -1131,10 +1131,12 @@ async def get_data_metrics():
                 elapsed = now_ts - _mongo_io_prev["ts"]
                 if elapsed > 0:
                     prev = _mongo_io_prev["ops"]
-                    reads = max(0, (ops.get("query", 0) + ops.get("getmore", 0))
-                                  - (prev.get("query", 0) + prev.get("getmore", 0)))
-                    writes = max(0, (ops.get("insert", 0) + ops.get("update", 0) + ops.get("delete", 0))
-                                  - (prev.get("insert", 0) + prev.get("update", 0) + prev.get("delete", 0)))
+                    cur_reads = ops.get("query", 0) + ops.get("getmore", 0)
+                    prev_reads = prev.get("query", 0) + prev.get("getmore", 0)
+                    cur_writes = ops.get("insert", 0) + ops.get("update", 0) + ops.get("delete", 0)
+                    prev_writes = prev.get("insert", 0) + prev.get("update", 0) + prev.get("delete", 0)
+                    reads = max(0, cur_reads - prev_reads)
+                    writes = max(0, cur_writes - prev_writes)
                     ops_read_per_sec = round(reads / elapsed, 1)
                     ops_write_per_sec = round(writes / elapsed, 1)
             _mongo_io_prev = {"ts": now_ts, "ops": dict(ops)}
