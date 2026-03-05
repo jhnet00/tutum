@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 MIMIR_URL = os.getenv("MIMIR_URL", "http://192.168.0.230:9009/prometheus")
 LOKI_URL = os.getenv("LOKI_URL", "http://192.168.0.230:3100")
 
-_DEFAULT_ADMIN_NETWORKS = "127.0.0.1/8,192.168.0.0/24"
+_DEFAULT_ADMIN_NETWORKS = "127.0.0.1/8,192.168.0.0/24,10.0.0.0/8"
 
 
 def _parse_admin_networks(raw_networks: str) -> list:
