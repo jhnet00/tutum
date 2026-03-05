@@ -1157,6 +1157,10 @@ async def get_data_metrics():
         "es_index_time": ["sum(rate(elasticsearch_indices_indexing_index_time_seconds_total[5m]))"],
         "es_index_total": ["sum(rate(elasticsearch_indices_indexing_index_total[5m]))"],
         "es_thread_rejected": ['sum(increase(elasticsearch_thread_pool_rejected_count{type="write"}[5m]))'],
+        "es_store_bytes": [
+            "sum(elasticsearch_indices_store_size_bytes_total)",
+            "sum(elasticsearch_indices_store_size_bytes)",
+        ],
     }
 
     raw: dict = {}
@@ -1235,6 +1239,37 @@ async def get_data_metrics():
 
     def to_mbps(v): return round(v / 1024 / 1024, 2) if v is not None else None
 
+    # Per-node disk usage (instance-level queries)
+    disk_nodes: list = []
+    try:
+        size_data = await _mimir_query(
+            "/api/v1/query",
+            params={"query": 'node_filesystem_size_bytes{mountpoint="/"}', **instant_params},
+        )
+        avail_data = await _mimir_query(
+            "/api/v1/query",
+            params={"query": 'node_filesystem_avail_bytes{mountpoint="/"}', **instant_params},
+        )
+        if size_data and avail_data:
+            size_results = size_data.get("data", {}).get("result", [])
+            avail_results = avail_data.get("data", {}).get("result", [])
+            avail_by_inst = {r["metric"].get("instance", ""): float(r["value"][1]) for r in avail_results}
+            for r in size_results:
+                inst = r["metric"].get("instance", "")
+                total = float(r["value"][1])
+                avail = avail_by_inst.get(inst, 0)
+                used = total - avail
+                hostname = inst.rsplit(":", 1)[0]
+                disk_nodes.append({
+                    "hostname": hostname,
+                    "total_gb": round(total / 1024**3, 1),
+                    "used_gb": round(used / 1024**3, 1),
+                    "used_pct": round(used / total * 100, 1) if total > 0 else 0,
+                })
+            disk_nodes.sort(key=lambda x: x["hostname"])
+    except Exception as e:
+        logger.warning("Per-node disk query failed: %s", e)
+
     return {
         "redis": {
             "memory_used_gb":  to_gb(raw.get("redis_memory_used")),
@@ -1268,6 +1303,7 @@ async def get_data_metrics():
                 else None
             ),
             "thread_rejected":  int(raw["es_thread_rejected"]) if raw.get("es_thread_rejected") is not None else None,
+            "store_gb":         to_gb(raw.get("es_store_bytes")),
             "available":        raw.get("es_jvm_heap_used") is not None,
         },
         "disk": {
@@ -1286,6 +1322,7 @@ async def get_data_metrics():
                 else None
             ),
             "available":      raw.get("disk_read_bps") is not None,
+            "nodes":          disk_nodes,
         },
         "mongodb": mongo_io,
     }

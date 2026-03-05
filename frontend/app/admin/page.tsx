@@ -44,8 +44,8 @@ type PvcInfo    = { name: string; namespace: string; status: string; capacity: s
 type DataMetrics = {
   redis:         { memory_used_gb: number|null; memory_max_gb: number|null; memory_pct: number|null; clients: number|null; hit_rate_pct: number|null; available: boolean };
   kafka:         { consumer_lag: number|null; throughput_msg_per_min: number|null; available: boolean };
-  elasticsearch: { indexing_rate: number|null; jvm_heap_used_gb: number|null; jvm_heap_max_gb: number|null; jvm_heap_pct: number|null; search_qps: number|null; search_latency_ms: number|null; index_latency_ms: number|null; thread_rejected: number|null; available: boolean };
-  disk:          { read_mbps: number|null; write_mbps: number|null; total_gb: number|null; avail_gb: number|null; used_gb: number|null; used_pct: number|null; available: boolean };
+  elasticsearch: { indexing_rate: number|null; jvm_heap_used_gb: number|null; jvm_heap_max_gb: number|null; jvm_heap_pct: number|null; search_qps: number|null; search_latency_ms: number|null; index_latency_ms: number|null; thread_rejected: number|null; store_gb: number|null; available: boolean };
+  disk:          { read_mbps: number|null; write_mbps: number|null; total_gb: number|null; avail_gb: number|null; used_gb: number|null; used_pct: number|null; available: boolean; nodes: {hostname: string; total_gb: number; used_gb: number; used_pct: number}[] };
   mongodb:       { connections: number|null; active_readers: number|null; active_writers: number|null; queued_readers: number|null; queued_writers: number|null; ops_read_per_sec: number|null; ops_write_per_sec: number|null; available: boolean };
 };
 type BackupItem = { name: string; cronjob: string; namespace: string; schedule: string|null; last_run_at: string|null; last_success_at: string|null; status: string; last_error: string|null };
@@ -948,7 +948,7 @@ export default function AdminDashboard() {
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {/* MongoDB */}
                 <Card>
-                  <p className="text-xs text-white/40 mb-3">🗄 MongoDB</p>
+                  <p className="text-xs text-white/40 mb-3">🗄 MongoDB<Info tip={"뉴스·자산·사용자 원본 데이터 저장소\n전체 뉴스: clouddx.news 컬렉션 문서 수\n최근 1h 추가: published_at 기준 (파이프라인 지연 확인)\nI/O ops/sec 및 커넥션은 MongoDB I/O 카드 참고"} /></p>
                   {loadingPipeline ? <Skel h="h-16" /> : (
                     <div className="space-y-1">
                       <div className="flex justify-between text-sm">
@@ -969,7 +969,7 @@ export default function AdminDashboard() {
 
                 {/* Elasticsearch */}
                 <Card>
-                  <p className="text-xs text-white/40 mb-3">🔍 Elasticsearch</p>
+                  <p className="text-xs text-white/40 mb-3">🔍 Elasticsearch<Info tip={"뉴스 전문 검색 인덱스 (news 인덱스)\nJVM Heap > 80% → GC 압박·성능 저하\n스토리지: 실제 인덱스 저장 용량 (node_exporter 디스크와 별개)\n검색 지연 > 100ms → 쿼리 튜닝 또는 샤드 재조정 필요\nRejected: write thread pool 과부하 → 인덱싱 유실 위험"} /></p>
                   {loadingPipeline ? <Skel h="h-16" /> : (
                     <div className="space-y-1">
                       <div className="flex justify-between text-sm">
@@ -1012,6 +1012,14 @@ export default function AdminDashboard() {
                           </span>
                         </div>
                       )}
+                      {dataMetrics?.elasticsearch.store_gb != null && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-white/50">스토리지</span>
+                          <span className="font-mono" style={{ color: C.cyan }}>
+                            <Val v={dataMetrics.elasticsearch.store_gb} unit=" GB" decimals={1} />
+                          </span>
+                        </div>
+                      )}
                       {(dataMetrics?.elasticsearch.thread_rejected ?? 0) > 0 && (
                         <div className="flex justify-between text-sm">
                           <span className="text-white/50">Rejected</span>
@@ -1026,7 +1034,7 @@ export default function AdminDashboard() {
 
                 {/* Redis (from data-metrics) */}
                 <Card>
-                  <p className="text-xs text-white/40 mb-3">⚡ Redis</p>
+                  <p className="text-xs text-white/40 mb-3">⚡ Redis<Info tip={"API 캐시·세션·OAuth 상태 저장소\nHit Rate < 80% → 캐시 미스 급증, DB 부하 증가\n커넥션 수 급증 → 커넥션 풀 부족 의심\n메모리 풀 시 eviction 발생 → 캐시 데이터 소실"} /></p>
                   {loadingDataM ? <Skel h="h-16" /> : !dataMetrics?.redis.available ? (
                     <p className="text-xs text-white/20">메트릭 없음</p>
                   ) : (
@@ -1059,7 +1067,7 @@ export default function AdminDashboard() {
 
                 {/* Kafka (from data-metrics) */}
                 <Card>
-                  <p className="text-xs text-white/40 mb-3">📨 Kafka</p>
+                  <p className="text-xs text-white/40 mb-3">📨 Kafka<Info tip={"뉴스·시세 파이프라인 메시지 브로커\nConsumer Lag: 미처리 메시지 수 (lag > 500 → WARN)\n처리량/분: 모든 파티션 오프셋 증가율 합산\nlag 고착 + 처리량 0 → consumer 장애 (파이프라인 탭 확인)"} /></p>
                   {loadingDataM ? <Skel h="h-16" /> : !dataMetrics?.kafka.available ? (
                     <p className="text-xs text-white/20">메트릭 없음</p>
                   ) : (
@@ -1084,7 +1092,7 @@ export default function AdminDashboard() {
                 <Card>
                   <p className="text-xs text-white/40 mb-3">
                     💾 Disk
-                    <Info tip={"클러스터 전체 노드의 디스크 I/O 처리량 및 용량 (node_exporter via Mimir)\n용량: 전체 노드 / 마운트포인트 합산\n사용률 70% WARN / 85% CRITICAL"} />
+                    <Info tip={"클러스터 전체 노드 디스크 (node_exporter via Mimir)\n용량: 노드별 / (루트) 마운트포인트 기준\n사용률 70% WARN / 85% CRITICAL\nI/O: 모든 노드 합산 읽기/쓰기 처리량"} />
                   </p>
                   {loadingDataM ? <Skel h="h-24" /> : !dataMetrics?.disk?.available ? (
                     <p className="text-xs text-white/20">node_exporter 미배포</p>
@@ -1117,6 +1125,19 @@ export default function AdminDashboard() {
                             : "N/A"}
                         </span>
                       </div>
+                      {dataMetrics.disk.nodes && dataMetrics.disk.nodes.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-white/10 space-y-1">
+                          {dataMetrics.disk.nodes.map(n => (
+                            <div key={n.hostname} className="flex items-center gap-2 text-xs">
+                              <span className="text-white/40 w-24 truncate shrink-0">{n.hostname}</span>
+                              <div className="flex-1 h-1 rounded-full bg-white/10">
+                                <div className="h-1 rounded-full" style={{ width: `${Math.min(n.used_pct, 100)}%`, background: n.used_pct >= 85 ? C.red : n.used_pct >= 70 ? C.amber : C.emerald }} />
+                              </div>
+                              <span className="font-mono text-white/60 w-10 text-right">{n.used_pct}%</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </Card>

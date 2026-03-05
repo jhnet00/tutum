@@ -16,7 +16,7 @@ data:
   KAFKA_INDEXER_GROUP_ID: "indexer-consumer-group"
   ES_INDEX: "news"
   ELASTICSEARCH_URL: "http://elasticsearch.tutum-data.svc.cluster.local:9200"
-  MONGO_DB: "tutum"
+  MONGO_DB: "clouddx"
   MONGO_COLL: "news"
   PRODUCER_RUN_FOREVER: "true"
   PRODUCER_POLL_INTERVAL_SEC: "30"
