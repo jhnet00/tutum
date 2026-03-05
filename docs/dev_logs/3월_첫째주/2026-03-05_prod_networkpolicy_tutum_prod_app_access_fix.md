@@ -2,7 +2,7 @@
 
 ## 1. 작업 요약
 - 작업 일시: 2026-03-05
-- 작업자: 박성준
+- 작업자: 김경윤
 - 브랜치: develop
 - 작업 목적: `tutum-production`의 `price-consumer` CrashLoopBackOff 원인(네임스페이스 간 NetworkPolicy 차단) 해소 및 프로덕션 앱 정상화
 

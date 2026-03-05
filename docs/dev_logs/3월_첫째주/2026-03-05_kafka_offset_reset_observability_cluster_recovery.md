@@ -1,7 +1,7 @@
 # Kafka Offset Reset, Admin Observability 확장, 클러스터 장애 복구
 
 **날짜**: 2026-03-05
-**작업자**: 박성준
+**작업자**: 김경윤
 **브랜치**: develop
 
 ---
