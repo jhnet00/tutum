@@ -32,6 +32,22 @@ spec:
               kubernetes.io/metadata.name: tutum-app
 
 ---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-tutum-prod-app
+  namespace: tutum-data
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tutum-prod-app
+
+---
 # 3. monitoring 허용 (Alloy → exporter /metrics 스크랩)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
