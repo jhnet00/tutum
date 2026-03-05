@@ -26,6 +26,9 @@
     - `readinessProbe.failureThreshold`: `3 -> 6`
     - `livenessProbe.initialDelaySeconds`: `30 -> 120`
     - `livenessProbe.failureThreshold`: `3 -> 6`
+  - File: `k8s-manifests/overlays/staging/kustomization.yaml`
+  - Set staging image tags to `2df8d9da` for `backend`, `backend/frontend`, `backend/workers`
+  - Purpose: align with currently verified running images and resolve Kyverno signature-enforcement sync block
 
 ## 3. Issues and Resolutions
 - Issue:
@@ -37,6 +40,11 @@
   - `argocd-repo-server` init container failed with `ln: Already exists`, leaving Argo apps in `Unknown/Progressing`
 - Resolution:
   - Patched init command to idempotent symlink creation (`ln -sf`) and restarted deployment
+
+- Issue:
+  - Staging auto-sync was blocked by Kyverno `verify-image-signature` policy for unsigned tag `48cb5aa1`
+- Resolution:
+  - Updated staging Kustomize image tags to signed/running tag `2df8d9da`
 
 - Issue:
   - `redis-1` failed with AOF corruption (`Bad file format ... appendonly.aof...`)
