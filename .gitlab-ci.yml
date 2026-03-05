@@ -529,7 +529,7 @@ sign:frontend:
   script:
     - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
-  allow_failure: true
+  allow_failure: false
   needs:
     - job: security:frontend
       optional: true
@@ -547,7 +547,7 @@ sign:backend:
   script:
     - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
-  allow_failure: true
+  allow_failure: false
   needs:
     - job: security:backend
       optional: true
@@ -566,7 +566,7 @@ sign:workers:
   script:
     - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
-  allow_failure: true
+  allow_failure: false
   needs:
     - job: security:workers
       optional: true
