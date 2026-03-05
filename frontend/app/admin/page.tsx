@@ -44,10 +44,12 @@ type PvcInfo    = { name: string; namespace: string; status: string; capacity: s
 type DataMetrics = {
   redis:         { memory_used_gb: number|null; memory_max_gb: number|null; memory_pct: number|null; clients: number|null; hit_rate_pct: number|null; available: boolean };
   kafka:         { consumer_lag: number|null; throughput_msg_per_min: number|null; available: boolean };
-  elasticsearch: { indexing_rate: number|null; jvm_heap_used_gb: number|null; jvm_heap_max_gb: number|null; jvm_heap_pct: number|null; available: boolean };
-  disk:          { read_mbps: number|null; write_mbps: number|null; available: boolean };
-  mongodb:       { connections: number|null; active_readers: number|null; active_writers: number|null; ops_read_per_sec: number|null; ops_write_per_sec: number|null; available: boolean };
+  elasticsearch: { indexing_rate: number|null; jvm_heap_used_gb: number|null; jvm_heap_max_gb: number|null; jvm_heap_pct: number|null; search_qps: number|null; search_latency_ms: number|null; index_latency_ms: number|null; thread_rejected: number|null; available: boolean };
+  disk:          { read_mbps: number|null; write_mbps: number|null; total_gb: number|null; avail_gb: number|null; used_gb: number|null; used_pct: number|null; available: boolean };
+  mongodb:       { connections: number|null; active_readers: number|null; active_writers: number|null; queued_readers: number|null; queued_writers: number|null; ops_read_per_sec: number|null; ops_write_per_sec: number|null; available: boolean };
 };
+type BackupItem = { name: string; cronjob: string; namespace: string; schedule: string|null; last_run_at: string|null; last_success_at: string|null; status: string; last_error: string|null };
+type AlertItem  = { level: "CRITICAL"|"WARN"; category: string; message: string; action: string };
 type TraceEntry = { traceID: string; rootServiceName: string; rootTraceName: string; durationMs: number; startTimeMs: number; isError: boolean; grafana_url: string };
 type TracesData = { traces: TraceEntry[]; error_traces: TraceEntry[]; client_error_traces: TraceEntry[]; available: boolean };
 
@@ -245,6 +247,9 @@ export default function AdminDashboard() {
   const [errorSummary, setErrorSummary] = useState<ErrorSummary[]>([]);
   const [diagnosis,    setDiagnosis]    = useState<Diagnosis | null>(null);
   const [pipelineDiag, setPipelineDiag] = useState<PipelineDiagnosis | null>(null);
+  const [backupStatus, setBackupStatus] = useState<BackupItem[] | null>(null);
+  const [alerts,       setAlerts]       = useState<AlertItem[]>([]);
+  const [loadingBackup,setLoadingBackup]= useState(true);
 
   // Loading states
   const [loadingNodes,   setLoadingNodes]   = useState(true);
@@ -331,6 +336,18 @@ export default function AdminDashboard() {
     finally { setLoadingDataM(false); }
   }, []);
 
+  const fetchBackupAndAlerts = useCallback(async () => {
+    try {
+      const [br, ar] = await Promise.all([
+        fetch(`${API_BASE}/api/v1/admin/backup-status`),
+        fetch(`${API_BASE}/api/v1/admin/action-needed`),
+      ]);
+      if (br.ok) { const d = await br.json(); setBackupStatus(d.backups); }
+      if (ar.ok) { const d = await ar.json(); setAlerts(d.alerts ?? []); }
+    } catch (e) { console.error("fetchBackupAndAlerts", e); }
+    finally { setLoadingBackup(false); }
+  }, []);
+
   const fetchNodeHistory = useCallback(async () => {
     try {
       const r = await fetch(`${API_BASE}/api/v1/admin/node-history`);
@@ -371,13 +388,13 @@ export default function AdminDashboard() {
 
   // Initial + polling
   useEffect(() => {
-    fetchNodes(); fetchPods(); fetchMetrics(); fetchStorage(); fetchDataMetrics(); fetchTraces(); fetchPipeline(); fetchLogs(); fetchNodeHistory();
-    const id30 = setInterval(() => { fetchNodes(); fetchPods(); fetchMetrics(); fetchStorage(); fetchDataMetrics(); fetchPipeline(); }, 30_000);
+    fetchNodes(); fetchPods(); fetchMetrics(); fetchStorage(); fetchDataMetrics(); fetchTraces(); fetchPipeline(); fetchLogs(); fetchNodeHistory(); fetchBackupAndAlerts();
+    const id30 = setInterval(() => { fetchNodes(); fetchPods(); fetchMetrics(); fetchStorage(); fetchDataMetrics(); fetchPipeline(); fetchBackupAndAlerts(); }, 30_000);
     const id10 = setInterval(() => fetchLogs(), 10_000);
     const id60 = setInterval(() => fetchTraces(), 60_000);
     const id5m = setInterval(() => fetchNodeHistory(), 300_000); // 5분마다 갱신
     return () => { clearInterval(id30); clearInterval(id10); clearInterval(id60); clearInterval(id5m); };
-  }, [fetchNodes, fetchPods, fetchMetrics, fetchStorage, fetchDataMetrics, fetchTraces, fetchPipeline, fetchLogs, fetchNodeHistory]);
+  }, [fetchNodes, fetchPods, fetchMetrics, fetchStorage, fetchDataMetrics, fetchTraces, fetchPipeline, fetchLogs, fetchNodeHistory, fetchBackupAndAlerts]);
 
   // Scroll logs to top when new entries arrive (newest-first order)
   useEffect(() => {
@@ -849,6 +866,32 @@ export default function AdminDashboard() {
         {activeTab === "pipeline" && (
           <div className="space-y-6">
 
+            {/* Action Needed 배너 */}
+            {alerts.length > 0 && (
+              <div className="space-y-2">
+                <SectionTitle>즉시 조치 필요<Info tip={"임계치 초과 항목 자동 감지\nCRITICAL: 즉시 대응 필요\nWARN: 모니터링 강화 권장\n30초마다 갱신"} /></SectionTitle>
+                {alerts.map((a, i) => (
+                  <div key={i} className="flex items-start gap-3 px-4 py-3 rounded-xl border text-sm"
+                    style={{
+                      borderColor: a.level === "CRITICAL" ? "rgba(239,68,68,0.4)" : "rgba(251,191,36,0.4)",
+                      background:  a.level === "CRITICAL" ? "rgba(239,68,68,0.08)" : "rgba(251,191,36,0.06)",
+                    }}>
+                    <span style={{ color: a.level === "CRITICAL" ? C.red : C.amber }} className="mt-0.5 shrink-0">
+                      {a.level === "CRITICAL" ? "🔴" : "🟡"}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-xs font-semibold" style={{ color: a.level === "CRITICAL" ? C.red : C.amber }}>{a.level}</span>
+                        <span className="text-white/30 text-xs">{a.category}</span>
+                      </div>
+                      <p className="text-white/80">{a.message}</p>
+                      <p className="text-white/40 text-xs mt-0.5">→ {a.action}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Worker groups */}
             {[
               { title: "뉴스 파이프라인",  workers: ["news-producer", "news-consumer", "elastic-consumer"], tip: "news-producer → Kafka → news-consumer(MongoDB 저장) → elastic-consumer(ES 인덱싱)\n전체 흐름이 멈추면 사용자에게 최신 뉴스 미노출\nlag 급증 또는 consumer 중단 시 파이프라인 진단 탭 확인" },
@@ -953,6 +996,30 @@ export default function AdminDashboard() {
                               : <span className="text-white/20">exporter 미배포</span>}
                         </span>
                       </div>
+                      {dataMetrics?.elasticsearch.search_qps != null && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-white/50">검색 QPS</span>
+                          <span className="font-mono" style={{ color: C.violet }}>
+                            <Val v={dataMetrics.elasticsearch.search_qps} unit="" decimals={2} />
+                          </span>
+                        </div>
+                      )}
+                      {dataMetrics?.elasticsearch.search_latency_ms != null && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-white/50">검색 지연</span>
+                          <span className="font-mono" style={{ color: dataMetrics.elasticsearch.search_latency_ms > 100 ? C.amber : C.emerald }}>
+                            <Val v={dataMetrics.elasticsearch.search_latency_ms} unit=" ms" decimals={1} />
+                          </span>
+                        </div>
+                      )}
+                      {(dataMetrics?.elasticsearch.thread_rejected ?? 0) > 0 && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-white/50">Rejected</span>
+                          <span className="font-mono font-bold" style={{ color: C.red }}>
+                            {dataMetrics!.elasticsearch.thread_rejected}건
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </Card>
@@ -1013,33 +1080,40 @@ export default function AdminDashboard() {
                   )}
                 </Card>
 
-                {/* Disk I/O (node_exporter via Mimir) */}
+                {/* Disk I/O + 용량 (node_exporter via Mimir) */}
                 <Card>
                   <p className="text-xs text-white/40 mb-3">
-                    💾 Disk I/O
-                    <Info tip={"클러스터 전체 노드의 디스크 읽기/쓰기 처리량 (node_exporter 5m rate)\n읽기: 디스크에서 데이터를 읽는 속도\n쓰기: 디스크에 데이터를 저장하는 속도\n지속적으로 높은 경우 I/O 병목 가능성 존재"} />
+                    💾 Disk
+                    <Info tip={"클러스터 전체 노드의 디스크 I/O 처리량 및 용량 (node_exporter via Mimir)\n용량: 전체 노드 / 마운트포인트 합산\n사용률 70% WARN / 85% CRITICAL"} />
                   </p>
-                  {loadingDataM ? <Skel h="h-16" /> : !dataMetrics?.disk?.available ? (
+                  {loadingDataM ? <Skel h="h-24" /> : !dataMetrics?.disk?.available ? (
                     <p className="text-xs text-white/20">node_exporter 미배포</p>
                   ) : (
                     <div className="space-y-1">
+                      {dataMetrics.disk.used_pct != null && (
+                        <>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-white/50">사용률</span>
+                            <span className="font-mono font-bold" style={{ color: (dataMetrics.disk.used_pct ?? 0) >= 85 ? C.red : (dataMetrics.disk.used_pct ?? 0) >= 70 ? C.amber : C.emerald }}>
+                              <Val v={dataMetrics.disk.used_pct} unit="%" decimals={1} />
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-white/50">사용/전체</span>
+                            <span className="font-mono text-xs" style={{ color: C.blue }}>
+                              {dataMetrics.disk.used_gb?.toFixed(0)}G / {dataMetrics.disk.total_gb?.toFixed(0)}G
+                            </span>
+                          </div>
+                          <div className="w-full h-1 rounded-full bg-white/10 mt-1 mb-1">
+                            <div className="h-1 rounded-full transition-all" style={{ width: `${Math.min(dataMetrics.disk.used_pct ?? 0, 100)}%`, background: (dataMetrics.disk.used_pct ?? 0) >= 85 ? C.red : (dataMetrics.disk.used_pct ?? 0) >= 70 ? C.amber : C.emerald }} />
+                          </div>
+                        </>
+                      )}
                       <div className="flex justify-between text-sm">
-                        <span className="text-white/50">읽기</span>
-                        <span className="font-mono font-bold" style={{ color: C.cyan }}>
-                          <Val v={dataMetrics.disk.read_mbps} unit=" MB/s" decimals={1} />
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">쓰기</span>
-                        <span className="font-mono font-bold" style={{ color: C.amber }}>
-                          <Val v={dataMetrics.disk.write_mbps} unit=" MB/s" decimals={1} />
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">합계</span>
-                        <span className="font-mono" style={{ color: C.blue }}>
+                        <span className="text-white/50">읽기/쓰기</span>
+                        <span className="font-mono text-xs" style={{ color: C.cyan }}>
                           {dataMetrics.disk.read_mbps != null && dataMetrics.disk.write_mbps != null
-                            ? <Val v={dataMetrics.disk.read_mbps + dataMetrics.disk.write_mbps} unit=" MB/s" decimals={1} />
+                            ? `${dataMetrics.disk.read_mbps.toFixed(1)} / ${dataMetrics.disk.write_mbps.toFixed(1)} MB/s`
                             : "N/A"}
                         </span>
                       </div>
@@ -1051,7 +1125,7 @@ export default function AdminDashboard() {
                 <Card>
                   <p className="text-xs text-white/40 mb-3">
                     🗄️ MongoDB I/O
-                    <Info tip={"MongoDB serverStatus 직접 조회 (30s 인터벌)\nops/sec: 이전 호출 대비 opcounters 델타값\n읽기: query + getmore 연산\n쓰기: insert + update + delete 연산\n첫 호출 시 ops/sec는 N/A (델타 계산 불가)"} />
+                    <Info tip={"MongoDB serverStatus 직접 조회 (30s 인터벌)\nops/sec: 이전 호출 대비 opcounters 델타값\n읽기: query + getmore 연산\n쓰기: insert + update + delete 연산\n대기: globalLock.currentQueue (급증 시 성능 저하)\n첫 호출 시 ops/sec는 N/A (델타 계산 불가)"} />
                   </p>
                   {loadingDataM ? <Skel h="h-16" /> : !dataMetrics?.mongodb?.available ? (
                     <p className="text-xs text-white/20">메트릭 없음</p>
@@ -1064,24 +1138,60 @@ export default function AdminDashboard() {
                         </span>
                       </div>
                       <div className="flex justify-between text-sm">
-                        <span className="text-white/50">읽기 ops/s</span>
-                        <span className="font-mono" style={{ color: C.cyan }}>
+                        <span className="text-white/50">읽기/쓰기 ops/s</span>
+                        <span className="font-mono text-xs" style={{ color: C.cyan }}>
                           {dataMetrics.mongodb.ops_read_per_sec != null
-                            ? <Val v={dataMetrics.mongodb.ops_read_per_sec} unit="" decimals={1} />
+                            ? `${dataMetrics.mongodb.ops_read_per_sec.toFixed(1)} / ${(dataMetrics.mongodb.ops_write_per_sec ?? 0).toFixed(1)}`
                             : <span className="text-white/20">-</span>}
                         </span>
                       </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">쓰기 ops/s</span>
-                        <span className="font-mono" style={{ color: C.amber }}>
-                          {dataMetrics.mongodb.ops_write_per_sec != null
-                            ? <Val v={dataMetrics.mongodb.ops_write_per_sec} unit="" decimals={1} />
-                            : <span className="text-white/20">-</span>}
-                        </span>
-                      </div>
+                      {((dataMetrics.mongodb.queued_readers ?? 0) + (dataMetrics.mongodb.queued_writers ?? 0)) > 0 && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-white/50">대기 (R/W)</span>
+                          <span className="font-mono font-bold" style={{ color: C.amber }}>
+                            {dataMetrics.mongodb.queued_readers ?? 0} / {dataMetrics.mongodb.queued_writers ?? 0}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </Card>
+              </div>
+            </div>
+
+            {/* Backup Health */}
+            <div>
+              <SectionTitle>백업 상태<Info tip={"CronJob 마지막 실행/성공 시각 및 상태\nOK: 마지막 Job 성공\nNO_RUN: 아직 실행된 적 없음\nERROR: 마지막 Job 실패\nRUNNING: 현재 실행 중"} /></SectionTitle>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {loadingBackup ? <Skel h="h-16" /> : !backupStatus ? (
+                  <p className="text-xs text-white/20">백업 상태 조회 실패 (RBAC 권한 확인)</p>
+                ) : backupStatus.map(b => {
+                  const statusColor = b.status === "OK" ? C.emerald : b.status === "ERROR" ? C.red : b.status === "RUNNING" ? C.blue : C.amber;
+                  const fmtTime = (s: string|null) => s ? new Date(s).toLocaleString("ko-KR", { month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" }) : "-";
+                  return (
+                    <Card key={b.name}>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-xs text-white/40">💾 {b.name}</p>
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ color: statusColor, background: `${statusColor}22` }}>
+                          {b.status}
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-white/40">스케줄</span>
+                          <span className="font-mono text-white/60">{b.schedule ?? "-"}</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-white/40">마지막 성공</span>
+                          <span className="font-mono" style={{ color: b.last_success_at ? C.emerald : C.amber }}>{fmtTime(b.last_success_at)}</span>
+                        </div>
+                        {b.last_error && (
+                          <p className="text-xs mt-1 px-2 py-1 rounded bg-red-500/10 text-red-400 truncate" title={b.last_error}>{b.last_error}</p>
+                        )}
+                      </div>
+                    </Card>
+                  );
+                })}
               </div>
             </div>
           </div>

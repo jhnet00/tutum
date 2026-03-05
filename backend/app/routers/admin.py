@@ -18,21 +18,81 @@ import logging
 import math
 import os
 import time
+from ipaddress import ip_address, ip_network
 from datetime import datetime, timezone, timedelta
 
 import boto3
 import httpx
 from botocore.config import Config
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..database import get_database, get_news_collection
-from .auth import get_current_user
+from ..middleware.rate_limit import check_rate_limit
+from .auth import UserResponse, get_current_user
 
-router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(get_current_user)])
 logger = logging.getLogger(__name__)
 
 MIMIR_URL = os.getenv("MIMIR_URL", "http://192.168.0.230:9009/prometheus")
 LOKI_URL = os.getenv("LOKI_URL", "http://192.168.0.230:3100")
+
+_DEFAULT_ADMIN_NETWORKS = "127.0.0.1/8,192.168.0.0/24"
+
+
+def _parse_admin_networks(raw_networks: str) -> list:
+    networks = []
+    for raw in raw_networks.split(","):
+        cidr = raw.strip()
+        if not cidr:
+            continue
+        try:
+            networks.append(ip_network(cidr))
+        except ValueError:
+            logger.warning("Ignoring invalid ADMIN_IP_ALLOWLIST CIDR: %s", cidr)
+    return networks
+
+
+_ADMIN_IP_ALLOWLIST = _parse_admin_networks(
+    os.getenv("ADMIN_IP_ALLOWLIST", _DEFAULT_ADMIN_NETWORKS)
+)
+
+
+def _extract_client_ip(request: Request) -> str:
+    # Prefer proxy-provided real client IP, then fallback.
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip.strip()
+
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if forwarded_for:
+        # nginx appends client chain; using the last hop is safer than trusting first user-supplied value.
+        return forwarded_for.split(",")[-1].strip()
+
+    return request.client.host if request.client else ""
+
+
+def _is_ip_allowed(ip_text: str) -> bool:
+    try:
+        client_ip = ip_address(ip_text)
+    except ValueError:
+        return False
+    return any(client_ip in net for net in _ADMIN_IP_ALLOWLIST)
+
+
+async def require_admin_access(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+) -> UserResponse:
+    # Enforce admin access by source IP range.
+    client_ip = _extract_client_ip(request)
+    if not _is_ip_allowed(client_ip):
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access denied for this network.",
+        )
+    return current_user
+
+
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin_access)])
 
 # Shared HTTP clients — reused across requests for connection pooling
 _HTTP_MIMIR = httpx.AsyncClient(timeout=5.0)
@@ -587,12 +647,17 @@ severity 기준:
 
 
 @router.get("/diagnose")
-async def get_diagnose():
+async def get_diagnose(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+):
     """
     현재 클러스터 상태를 Bedrock Claude로 AI 진단.
     nodes + pods 데이터를 수집해 이슈/권장조치를 JSON으로 반환.
     """
     # 1. 클러스터 현재 상태 수집
+    await check_rate_limit(request, "admin_ai", user_id=current_user.id)
+
     try:
         core, metrics_api = _get_k8s_clients()
 
@@ -857,9 +922,14 @@ status 기준:
 
 
 @router.get("/pipeline-diagnose")
-async def get_pipeline_diagnose():
+async def get_pipeline_diagnose(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+):
     """파이프라인 3대 구성요소를 Bedrock Claude로 AI 분석."""
     # 1. 데이터 수집
+    await check_rate_limit(request, "admin_ai", user_id=current_user.id)
+
     try:
         data = await _collect_pipeline_data()
     except Exception as e:
@@ -1080,6 +1150,13 @@ async def get_data_metrics():
         "es_jvm_heap_max": ['sum(elasticsearch_jvm_memory_max_bytes{area="heap"})'],
         "disk_read_bps": ["sum(rate(node_disk_read_bytes_total[5m]))"],
         "disk_write_bps": ["sum(rate(node_disk_written_bytes_total[5m]))"],
+        "disk_total_bytes": ['sum(node_filesystem_size_bytes{mountpoint="/"})'],
+        "disk_avail_bytes": ['sum(node_filesystem_avail_bytes{mountpoint="/"})'],
+        "es_search_qps": ["sum(rate(elasticsearch_indices_search_query_total[5m]))"],
+        "es_search_time": ["sum(rate(elasticsearch_indices_search_query_time_seconds[5m]))"],
+        "es_index_time": ["sum(rate(elasticsearch_indices_indexing_index_time_seconds_total[5m]))"],
+        "es_index_total": ["sum(rate(elasticsearch_indices_indexing_index_total[5m]))"],
+        "es_thread_rejected": ['sum(increase(elasticsearch_thread_pool_rejected_count{type="write"}[5m]))'],
     }
 
     raw: dict = {}
@@ -1121,7 +1198,9 @@ async def get_data_metrics():
         if db is not None:
             status = await db.command("serverStatus")
             conns = status.get("connections", {})
-            clients = status.get("globalLock", {}).get("activeClients", {})
+            lock = status.get("globalLock", {})
+            clients = lock.get("activeClients", {})
+            queued = lock.get("currentQueue", {})
             ops = status.get("opcounters", {})
             now_ts = time.time()
 
@@ -1145,6 +1224,8 @@ async def get_data_metrics():
                 "connections": conns.get("current"),
                 "active_readers": clients.get("readers"),
                 "active_writers": clients.get("writers"),
+                "queued_readers": queued.get("readers"),
+                "queued_writers": queued.get("writers"),
                 "ops_read_per_sec": ops_read_per_sec,
                 "ops_write_per_sec": ops_write_per_sec,
                 "available": True,
@@ -1171,19 +1252,244 @@ async def get_data_metrics():
             "available": raw.get("kafka_lag") is not None,
         },
         "elasticsearch": {
-            "indexing_rate":  round(raw["es_indexing_rate"], 2) if raw.get("es_indexing_rate") is not None else None,
+            "indexing_rate":    round(raw["es_indexing_rate"], 2) if raw.get("es_indexing_rate") is not None else None,
             "jvm_heap_used_gb": to_gb(raw.get("es_jvm_heap_used")),
             "jvm_heap_max_gb":  to_gb(raw.get("es_jvm_heap_max")),
-            "jvm_heap_pct":   to_pct(raw.get("es_jvm_heap_used"), raw.get("es_jvm_heap_max")),
-            "available":      raw.get("es_jvm_heap_used") is not None,
+            "jvm_heap_pct":     to_pct(raw.get("es_jvm_heap_used"), raw.get("es_jvm_heap_max")),
+            "search_qps":       round(raw["es_search_qps"], 3) if raw.get("es_search_qps") is not None else None,
+            "search_latency_ms": (
+                round(raw["es_search_time"] / raw["es_search_qps"] * 1000, 1)
+                if raw.get("es_search_qps") and raw.get("es_search_time")
+                else None
+            ),
+            "index_latency_ms": (
+                round(raw["es_index_time"] / raw["es_index_total"] * 1000, 1)
+                if raw.get("es_index_total") and raw.get("es_index_time")
+                else None
+            ),
+            "thread_rejected":  int(raw["es_thread_rejected"]) if raw.get("es_thread_rejected") is not None else None,
+            "available":        raw.get("es_jvm_heap_used") is not None,
         },
         "disk": {
-            "read_mbps":  to_mbps(raw.get("disk_read_bps")),
-            "write_mbps": to_mbps(raw.get("disk_write_bps")),
-            "available":  raw.get("disk_read_bps") is not None,
+            "read_mbps":      to_mbps(raw.get("disk_read_bps")),
+            "write_mbps":     to_mbps(raw.get("disk_write_bps")),
+            "total_gb":       to_gb(raw.get("disk_total_bytes")),
+            "avail_gb":       to_gb(raw.get("disk_avail_bytes")),
+            "used_gb":        (
+                to_gb(raw["disk_total_bytes"] - raw["disk_avail_bytes"])
+                if raw.get("disk_total_bytes") and raw.get("disk_avail_bytes")
+                else None
+            ),
+            "used_pct":       (
+                round((raw["disk_total_bytes"] - raw["disk_avail_bytes"]) / raw["disk_total_bytes"] * 100, 1)
+                if raw.get("disk_total_bytes") and raw.get("disk_avail_bytes")
+                else None
+            ),
+            "available":      raw.get("disk_read_bps") is not None,
         },
         "mongodb": mongo_io,
     }
+
+
+# ─── 백업 상태 ───────────────────────────────────────────────────────────────
+
+_BACKUP_CRONJOBS = [
+    {"name": "mongodb-backup", "namespace": "tutum-data", "label": "MongoDB"},
+    {"name": "elasticsearch-backup", "namespace": "tutum-data", "label": "Elasticsearch"},
+    {"name": "etcd-backup", "namespace": "kube-system", "label": "etcd"},
+]
+
+_K8S_API = "https://kubernetes.default.svc"
+_K8S_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+_K8S_CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+
+def _k8s_headers() -> dict:
+    try:
+        with open(_K8S_TOKEN_PATH) as f:
+            token = f.read().strip()
+        return {"Authorization": f"Bearer {token}"}
+    except Exception:
+        return {}
+
+
+async def _k8s_get(path: str) -> dict | None:
+    url = f"{_K8S_API}{path}"
+    try:
+        async with httpx.AsyncClient(verify=_K8S_CA_PATH, timeout=5.0) as client:
+            resp = await client.get(url, headers=_k8s_headers())
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as e:
+        logger.warning("K8s API 조회 실패 [%s]: %s", path, e)
+    return None
+
+
+@router.get("/backup-status")
+async def get_backup_status():
+    """
+    CronJob 및 최근 Job 결과로 백업 상태 조회.
+    """
+    results = []
+    for cj in _BACKUP_CRONJOBS:
+        ns, name = cj["namespace"], cj["name"]
+        entry: dict = {
+            "name": cj["label"],
+            "cronjob": name,
+            "namespace": ns,
+            "schedule": None,
+            "last_run_at": None,
+            "last_success_at": None,
+            "status": "UNKNOWN",
+            "last_error": None,
+        }
+
+        cj_data = await _k8s_get(f"/apis/batch/v1/namespaces/{ns}/cronjobs/{name}")
+        if cj_data:
+            entry["schedule"] = cj_data.get("spec", {}).get("schedule")
+            last_sched = cj_data.get("status", {}).get("lastScheduleTime")
+            last_succ = cj_data.get("status", {}).get("lastSuccessfulTime")
+            if last_sched:
+                entry["last_run_at"] = last_sched
+            if last_succ:
+                entry["last_success_at"] = last_succ
+
+        # 최근 Job 목록 조회 (owner=CronJob)
+        jobs_data = await _k8s_get(f"/apis/batch/v1/namespaces/{ns}/jobs")
+        if jobs_data:
+            owned = [
+                j for j in jobs_data.get("items", [])
+                if any(
+                    ref.get("name") == name and ref.get("kind") == "CronJob"
+                    for ref in j.get("metadata", {}).get("ownerReferences", [])
+                )
+            ]
+            owned.sort(
+                key=lambda j: j.get("metadata", {}).get("creationTimestamp", ""),
+                reverse=True,
+            )
+            if owned:
+                latest = owned[0]
+                conds = latest.get("status", {}).get("conditions", [])
+                failed_cond = next((c for c in conds if c.get("type") == "Failed"), None)
+                succeeded = latest.get("status", {}).get("succeeded", 0)
+                if succeeded:
+                    entry["status"] = "OK"
+                elif failed_cond:
+                    entry["status"] = "ERROR"
+                    entry["last_error"] = failed_cond.get("message")
+                else:
+                    entry["status"] = "RUNNING"
+            else:
+                entry["status"] = "NO_RUN"
+        else:
+            # jobs API 실패 → CronJob 상태만으로 판단
+            if entry["last_success_at"]:
+                entry["status"] = "OK"
+            elif entry["last_run_at"]:
+                entry["status"] = "WARN"
+
+        results.append(entry)
+
+    return {"backups": results}
+
+
+# ─── 운영 경고 요약 ───────────────────────────────────────────────────────────
+
+@router.get("/action-needed")
+async def get_action_needed():
+    """
+    임계치 기반 즉시 조치 필요 항목 목록.
+    data-metrics + backup-status를 집계해 경고 생성.
+    """
+    alerts = []
+
+    # data-metrics 호출
+    try:
+        metrics = await get_data_metrics()
+
+        disk = metrics.get("disk", {})
+        used_pct = disk.get("used_pct")
+        if used_pct is not None:
+            if used_pct >= 85:
+                alerts.append({
+                    "level": "CRITICAL",
+                    "category": "Disk",
+                    "message": f"클러스터 디스크 사용률 {used_pct}% (임계치: 85%)",
+                    "action": "불필요한 데이터 정리 또는 볼륨 확장",
+                })
+            elif used_pct >= 70:
+                alerts.append({
+                    "level": "WARN",
+                    "category": "Disk",
+                    "message": f"클러스터 디스크 사용률 {used_pct}% (임계치: 70%)",
+                    "action": "디스크 사용량 추이 모니터링",
+                })
+
+        es = metrics.get("elasticsearch", {})
+        jvm_pct = es.get("jvm_heap_pct")
+        if jvm_pct is not None and jvm_pct >= 80:
+            alerts.append({
+                "level": "CRITICAL" if jvm_pct >= 90 else "WARN",
+                "category": "Elasticsearch",
+                "message": f"ES JVM Heap {jvm_pct}% (임계치: 80%)",
+                "action": "ES 힙 메모리 증설 또는 인덱스 정리",
+            })
+        thread_rej = es.get("thread_rejected")
+        if thread_rej and thread_rej > 0:
+            alerts.append({
+                "level": "WARN",
+                "category": "Elasticsearch",
+                "message": f"ES write thread pool rejected {thread_rej}건 (5m)",
+                "action": "ES 인덱싱 속도 조절 또는 replicas 확장",
+            })
+
+        kafka = metrics.get("kafka", {})
+        lag = kafka.get("consumer_lag")
+        if lag is not None and lag > 500:
+            alerts.append({
+                "level": "CRITICAL" if lag > 5000 else "WARN",
+                "category": "Kafka",
+                "message": f"Kafka consumer lag {lag:,}건",
+                "action": "elastic-consumer 로그 확인 및 replicas 증설",
+            })
+
+        mongo = metrics.get("mongodb", {})
+        qr = mongo.get("queued_readers") or 0
+        qw = mongo.get("queued_writers") or 0
+        if qr + qw > 10:
+            alerts.append({
+                "level": "WARN",
+                "category": "MongoDB",
+                "message": f"MongoDB 대기 쿼리 {qr + qw}건 (readers={qr}, writers={qw})",
+                "action": "느린 쿼리 확인: db.currentOp()",
+            })
+    except Exception as e:
+        logger.warning("action-needed metrics 조회 실패: %s", e)
+
+    # backup-status 호출
+    try:
+        backup = await get_backup_status()
+        for b in backup.get("backups", []):
+            if b["status"] == "ERROR":
+                alerts.append({
+                    "level": "CRITICAL",
+                    "category": "Backup",
+                    "message": f"{b['name']} 백업 실패: {b.get('last_error', '알 수 없음')}",
+                    "action": f"kubectl logs -n {b['namespace']} -l job-name=... 확인",
+                })
+            elif b["status"] == "NO_RUN":
+                alerts.append({
+                    "level": "WARN",
+                    "category": "Backup",
+                    "message": f"{b['name']} 백업이 아직 한 번도 실행되지 않음",
+                    "action": "CronJob 스케줄 및 권한 확인",
+                })
+    except Exception as e:
+        logger.warning("action-needed backup 조회 실패: %s", e)
+
+    alerts.sort(key=lambda a: 0 if a["level"] == "CRITICAL" else 1)
+    return {"alerts": alerts, "count": len(alerts)}
 
 
 # ─── 트레이스 (Tempo) ─────────────────────────────────────────────────────────
