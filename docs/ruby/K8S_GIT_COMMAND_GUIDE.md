@@ -291,8 +291,8 @@ git restore --staged <file>
    kubectl describe pod <pod-name> -n <namespace>
    kubectl logs <pod-name> -n <namespace> --previous
 
-2. 이미지 문제이면 → Harbor에서 이미지 빌드/푸시 재확인
-   docker pull <harbor-host>/tutum/<service>:<tag>
+2. 이미지 문제이면 → 현재 배포 경로(ECR 또는 GitLab Registry)에서 이미지 빌드/푸시 재확인
+   docker pull <registry>/<service>:<tag>
 
 3. 환경변수/Secret 문제이면
    kubectl get secret <secret-name> -n <namespace> -o yaml

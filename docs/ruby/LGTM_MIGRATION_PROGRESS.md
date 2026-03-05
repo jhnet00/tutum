@@ -16,8 +16,8 @@ Phase 0: 설계 (완료)
 Phase 1: 클러스터 기반 (완료 ✅)
     MetalLB + Namespace + Istio Gateway
     ↓
-Phase 2: 앱 배포 (완료 ✅)
-    ArgoCD + GitLab CI/CD + Harbor(온프레미스 레지스트리) + Backend/Frontend
+Phase 2: 앱 배포/레지스트리 전환 (진행 중 🔄)
+    ArgoCD + GitLab CI/CD + Registry 전환(GitLab CR -> AWS ECR) + Backend/Frontend
     ↓
 Phase 3: 모니터링 (진행 중 🔄)
     LGTM Stack (Loki / Grafana / Tempo / Mimir)
@@ -72,23 +72,26 @@ k8s-manifests/base/networking/
 
 ## Phase 2: 앱 배포 및 GitOps ✅
 
-### 2-1. Harbor Registry 연동
+### 2-1. 레지스트리 운영 전환 이력
 
-| 항목        | 내용                                                                  |
-| ----------- | --------------------------------------------------------------------- |
-| Harbor 주소 | `192.168.56.12:8080`                                                  |
-| 이미지 경로 | `192.168.56.12:8080/tutum/<service>:<tag>`                            |
-| 인증        | `harbor-secret` (Kubernetes Secret, `kubernetes.io/dockerconfigjson`) |
+| 단계 | 레지스트리 | 상태 |
+| --- | --- | --- |
+| 초기 온프레 단계 | Harbor(온프레미스) | 종료 |
+| 현재 운영 단계 | GitLab Container Registry | 운영 중 |
+| AWS 이행 단계 | Amazon ECR (`903913341620.dkr.ecr.ap-northeast-2.amazonaws.com`) | 진행 중 |
 
-**배포된 이미지 목록**:
+**현재 원칙**:
+- 소스코드/CI-CD: GitLab 단일 운영
+- AWS 배포 레지스트리: ECR 고정 (`develop/main -> ECR -> EKS`)
+- Harbor: 신규 운영 미사용(히스토리 기록만 유지)
 
-| 서비스           | 이미지                          |
-| ---------------- | ------------------------------- |
-| frontend         | `tutum/frontend:latest`         |
-| backend          | `tutum/backend:latest`          |
-| news-producer    | `tutum/news-producer:latest`    |
-| news-consumer    | `tutum/news-consumer:latest`    |
-| elastic-consumer | `tutum/elastic-consumer:latest` |
+**이미지 경로 기준**:
+
+| 서비스 | GitLab(현행) | ECR(목표/이행 중) |
+| --- | --- | --- |
+| frontend | `registry.gitlab.com/<group>/<project>/frontend:<tag>` | `903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/frontend:<tag>` |
+| backend | `registry.gitlab.com/<group>/<project>/backend:<tag>` | `903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/backend:<tag>` |
+| workers | `registry.gitlab.com/<group>/<project>/<worker>:<tag>` | `903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/<worker>:<tag>` |
 
 ---
 
