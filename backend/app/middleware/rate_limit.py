@@ -19,7 +19,9 @@ from ..cache import rate_limit_increment
 RATE_LIMITS = {
     "login": {"max_requests": 5, "window_seconds": 300},      # 5회/5분
     "register": {"max_requests": 3, "window_seconds": 3600},  # 3회/시간
+    "check_email": {"max_requests": 15, "window_seconds": 300},  # 15회/5분
     "chat": {"max_requests": 10, "window_seconds": 60},       # 10회/분
+    "admin_ai": {"max_requests": 6, "window_seconds": 600},   # 6회/10분
 }
 
 
@@ -84,9 +86,9 @@ async def check_rate_limit(
 
     count = await rate_limit_increment(key, config["window_seconds"])
 
-    # Redis 미연결 시: 보안 엔드포인트는 차단, 나머지는 통과
+    # Redis 미연결 시: 보안/과금 민감 엔드포인트는 차단, 나머지는 통과
     if count is None:
-        security_endpoints = {"login", "register"}
+        security_endpoints = {"login", "register", "check_email", "chat", "admin_ai"}
         if endpoint in security_endpoints:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

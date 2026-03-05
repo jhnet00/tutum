@@ -47,6 +47,7 @@ from ..mariadb import (
 )
 from app.services.queue_service import get_queue_service
 from app.services.email_service import get_email_service  # noqa: F401
+from ..middleware.rate_limit import check_rate_limit
 
 # Redis ??? ??  (? ????)
 try:
@@ -475,7 +476,7 @@ async def get_current_user(token: str = Depends(_extract_token)) -> UserResponse
 
 
 @router.post("/register")
-async def register(user: UserCreate):
+async def register(request: Request, user: UserCreate):
     """
     이메일 회원가입
 
@@ -483,6 +484,8 @@ async def register(user: UserCreate):
     - 비밀번호 해싱 후 MariaDB에 저장
     - 이메일 인증 토큰 생성 및 SQS enqueue (Optional)
     """
+    await check_rate_limit(request, "register")
+
     # ??? ?
     existing = await get_user_by_email(user.email)
     if existing:
@@ -539,7 +542,7 @@ async def register(user: UserCreate):
 
 
 @router.post("/check-email")
-async def check_email_availability(request: dict):
+async def check_email_availability(request: Request, payload: dict):
     """
     이메일 사용 가능 여부 확인 (회원가입 전 중복 체크)
 
@@ -548,7 +551,9 @@ async def check_email_availability(request: dict):
 
     Returns: {"available": bool, "message": str}
     """
-    email = request.get("email")
+    await check_rate_limit(request, "check_email")
+
+    email = payload.get("email")
     if not email:
         raise HTTPException(status_code=400, detail="이메일을 입력해주세요")
 
@@ -720,7 +725,7 @@ async def resend_verification(email: EmailStr):
 
 
 @router.post("/login")
-async def login(user: UserLogin):
+async def login(request: Request, user: UserLogin):
     """
     ?????
 
@@ -728,6 +733,8 @@ async def login(user: UserLogin):
     - JWT ?  (HttpOnly  + JSON ?)
     - Redis???  (?? ??? ?????)
     """
+    await check_rate_limit(request, "login")
+
     # MariaDB? ???
     user_doc = await get_user_by_email(user.email, login_type="email")
     if not user_doc:
