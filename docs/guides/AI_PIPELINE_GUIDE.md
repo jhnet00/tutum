@@ -1,126 +1,309 @@
-# AI 파이프라인 운영 가이드 (K8s 기준)
+# AI 뉴스 파이프라인 전체 흐름 가이드
 
-기준일: 2026-02-27  
+기준일: 2026-03-05
 대상: 운영/개발 공용
+소스 오브 트루스: k8s-manifests + 실제 코드
 
-## 1. 결론 (먼저 확인)
+> **2026-03-05 점검 결과: 파이프라인 전 구간 정상 작동 중**
+> - MongoDB 신규 수집: 26건/시간
+> - ES 임베딩 보유: 2,589건 / MongoDB 3,214건 (80.5%)
+> - Bedrock 임베딩 오류 없음 (`[embed] failed` 로그 미확인)
 
-- 현재 운영 기준에서 맞는 구조는 **Kubernetes 매니페스트 기준**입니다.
-- 현재 모드는 안정화 모드로, 뉴스 파이프라인은 아래와 같습니다.
-  - `news-producer`: 활성 (`replicas: 1`)
-  - `news-consumer`: 활성 (`replicas: 1`)
-  - `elastic-consumer`: 비활성 (`replicas: 0`)
-  - `ENABLE_BEDROCK_EMBEDDING`: `false`
-- 즉, 지금은 **뉴스 수집/저장(Mongo) 중심**으로 운영되고, AI 채팅은 ES 우선 조회 후 Mongo fallback으로 동작합니다.
+---
 
-## 2. 현재 운영 아키텍처
+## 1. 전체 아키텍처 요약
 
-```text
-사용자
-  -> /api/v1/chat
-  -> backend chat_service
-      -> 실시간 시세 조회
-      -> 포트폴리오 조회(MariaDB, 실패 시 Mongo fallback)
-      -> 뉴스 조회(ES 우선, 실패/결과 없음 시 Mongo fallback)
-      -> Bedrock Claude 스트리밍 응답(자격증명 없으면 mock fallback)
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         뉴스 수집 파이프라인                          │
+│                                                                     │
+│  [Naver Finance]  ─┐                                                │
+│  [Coinness API]   ─┼─► news-producer ──► Kafka(news.raw) ─┬─► news-consumer ──► MongoDB
+│  [Einfomax]       ─┘     (30s 폴링)                        │
+│                                                             └─► elastic-consumer ──► Elasticsearch
+│                                                                      (Bedrock 임베딩 포함)
+└─────────────────────────────────────────────────────────────────────┘
 
-뉴스 파이프라인
-  news-producer (producer_news.py)
-    -> Kafka topic: news.raw
-  news-consumer (consumer_news.py)
-    -> MongoDB(news 컬렉션)
-  elastic-consumer (elastic_consumer.py)
-    -> 현재 replicas=0 (비활성)
+┌─────────────────────────────────────────────────────────────────────┐
+│                          AI 응답 파이프라인                           │
+│                                                                     │
+│  사용자 질문                                                          │
+│      │                                                              │
+│      ▼                                                              │
+│  키워드 추출 + 유사어 확장                                             │
+│      │                                                              │
+│      ├─► 실시간 시세 조회 (Exchange API)                              │
+│      ├─► 포트폴리오 조회 (MariaDB → MongoDB fallback)                 │
+│      └─► 뉴스 검색                                                   │
+│              │                                                      │
+│              ├─► ES: 하이브리드 검색 (BM25 60% + kNN 40%)            │
+│              │       └─► 임베딩 없으면 BM25 단독                      │
+│              └─► 실패 시 MongoDB fallback                            │
+│      │                                                              │
+│      ▼                                                              │
+│  Bedrock Claude 스트리밍 응답 (RAG)                                  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-## 3. 현재 운영값 (소스 오브 트루스)
+---
 
-다음 파일 값을 기준으로 판단합니다.
+## 2. 스테이지별 상세
 
-- `news-producer` 활성: [news-producer.yaml](C:/Users/CloudDX/Documents/GitHub/clouddx-project/k8s-manifests/base/workers/news-producer.yaml)
-- `news-consumer` 활성: [news-consumer.yaml](C:/Users/CloudDX/Documents/GitHub/clouddx-project/k8s-manifests/base/workers/news-consumer.yaml)
-- `elastic-consumer` 비활성: [elastic-consumer.yaml](C:/Users/CloudDX/Documents/GitHub/clouddx-project/k8s-manifests/base/workers/elastic-consumer.yaml)
-- 뉴스 파이프라인 설정: [news-configmap.yaml](C:/Users/CloudDX/Documents/GitHub/clouddx-project/k8s-manifests/base/workers/news-configmap.yaml)
+### Stage 1: 뉴스 수집 (news-producer)
 
-핵심 설정:
+**파일**: `backend/workers/producer_news.py`
+**K8s**: `k8s-manifests/base/workers/news-producer.yaml`
+**폴링 주기**: 30초 (`PRODUCER_POLL_INTERVAL_SEC=30`)
 
-- `KAFKA_TOPIC`: `news.raw`
-- `PRODUCER_POLL_INTERVAL_SEC`: `"30"`
-- `ENABLE_EINFOMAX`: `"true"`
-- `ENABLE_BEDROCK_EMBEDDING`: `"false"`
-- `ELASTICSEARCH_URL`: `http://elasticsearch.tutum-data.svc.cluster.local:9200`
+#### 수집 소스 3개
 
-## 4. AI 채팅 경로(코드 기준)
+| 소스 | 방식 | 키워드 필터 |
+|------|------|------------|
+| Naver Finance | HTML 스크래핑 (mainnews.naver, 5페이지) | 코인 관련 제목만 (`EINFOMAX_FILTER_COINS=true`) |
+| Coinness | REST API 우선 → HTML fallback → sitemap fallback | 없음 (전체 코인 뉴스) |
+| Einfomax | HTML 스크래핑 (쿼리: "가상자산", 3페이지) | 코인 키워드 필터 |
 
-AI 채팅 서비스는 아래 로직으로 동작합니다.
+#### 처리 흐름
 
-- 위치: [chat_service.py](C:/Users/CloudDX/Documents/GitHub/clouddx-project/backend/app/services/chat_service.py)
-- 주요 흐름:
-  1. 질문에서 티커/키워드 추출
-  2. 시세 조회
-  3. 포트폴리오 조회 (MariaDB 우선, 실패 시 Mongo)
-  4. 뉴스 조회 (ES 우선, 실패/결과 없음 시 Mongo)
-  5. Bedrock 스트리밍 응답 (`invoke_model_with_response_stream`)
+```
+수집 → 중복 제거(seen_links JSON) → 시간 역순 정렬 → Kafka 발행
+```
 
-참고: ES 검색 로직은 BM25 + (가능 시) kNN 하이브리드로 구현돼 있습니다.
+- `seen_links` 파일: Pod 재시작 시 초기화 (중복 방지가 무력화됨)
+- Kafka topic: `news.raw`
+- 발행 형식: JSON (url, title, content, published_at, source, crawled_at 등)
 
-## 5. 기존 문서와 실제 운영 차이
+---
 
-기존 설명 중 현재와 다른 대표 항목:
+### Stage 2: MongoDB 저장 (news-consumer)
 
-1. 수집 주기 60초 설명 -> 현재 30초
-2. `ENABLE_EINFOMAX=0` 설명 -> 현재 `true`
-3. `ENABLE_BEDROCK_EMBEDDING=1` 설명 -> 현재 `false`
-4. 인덱서 상시 가동 설명 -> 현재 `elastic-consumer replicas=0`
-5. Node1/Node3 Docker 중심 서술 -> 현재는 K8s 배포 기준
+**파일**: `backend/workers/consumer_news.py`
+**K8s**: `k8s-manifests/base/workers/news-consumer.yaml`
 
-## 6. 어떤 방식이 맞는가
+- Kafka `news.raw` consume (group: `clouddx-news-consumer-v1`)
+- URL 기준 upsert → MongoDB `tutum.news` 컬렉션
+- 중복 문서는 덮어쓰기 (title/content/published_at 변경 시)
 
-운영 기준으로는 다음이 정답입니다.
+---
 
-1. **기본은 안정화 모드 유지**  
-   (현재 매니페스트 값 유지)
-2. **풀 AI 모드는 별도 전환 절차로 활성화**  
-   (검증 후 단계 반영)
+### Stage 3: ES 인덱싱 + 임베딩 (elastic-consumer)
 
-## 7. 풀 AI 모드 전환 체크리스트
+**파일**: `backend/workers/elastic_consumer.py`
+**K8s**: `k8s-manifests/base/workers/elastic-consumer.yaml`
+**현재 상태**: replicas=1 (활성), `ENABLE_BEDROCK_EMBEDDING=true`
 
-목표: 뉴스 인덱싱 + 임베딩 기반 검색을 상시화
+#### 처리 흐름
 
-1. `elastic-consumer` 활성화
-   - [elastic-consumer.yaml](C:/Users/CloudDX/Documents/GitHub/clouddx-project/k8s-manifests/base/workers/elastic-consumer.yaml)  
-   - `replicas: 0 -> 1`
-2. 임베딩 활성화
-   - [news-configmap.yaml](C:/Users/CloudDX/Documents/GitHub/clouddx-project/k8s-manifests/base/workers/news-configmap.yaml)  
-   - `ENABLE_BEDROCK_EMBEDDING: "false" -> "true"`
-3. AWS 자격증명 확인
-   - [news-secret.yaml](C:/Users/CloudDX/Documents/GitHub/clouddx-project/k8s-manifests/base/workers/news-secret.yaml)의
-     `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` 값 주입
-4. 배포/동기화
-   - GitOps(ArgoCD) sync 또는 `kubectl apply`
-5. 롤아웃 확인
-   - `kubectl -n tutum-app rollout status deploy/elastic-consumer`
-6. 인덱싱/임베딩 확인
-   - `kubectl -n tutum-app logs deploy/elastic-consumer --tail=200`
-   - ES에서 `embedding` 필드 문서 증가 확인
+```
+Kafka consume (group: indexer-consumer-group)
+    │
+    ▼
+normalize_message() → {url, title, content, summary, source, published_at, ...}
+    │
+    ▼ (ENABLE_BEDROCK_EMBEDDING=true)
+Bedrock Titan v2 임베딩 생성
+    모델: amazon.titan-embed-text-v2:0
+    입력: title + summary + content (최대 8000자)
+    출력: 1024차원 float 벡터
+    │
+    ▼
+ES upsert (/_update/{url-encoded-id}, doc_as_upsert)
+```
 
-## 8. 운영 검증 체크리스트
+#### ES 인덱스 매핑
 
-1. API 헬스
-   - `GET /api/v1/chat/health` -> 200
-2. 뉴스 데이터 확인
-   - `GET /api/v1/news?limit=3` -> 최근 뉴스 반환
-3. 파이프라인 상태
-   - `kubectl -n tutum-app get deploy news-producer news-consumer elastic-consumer`
-4. Kafka/DB 적재 확인
-   - producer 로그에서 발행 확인
-   - consumer 로그에서 Mongo upsert 확인
-5. AI 응답 품질
-   - 키워드 질문(예: BTC) 시 뉴스 근거 포함 응답 확인
+```json
+{
+  "url":           "keyword",
+  "title":         "text",
+  "content":       "text",
+  "summary":       "text",
+  "source":        "keyword",
+  "published_at":  "date",
+  "embedding":     "dense_vector(1024, cosine)"
+}
+```
 
-## 9. 권장 운영 정책
+> **주의**: Bedrock 호출 실패 시 임베딩 없이 ES 저장됨. 이 경우 kNN 검색 불가, BM25만 작동.
 
-1. 문서 기준은 항상 `k8s-manifests`와 실제 배포 상태로 맞춥니다.
-2. 모드 변경(안정화 <-> 풀 AI)은 체크리스트/검증 로그와 함께 dev log에 기록합니다.
-3. AI 관련 설정 변경은 한 번에 여러 개 바꾸지 말고
-   - `replicas` -> `embedding` -> `AWS credential` 순서로 단계 적용합니다.
+---
+
+### Stage 4: AI 뉴스 검색 (chat_service)
+
+**파일**: `backend/app/services/chat_service.py`
+
+#### 유사어 확장 사전
+
+사용자 입력 → 동의어 자동 확장 후 검색
+
+```
+"비트코인" → ["비트코인", "BTC", "bitcoin", "비트"]
+"이더리움" → ["이더리움", "ETH", "ethereum", "이더"]
+"ai"       → ["AI", "인공지능", "머신러닝"]
+"금리"     → ["금리", "기준금리", "이자율", "금리인상", "금리인하"]
+... (약 30개 항목)
+```
+
+#### 하이브리드 검색 (BM25 + kNN)
+
+```
+쿼리 임베딩 생성 (Bedrock Titan v2, 1024차원)
+    │
+    ├─ 성공 → BM25(60%) + kNN(40%) 하이브리드
+    │          BM25: phrase > best_fields > fuzzy
+    │          가중치: title^5/^3, content^2/1, summary^2/1
+    │          kNN: cosine 유사도, k=limit, candidates=limit×4
+    │
+    └─ 실패/kNN 결과 없음 → BM25 단독
+           (문서 임베딩이 없는 경우 자동 fallback)
+```
+
+#### ES → MongoDB Fallback
+
+```
+ES 검색 성공 → ES 결과 반환
+ES 실패/결과 없음 → MongoDB text 검색 (fallback)
+```
+
+---
+
+### Stage 5: RAG 응답 생성
+
+```
+[시스템 프롬프트] + [실시간 시세] + [포트폴리오] + [뉴스 검색 결과]
+    └─► Bedrock Claude 스트리밍 응답
+```
+
+- 포트폴리오: MariaDB 우선 → MongoDB fallback
+- 응답 형식: SSE 스트리밍
+
+---
+
+## 3. 현재 운영 설정값
+
+| 항목 | 값 | 파일 |
+|------|-----|------|
+| 폴링 주기 | 30초 | news-configmap.yaml |
+| ENABLE_NAVER | true | news-configmap.yaml |
+| ENABLE_COINNESS | true | news-configmap.yaml |
+| ENABLE_EINFOMAX | true | news-configmap.yaml |
+| ENABLE_BEDROCK_EMBEDDING | **true** | news-configmap.yaml |
+| BEDROCK_REGION | ap-northeast-2 | news-configmap.yaml |
+| ES_INDEX | news | news-configmap.yaml |
+| elastic-consumer replicas | **1 (활성)** | elastic-consumer.yaml |
+| Bedrock 임베딩 모델 | amazon.titan-embed-text-v2:0 | elastic_consumer.py |
+| 임베딩 차원 | 1024 | elastic_consumer.py |
+| BM25:kNN 비율 | 60:40 | chat_service.py |
+
+---
+
+## 4. 파이프라인 점검 체크리스트
+
+### 4-1. Pod 상태 확인
+
+```bash
+kubectl get pods -n tutum-app | grep -E "news|elastic"
+```
+
+**정상 상태:**
+```
+elastic-consumer-xxx   1/1  Running
+news-consumer-xxx      1/1  Running
+news-producer-xxx      1/1  Running
+```
+
+### 4-2. 뉴스 수집 확인 (ObjectId 기반 — 실제 삽입 시각 기준)
+
+```bash
+# 최근 1시간 MongoDB 삽입 건수
+kubectl exec -n tutum-data mongodb-0 -- mongosh tutum --eval "
+var oid = ObjectId.createFromTime(Math.floor((Date.now()-3600000)/1000));
+print(db.news.countDocuments({_id: {\$gte: oid}}))" --quiet
+
+# 전체 건수
+kubectl exec -n tutum-data mongodb-0 -- mongosh tutum --eval "db.news.countDocuments({})" --quiet
+```
+
+### 4-3. ES 동기화 확인
+
+```bash
+# ES 문서 수
+kubectl exec -n tutum-data mongodb-0 -- mongosh --eval "
+var mongo = db.getSiblingDB('tutum').news.countDocuments({});
+print('MongoDB:', mongo)" --quiet
+
+curl -s http://elasticsearch.tutum-data.svc.cluster.local:9200/news/_count | python3 -c "import sys,json; d=json.load(sys.stdin); print('ES:', d['count'])"
+```
+
+### 4-4. 임베딩 생성 여부 확인
+
+```bash
+# ES에서 embedding 필드 있는 문서 수
+curl -s "http://elasticsearch.tutum-data.svc.cluster.local:9200/news/_count" \
+  -H "Content-Type: application/json" \
+  -d '{"query":{"exists":{"field":"embedding"}}}'
+```
+
+### 4-5. Kafka Lag 확인
+
+```bash
+kubectl exec -n tutum-data kafka-0 -- kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 \
+  --describe --group clouddx-news-consumer-v1
+
+kubectl exec -n tutum-data kafka-0 -- kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 \
+  --describe --group indexer-consumer-group
+```
+
+### 4-6. 로그 확인
+
+```bash
+# 수집 로그
+kubectl logs -n tutum-app deploy/news-producer --tail=30
+
+# MongoDB 저장 로그
+kubectl logs -n tutum-app deploy/news-consumer --tail=30
+
+# ES 인덱싱 + 임베딩 로그
+kubectl logs -n tutum-app deploy/elastic-consumer --tail=30
+```
+
+---
+
+## 5. 알려진 이슈 및 주의사항
+
+| 이슈 | 원인 | 대처 |
+|------|------|------|
+| seen_links 초기화 | Pod 재시작 시 중복 방지 파일 소실 | Kafka upsert이므로 실제 중복 저장은 없음 |
+| Bedrock 임베딩 실패 | AWS 자격증명 없거나 IAM 권한 부족 | elastic-consumer 로그에서 `[embed] bedrock invoke failed` 확인 |
+| kNN 결과 0건 | 임베딩이 없는 기존 문서 | 자동으로 BM25 단독 검색으로 fallback |
+| MongoDB 건수 감소 | 백업 복구 또는 컬렉션 재생성 | 백필 Job 재실행 필요 |
+| ES sync rate 낮음 | elastic-consumer 이전에 수집된 뉴스 | backfill-es-job 실행으로 소급 인덱싱 |
+
+---
+
+## 6. 백필 (과거 데이터 ES 소급 인덱싱)
+
+elastic-consumer 배포 이전 MongoDB 데이터는 ES에 없음.
+소급 인덱싱이 필요할 경우:
+
+```bash
+# cp1에서 실행
+kubectl delete job es-backfill -n tutum-app --ignore-not-found
+kubectl apply -f k8s-manifests/base/workers/backfill-es-job.yaml
+kubectl logs -n tutum-app -l app=es-backfill -f
+```
+
+> backfill-es-job은 kustomization.yaml에 포함되지 않음 (수동 실행 전용)
+
+---
+
+## 7. 풀 AI 모드 vs 안정화 모드
+
+| 모드 | elastic-consumer | ENABLE_BEDROCK_EMBEDDING | 검색 방식 |
+|------|-----------------|--------------------------|----------|
+| 안정화 | replicas=0 | false | MongoDB text (fallback) |
+| **풀 AI (현재)** | **replicas=1** | **true** | **BM25+kNN 하이브리드** |
+
+모드 전환 시 dev log 기록 필수.
