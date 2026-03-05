@@ -63,7 +63,7 @@ alert_rules = {
                     "relativeTimeRange": {"from": 300, "to": 0},
                     "datasourceUid": MIMIR_UID,
                     "model": {
-                        "expr": "up{job=~\".*backend.*\"} == 0",
+                        "expr": "sum(up{namespace=~\"tutum-app|tutum-prod-app\", app=\"backend\"}) < 1",
                         "refId": "A"
                     }
                 },
@@ -108,7 +108,7 @@ alert_rules = {
                     "relativeTimeRange": {"from": 300, "to": 0},
                     "datasourceUid": MIMIR_UID,
                     "model": {
-                        "expr": "rate(http_requests_total{status=~\"5..\"}[5m]) / rate(http_requests_total[5m]) > 0.05",
+                        "expr": "(sum(rate(http_requests_total{namespace=~\"tutum-app|tutum-prod-app\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total{namespace=~\"tutum-app|tutum-prod-app\"}[5m])), 1)) > 0.05 and sum(rate(http_requests_total{namespace=~\"tutum-app|tutum-prod-app\"}[5m])) > 1",
                         "refId": "A"
                     }
                 },
@@ -198,7 +198,7 @@ alert_rules = {
                     "relativeTimeRange": {"from": 300, "to": 0},
                     "datasourceUid": MIMIR_UID,
                     "model": {
-                        "expr": "redis_memory_used_bytes / redis_memory_max_bytes > 0.8",
+                        "expr": "(redis_memory_max_bytes{namespace=\"tutum-data\"} > 0) and ((redis_memory_used_bytes{namespace=\"tutum-data\"} / redis_memory_max_bytes{namespace=\"tutum-data\"}) > 0.8)",
                         "refId": "A"
                     }
                 },
@@ -233,7 +233,7 @@ alert_rules = {
         },
         {
             "annotations": {
-                "summary": "High latency detected (P95 > 2s)"
+                "summary": "High latency detected (P95 > 500ms)"
             },
             "condition": "C",
             "data": [
@@ -243,7 +243,7 @@ alert_rules = {
                     "relativeTimeRange": {"from": 300, "to": 0},
                     "datasourceUid": MIMIR_UID,
                     "model": {
-                        "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2",
+                        "expr": "histogram_quantile(0.95, sum by (le, namespace) (rate(http_request_duration_seconds_bucket{namespace=~\"tutum-app|tutum-prod-app\"}[5m]))) > 0.5 and on(namespace) sum by (namespace) (rate(http_request_duration_seconds_count{namespace=~\"tutum-app|tutum-prod-app\"}[5m])) > 1",
                         "refId": "A"
                     }
                 },

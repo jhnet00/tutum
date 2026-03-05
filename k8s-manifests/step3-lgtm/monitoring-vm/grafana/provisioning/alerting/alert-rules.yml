@@ -14,7 +14,7 @@ groups:
             relativeTimeRange: {from: 300, to: 0}
             datasourceUid: PAE45454D0EDB9216
             model:
-              expr: 'up{job=~".*backend.*"} == 0'
+              expr: 'sum(up{namespace=~"tutum-app|tutum-prod-app", app="backend"}) < 1'
               refId: A
           - refId: C
             relativeTimeRange: {from: 300, to: 0}
@@ -43,7 +43,7 @@ groups:
             relativeTimeRange: {from: 300, to: 0}
             datasourceUid: PAE45454D0EDB9216
             model:
-              expr: 'rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05'
+              expr: '(sum(rate(http_requests_total{namespace=~"tutum-app|tutum-prod-app",status=~"5.."}[5m])) / clamp_min(sum(rate(http_requests_total{namespace=~"tutum-app|tutum-prod-app"}[5m])), 1)) > 0.05 and sum(rate(http_requests_total{namespace=~"tutum-app|tutum-prod-app"}[5m])) > 1'
               refId: A
           - refId: C
             relativeTimeRange: {from: 300, to: 0}
@@ -101,7 +101,7 @@ groups:
             relativeTimeRange: {from: 300, to: 0}
             datasourceUid: PAE45454D0EDB9216
             model:
-              expr: 'redis_memory_used_bytes / redis_memory_max_bytes > 0.8'
+              expr: '(redis_memory_max_bytes{namespace="tutum-data"} > 0) and ((redis_memory_used_bytes{namespace="tutum-data"} / redis_memory_max_bytes{namespace="tutum-data"}) > 0.8)'
               refId: A
           - refId: C
             relativeTimeRange: {from: 300, to: 0}
@@ -131,7 +131,7 @@ groups:
             datasourceUid: PAE45454D0EDB9216
             model:
               # 멘토 피드백: P95 레이턴시 100ms 이상 = 심각
-              expr: 'histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 0.1'
+              expr: 'histogram_quantile(0.95, sum by (le, namespace) (rate(http_request_duration_seconds_bucket{namespace=~"tutum-app|tutum-prod-app"}[5m]))) > 0.5 and on(namespace) sum by (namespace) (rate(http_request_duration_seconds_count{namespace=~"tutum-app|tutum-prod-app"}[5m])) > 1'
               refId: A
           - refId: C
             relativeTimeRange: {from: 300, to: 0}
@@ -148,7 +148,7 @@ groups:
         execErrState: OK
         for: 5m
         annotations:
-          summary: "High latency detected (P95 > 100ms)"
+          summary: "High latency detected (P95 > 500ms)"
         labels:
           severity: warning
 
@@ -254,7 +254,7 @@ groups:
             datasourceUid: PAE45454D0EDB9216
             model:
               # backup CronJob 실패 (mongodb-backup, etcd-backup, elasticsearch-backup)
-              expr: 'kube_job_status_failed{namespace=~"tutum-.*|kube-system", job_name=~".*backup.*"} > 0'
+              expr: 'increase(kube_job_status_failed{namespace=~"tutum-.*|kube-system", job_name=~".*backup.*"}[1h]) > 0'
               refId: A
           - refId: C
             relativeTimeRange: {from: 3600, to: 0}
@@ -285,7 +285,7 @@ groups:
             datasourceUid: PAE45454D0EDB9216
             model:
               # MinIO 사용량 80% 초과 (minio_cluster_capacity_usable_free_bytes 기준)
-              expr: '1 - (minio_cluster_capacity_usable_free_bytes / minio_cluster_capacity_usable_total_bytes) > 0.8'
+              expr: '(minio_cluster_capacity_usable_total_bytes > 0) and ((1 - (minio_cluster_capacity_usable_free_bytes / minio_cluster_capacity_usable_total_bytes)) > 0.8)'
               refId: A
           - refId: C
             relativeTimeRange: {from: 300, to: 0}
@@ -316,7 +316,7 @@ groups:
             datasourceUid: PAE45454D0EDB9216
             model:
               # 최근 3일간 backup job이 한 번도 성공하지 않은 경우
-              expr: 'sum(kube_job_status_succeeded{namespace=~"tutum-.*|kube-system", job_name=~".*backup.*"}) == 0'
+              expr: 'sum(increase(kube_job_status_succeeded{namespace=~"tutum-.*|kube-system", job_name=~".*backup.*"}[72h])) < 1'
               refId: A
           - refId: C
             relativeTimeRange: {from: 259200, to: 0}
