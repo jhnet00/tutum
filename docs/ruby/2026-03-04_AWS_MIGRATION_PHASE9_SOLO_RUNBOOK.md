@@ -179,6 +179,7 @@ aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS
 목표:
 - EC2 직접 SSH(22) 미사용 원칙 확정
 - 운영 접근은 SSM Session Manager로 통일
+- 상세 정책 문서: `docs/ruby/aws_settings/2026-03-05_session_manager_access_policy_draft.md`
 
 오늘 작성할 항목:
 1. EC2 IAM Role 필수 정책:
@@ -193,6 +194,7 @@ aws ssm start-session --target <INSTANCE_ID> --region ap-northeast-2
 
 완료 기준:
 - “SSH 키페어 없이 운영 접근” 절차를 문서로 설명 가능
+- STG 1대에서 Session 연결/종료 성공 로그 확인
 
 ---
 

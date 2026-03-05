@@ -93,6 +93,9 @@
    - `aws:ecr-push-check`
    - `aws:eks-cluster-check`
    - `aws:eks-kubectl-smoke`
+8. Session Manager 정책 적용/검증:
+   - 기준 문서: `docs/ruby/aws_settings/2026-03-05_session_manager_access_policy_draft.md`
+   - Managed instances 노출 + 세션 1회 연결/종료 확인
 
 ## 6. 예산/알람 최소 세팅
 - AWS Budgets:
@@ -117,6 +120,7 @@
 - [x] `aws:eks-cluster-check` 성공
 - [x] `aws:eks-kubectl-smoke` 성공
 - [x] Budget 알람 활성화
+- [ ] Session Manager 세션 정책(STG 1대) 검증
 - [x] 팀 채널에 인계 공지 완료
 
 ## 9. 2026-03-05 최종 참조
