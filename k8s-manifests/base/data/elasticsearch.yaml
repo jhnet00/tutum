@@ -37,7 +37,7 @@ spec:
         app: elasticsearch
     spec:
       nodeSelector:
-        workload: data
+        workload: app
       # repository-s3 플러그인 설치 (elasticsearch-backup CronJob의 S3 스냅샷 저장소 등록에 필요)
       # 공식 이미지(8.17.0)에 미포함 → initContainer로 플러그인 설치 후 플러그인 디렉토리를 emptyDir 공유
       initContainers:
@@ -90,13 +90,15 @@ spec:
           readinessProbe:
             tcpSocket:
               port: 9200
-            initialDelaySeconds: 20
+            initialDelaySeconds: 60
             periodSeconds: 10
+            failureThreshold: 6
           livenessProbe:
             tcpSocket:
               port: 9200
-            initialDelaySeconds: 30
+            initialDelaySeconds: 120
             periodSeconds: 10
+            failureThreshold: 6
           volumeMounts:
             - name: es-data
               mountPath: /usr/share/elasticsearch/data
