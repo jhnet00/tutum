@@ -1,0 +1,175 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "parent_pipeline"'
+    - when: never
+
+default:
+  tags: [k8s]
+
+stages:
+  - precheck
+  - ecr
+  - eks
+
+aws:precheck:
+  stage: precheck
+  image: amazon/aws-cli:2.15.44
+  script:
+    - |
+      set -e
+      test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
+      test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
+      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+      test -n "${AWS_ACCOUNT_ID:-}" || { echo "ERROR: AWS_ACCOUNT_ID is missing"; exit 1; }
+      aws --version
+      aws sts get-caller-identity --region "${AWS_DEFAULT_REGION}"
+      aws ecr describe-repositories --region "${AWS_DEFAULT_REGION}" --query "repositories[].repositoryName" || true
+
+aws:ecr-bootstrap:
+  stage: ecr
+  image: amazon/aws-cli:2.15.44
+  needs:
+    - aws:precheck
+  script:
+    - |
+      set -e
+      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+      for repo in tutum/frontend tutum/backend tutum/workers; do
+        aws ecr describe-repositories \
+          --region "${AWS_DEFAULT_REGION}" \
+          --repository-names "$repo" >/dev/null 2>&1 || \
+        aws ecr create-repository \
+          --region "${AWS_DEFAULT_REGION}" \
+          --repository-name "$repo"
+      done
+      aws ecr describe-repositories --region "${AWS_DEFAULT_REGION}" --query "repositories[].repositoryName"
+      aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" >/dev/null
+
+aws:ecr-push-check:
+  stage: ecr
+  image: docker:24
+  services:
+    - name: docker:24-dind
+      alias: docker
+      command: ["--tls=false"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  needs:
+    - aws:ecr-bootstrap
+  script:
+    - apk add --no-cache aws-cli
+    - |
+      i=0
+      until docker info >/dev/null 2>&1; do
+        i=$((i+1))
+        if [ "$i" -ge 30 ]; then
+          echo "ERROR: Docker daemon not ready after 60s"
+          exit 1
+        fi
+        sleep 2
+      done
+    - |
+      set -e
+      test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
+      test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
+      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+      test -n "${AWS_ACCOUNT_ID:-}" || { echo "ERROR: AWS_ACCOUNT_ID is missing"; exit 1; }
+
+      ECR_REGISTRY_EFFECTIVE="${ECR_REGISTRY:-${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com}"
+      ECR_REPO_EFFECTIVE="${ECR_REPOSITORY_BACKEND:-tutum/backend}"
+      TEST_TAG="ci-smoke-${CI_PIPELINE_ID}-${CI_JOB_ID}"
+
+      echo "Using registry: ${ECR_REGISTRY_EFFECTIVE}"
+      echo "Using repo: ${ECR_REPO_EFFECTIVE}"
+      echo "Using tag: ${TEST_TAG}"
+
+      aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" | \
+        docker login --username AWS --password-stdin "${ECR_REGISTRY_EFFECTIVE}"
+
+      aws ecr describe-repositories \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-names "${ECR_REPO_EFFECTIVE}" >/dev/null 2>&1 || \
+      aws ecr create-repository \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-name "${ECR_REPO_EFFECTIVE}" >/dev/null
+
+      docker pull alpine:3.20
+      docker tag alpine:3.20 "${ECR_REGISTRY_EFFECTIVE}/${ECR_REPO_EFFECTIVE}:${TEST_TAG}"
+      docker push "${ECR_REGISTRY_EFFECTIVE}/${ECR_REPO_EFFECTIVE}:${TEST_TAG}"
+
+      aws ecr describe-images \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-name "${ECR_REPO_EFFECTIVE}" \
+        --image-ids imageTag="${TEST_TAG}" \
+        --query "imageDetails[0].imageTags"
+
+      aws ecr batch-delete-image \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-name "${ECR_REPO_EFFECTIVE}" \
+        --image-ids imageTag="${TEST_TAG}" >/dev/null || true
+
+aws:eks-cluster-check:
+  stage: eks
+  image: amazon/aws-cli:2.15.44
+  needs:
+    - aws:precheck
+  script:
+    - |
+      set -e
+      test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
+      test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
+      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+      test -n "${AWS_ACCOUNT_ID:-}" || { echo "ERROR: AWS_ACCOUNT_ID is missing"; exit 1; }
+      test -n "${EKS_CLUSTER_NAME_STG:-}" || { echo "ERROR: EKS_CLUSTER_NAME_STG is missing"; exit 1; }
+
+      echo "Checking AWS identity..."
+      aws sts get-caller-identity --region "${AWS_DEFAULT_REGION}"
+
+      echo "Checking EKS cluster: ${EKS_CLUSTER_NAME_STG}"
+      aws eks describe-cluster \
+        --region "${AWS_DEFAULT_REGION}" \
+        --name "${EKS_CLUSTER_NAME_STG}" \
+        --query "cluster.{name:name,status:status,version:version,platformVersion:platformVersion,endpoint:endpoint}"
+
+      echo "Checking nodegroups..."
+      NG_LIST="$(aws eks list-nodegroups --region "${AWS_DEFAULT_REGION}" --cluster-name "${EKS_CLUSTER_NAME_STG}" --query 'nodegroups' --output text)"
+      if [ -z "${NG_LIST}" ] || [ "${NG_LIST}" = "None" ]; then
+        echo "WARNING: No nodegroups found for cluster ${EKS_CLUSTER_NAME_STG}"
+      else
+        for ng in ${NG_LIST}; do
+          aws eks describe-nodegroup \
+            --region "${AWS_DEFAULT_REGION}" \
+            --cluster-name "${EKS_CLUSTER_NAME_STG}" \
+            --nodegroup-name "${ng}" \
+            --query "nodegroup.{name:nodegroupName,status:status,desired:scalingConfig.desiredSize,min:scalingConfig.minSize,max:scalingConfig.maxSize}"
+        done
+      fi
+
+aws:eks-kubectl-smoke:
+  stage: eks
+  image: amazon/aws-cli:2.15.44
+  needs:
+    - aws:eks-cluster-check
+  script:
+    - |
+      set -e
+      test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
+      test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
+      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+      test -n "${EKS_CLUSTER_NAME_STG:-}" || { echo "ERROR: EKS_CLUSTER_NAME_STG is missing"; exit 1; }
+
+      echo "Installing kubectl..."
+      KUBECTL_VERSION="$(curl -L -s https://dl.k8s.io/release/stable.txt)"
+      curl -L -o kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+      chmod +x kubectl
+      mv kubectl /usr/local/bin/kubectl
+
+      echo "Updating kubeconfig from EKS..."
+      aws eks update-kubeconfig \
+        --region "${AWS_DEFAULT_REGION}" \
+        --name "${EKS_CLUSTER_NAME_STG}"
+
+      echo "Checking Kubernetes access..."
+      kubectl get nodes -o wide
+      kubectl get ns

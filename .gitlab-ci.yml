@@ -334,6 +334,18 @@ aws:eks-kubectl-smoke:
       when: manual
     - when: never
 
+aws:checks-only:
+  stage: test
+  trigger:
+    include:
+      - local: .gitlab-ci.aws-checks.yml
+    strategy: depend
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
+
 # ============================================
 # Stage 3: SonarQube Scan
 # ============================================
