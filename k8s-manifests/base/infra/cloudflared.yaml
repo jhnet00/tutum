@@ -1,0 +1,102 @@
+# ============================================
+# Cloudflare Tunnel (cloudflared) Deployment
+# ============================================
+#
+# tutum.my → Cloudflare Edge → cloudflared → Istio IngressGateway
+#
+# Secret (not in git, apply manually):
+#   kubectl create secret generic cloudflared-credentials \
+#     --from-file=credentials.json=/path/to/<tunnel-id>.json \
+#     -n tutum-app
+# ============================================
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: tutum-app
+data:
+  config.yml: |
+    tunnel: tutum-tunnel
+    credentials-file: /etc/cloudflared/credentials.json
+    no-autoupdate: true
+
+    ingress:
+      - hostname: tutum.my
+        service: http://istio-ingressgateway.istio-system.svc.cluster.local:80
+      - hostname: admin.tutum.my
+        service: http://192.168.0.230:3000
+      - service: http_status:404
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: tutum-app
+  labels:
+    app: cloudflared
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: cloudflared
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.2.0
+          args:
+            - tunnel
+            - --config
+            - /etc/cloudflared/config.yml
+            - run
+          env:
+            - name: TUNNEL_METRICS
+              value: "0.0.0.0:2000"
+          ports:
+            - containerPort: 2000
+              name: metrics
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared/config.yml
+              subPath: config.yml
+              readOnly: true
+            - name: credentials
+              mountPath: /etc/cloudflared/credentials.json
+              subPath: credentials.json
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: cloudflared-config
+        - name: credentials
+          secret:
+            secretName: cloudflared-credentials

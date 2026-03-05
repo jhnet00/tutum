@@ -35,3 +35,4 @@ resources:
   - security/network-policy.yaml
   - backup/mongodb-backup.yaml
   - backup/etcd-backup.yaml
+  - infra/cloudflared.yaml
