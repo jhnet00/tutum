@@ -20,7 +20,9 @@ function LoginContent() {
     const [password, setPassword] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     const { login } = useAuth();
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const API_URL = typeof window !== "undefined"
+        ? ""  // 브라우저: 상대 경로 사용 (현재 도메인 기준)
+        : (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"); // SSR: 내부 URL
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
