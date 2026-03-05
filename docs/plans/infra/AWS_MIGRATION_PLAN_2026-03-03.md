@@ -1,7 +1,7 @@
 # AWS Migration Plan 2026-03-03 (EKS + ECR)
 
 작성일: `2026-03-03`
-최종 수정: `2026-03-05` (MariaDB 연결 방식 수정 — 공인 IP 직접 연결, StrongSwan VPN 불필요)
+최종 수정: `2026-03-05` (MariaDB 공인 IP 직접 연결 / CI/CD VPC 제거 — GitLab SaaS + EKS 내 Runner로 단일 VPC 충분)
 
 ---
 
@@ -22,6 +22,10 @@
 
 ### 2-1. VPC 구성 (핵심)
 
+> **단일 VPC 채택 이유**: GitLab은 SaaS(gitlab.com)이고 GitLab Runner는 EKS 내 pod로 실행.
+> Jenkins/GitLab self-hosted 서버가 없으므로 별도 CI/CD VPC가 불필요.
+> Monitoring EC2, Elasticsearch EC2도 EKS VPC 내 private subnet에 배치.
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  AWS ap-northeast-2                                             │
@@ -29,14 +33,12 @@
 │  ┌── EKS VPC (10.0.0.0/16) ──────────────────────────────────┐ │
 │  │  Public Subnet:  10.0.1.0/24 (ALB, NAT GW)                │ │
 │  │  Private Subnet: 10.0.2.0/24 (EKS worker nodes)           │ │
-│  │  Private Subnet: 10.0.3.0/24 (DB: MongoDB, Redis, Kafka)  │ │
+│  │  Private Subnet: 10.0.3.0/24 (Redis, Kafka StatefulSet)   │ │
+│  │  Private Subnet: 10.0.4.0/24 (Monitoring EC2, ES EC2)     │ │
+│  │                                                             │ │
+│  │  EKS 내 pod:  GitLab Runner (gitlab-runner ns)             │ │
+│  │               ArgoCD (argocd ns)                           │ │
 │  │  AZ 분산: ap-northeast-2a / 2b / 2c                        │ │
-│  └────────────────────────┬───────────────────────────────────┘ │
-│                           │ VPC Peering (사설 IP, CIDR 비중복)  │
-│  ┌── CI/CD VPC (10.1.0.0/16) ─────────────────────────────────┐ │
-│  │  GitLab Runner EC2                                          │ │
-│  │  ArgoCD                                                     │ │
-│  │  Monitoring EC2 (LGTM + AI 분석)                           │ │
 │  └────────────────────────┬───────────────────────────────────┘ │
 │                           │ NAT GW → 인터넷 (공인 IP 직접 연결) │
 └───────────────────────────┼─────────────────────────────────────┘
@@ -47,9 +49,6 @@
                     │ (회원/인증)                    │
                     └──────────────────────────────┘
 ```
-
-> **CIDR 비중복 원칙**: VPC Peering 시 각 VPC의 CIDR 대역이 겹치면 라우팅 불가.
-> EKS VPC `10.0.0.0/16` / CI-CD VPC `10.1.0.0/16` — 겹치지 않음.
 
 > **MariaDB 연결 방식**: 학원 제공 서버는 이미 공인 IP(`211.46.52.153`)로 외부 노출되어 있어
 > EKS → NAT GW → 인터넷 → 211.46.52.153:15432 직접 연결 가능. VPN 불필요.
@@ -89,12 +88,12 @@ Route53 (DNS)
 - **HTTP → HTTPS 리다이렉트**: ALB 리스너 규칙으로 강제
 - **Istio IngressGateway**: EKS 전환 후 제거, ALB로 대체
 - **Istio 내부 메시(Envoy proxy)**: 유지 — 서비스 간 mTLS, Circuit Breaker, Retry
-- **Kiali**: Istio 서비스 맵 시각화 — CI/CD VPC Monitoring EC2에서 운영
+- **Kiali**: Istio 서비스 맵 시각화 — EKS VPC Monitoring EC2에서 운영
 
 ### 2-4. 개발/배포 흐름
 
 ```
-GitLab CI (CI/CD VPC)
+GitLab CI (SaaS)
   → build (Alpine Linux 기반 이미지)
   → scan (Trivy)
   → push (ECR)
@@ -194,7 +193,7 @@ EKS 클러스터
         ├── 로그   → Loki  (Monitoring EC2)
         └── 트레이스 → Tempo (Monitoring EC2)
 
-Monitoring EC2 (ap-northeast-2c, t3.medium 이상)
+Monitoring EC2 (EKS VPC private subnet, ap-northeast-2c, t3.medium 이상)
   └── Docker Compose
         ├── Grafana   (대시보드)
         ├── Loki      (로그)
@@ -205,6 +204,7 @@ Monitoring EC2 (ap-northeast-2c, t3.medium 이상)
 
 > 모니터링 도구는 EKS 내부 컨테이너에 올리지 않는다.
 > 클러스터 장애 시 모니터링까지 영향받는 구조를 방지. 전용 EC2로 분리.
+> EKS VPC 내 private subnet에 배치 — VPC Peering 불필요, Alloy → Monitoring EC2 직접 통신.
 > ap-northeast-2c에 배치 시 프리티어(t3.micro) 활용 가능. 실사용은 t3.medium 권장.
 
 ### 5-2. 모니터링 대시보드 구성 (Grafana)
@@ -275,7 +275,7 @@ Monitoring EC2 (ap-northeast-2c, t3.medium 이상)
 | 현황 | LGTM 스택(Grafana/Loki/Tempo/Mimir)이 192.168.0.230에서 운영 |
 | 문제 | EKS에서 해당 VM으로 메트릭/로그/트레이스 전송 불가 |
 | **확정 해결 방안** | **LGTM을 전용 EC2(ap-northeast-2c)에 Docker Compose로 재구성** |
-| 구성 | CI/CD VPC 내 Monitoring EC2 → EKS VPC Peering으로 Alloy가 push |
+| 구성 | EKS VPC private subnet(10.0.4.0/24) 내 Monitoring EC2 → Alloy가 직접 push |
 | 비용 추가 | t3.medium ~$30/월 |
 
 ### R3: Cosign + Kyverno ECR 재설정
@@ -346,7 +346,7 @@ Monitoring EC2 (ap-northeast-2c, t3.medium 이상)
    - AWS Organizations + SCP 설계
 
 2. **플랫폼 담당**
-   - EKS 클러스터/노드 그룹 운영 (VPC 2개 + Peering)
+   - EKS 클러스터/노드 그룹 운영 (단일 VPC)
    - ALB Ingress Controller + ACM 연동
    - EKS worker SG outbound 211.46.52.153:15432 허용 (MariaDB 직접 연결)
    - Session Manager 설정 (키페어 대체)
@@ -379,14 +379,14 @@ Monitoring EC2 (ap-northeast-2c, t3.medium 이상)
 1. ECR repo 생성
 2. GitLab CI 변수 등록 (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `ECR_REGISTRY`)
 3. AWS Organizations + OU 구성 + SCP 초기 정책 적용
-4. EKS VPC / CI-CD VPC CIDR 설계 (비중복 확인)
+4. EKS VPC CIDR 설계 확정 (10.0.0.0/16, 단일 VPC)
 5. MariaDB 연결 검증: EKS worker SG에 outbound `211.46.52.153:15432` 허용 설정
 
 ### Phase B (D+4 ~ D+7): EKS 구성
-1. EKS VPC + CI-CD VPC 생성, VPC Peering 설정
-2. EKS 클러스터 생성 (Managed Node Group, ap-northeast-2a/b/c 분산)
+1. EKS VPC + 클러스터 생성 (단일 VPC, eksctl)
+2. EKS Managed Node Group 구성 (ap-northeast-2a/b/c 분산)
 3. ALB Ingress Controller + ACM 인증서 연동
-4. ArgoCD 연동 (CI-CD VPC)
+4. ArgoCD on EKS 내부 배포 (argocd ns)
 5. NetworkPolicy 이식 (tutum-app, tutum-data, 네임스페이스별)
 6. Session Manager 설정, EC2 키페어 미사용 확인
 7. **Istio 재설치 (EKS 환경), IngressGateway 제거** (R4)

@@ -27,7 +27,7 @@
 | **Kafka** | K8s StatefulSet, KRaft 3-replica | EKS StatefulSet 그대로 이식 |
 | **Elasticsearch** | Node3 Docker (192.168.56.13:9200) | EC2 Docker (VPC 내) 또는 OpenSearch Service |
 | **MinIO** | K8s StatefulSet 4-pod (tutum-storage) | S3 버킷으로 대체 |
-| **모니터링** | Docker Compose on 192.168.0.230 | EC2 Docker Compose (CI/CD VPC) |
+| **모니터링** | Docker Compose on 192.168.0.230 | EC2 Docker Compose (EKS VPC private subnet) |
 | **GitOps** | GitLab CI → ArgoCD → on-prem K8s | GitLab CI → ECR → ArgoCD → EKS |
 | **Autoscaling** | KEDA | KEDA (그대로 이식) |
 | **보안 정책** | Kyverno (Enforce) + Cosign | Kyverno + Cosign (ECR 대응 재구성) |
@@ -47,7 +47,7 @@
   ├─ tutum-app (backend/frontend/workers)  →  EKS tutum-app ns
   ├─ tutum-data (Redis, Kafka, MongoDB-backup) → EKS tutum-data ns
   ├─ tutum-storage (MinIO 4-pod)           →  S3 버킷
-  ├─ monitoring VM (192.168.0.230 LGTM)    →  EC2 (CI/CD VPC)
+  ├─ monitoring VM (192.168.0.230 LGTM)    →  EC2 (EKS VPC private subnet)
   └─ Elasticsearch (Node3 Docker)          →  EC2 (VPC 내)
 
 마이그레이션 순서:
@@ -183,8 +183,12 @@ IAM 최소 권한 정책 (CI/CD용 — ECR push 전용):
 ### A-5. VPC 설계 확정
 
 ```
-EKS VPC:   10.0.0.0/16  (ap-northeast-2a/b/c, public + private subnet)
-CI/CD VPC: 10.1.0.0/16  (EC2: GitLab Runner, 모니터링)
+EKS VPC (단일):  10.0.0.0/16
+  - Public Subnet  10.0.1.0/24  (ALB, NAT GW)
+  - Private Subnet 10.0.2.0/24  (EKS worker nodes)
+  - Private Subnet 10.0.3.0/24  (Redis, Kafka StatefulSet)
+  - Private Subnet 10.0.4.0/24  (Monitoring EC2, ES EC2)
+  - EKS 내 pod: GitLab Runner (gitlab-runner ns), ArgoCD (argocd ns)
 온프레미스: 192.168.0.0/24 (참고용, 직접 연결 없음)
 외부:       211.46.52.153/32 (학원 MariaDB, NAT GW 경유 outbound)
 ```
@@ -777,17 +781,17 @@ kubectl apply -f k8s-manifests/base/messaging/kafka-topics.yaml
 
 **현재 위치**: Node3 VM Docker (192.168.56.13:9200)
 **이전 선택지**:
-- (A) EC2 Docker (CI/CD VPC 내) — 현재 설정과 동일, 비용 저렴
+- (A) EC2 Docker (EKS VPC private subnet 내) — 현재 설정과 동일, 비용 저렴
 - (B) Amazon OpenSearch Service — 관리형, 비용 증가
 
 **권장: (A) EC2 Docker** (팀 프로젝트 규모 적합)
 
 ```bash
-# CI/CD VPC에 EC2 생성 (t3.large — ES는 메모리 필요)
+# EKS VPC private subnet에 EC2 생성 (t3.large — ES는 메모리 필요)
 aws ec2 run-instances \
   --image-id ami-0c9c942bd7bf113a2 \
   --instance-type t3.large \
-  --subnet-id <ci-cd-vpc-private-subnet> \
+  --subnet-id <eks-vpc-private-subnet-10.0.4.0/24> \
   --security-group-ids <es-sg> \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=tutum-elasticsearch}]'
 
@@ -809,7 +813,7 @@ curl -X POST "http://localhost:9200/_snapshot/s3_backup/migration_snap/_restore"
 
 # 백엔드 환경변수 업데이트
 # ELASTICSEARCH_URL=http://192.168.56.13:9200
-# → ELASTICSEARCH_URL=http://10.1.x.x:9200  (새 EC2 내부 IP)
+# → ELASTICSEARCH_URL=http://10.0.4.x:9200  (EKS VPC private subnet EC2 내부 IP)
 ```
 
 ---
@@ -820,7 +824,7 @@ curl -X POST "http://localhost:9200/_snapshot/s3_backup/migration_snap/_restore"
 # 현재 monitoring VM (192.168.0.230)의 docker-compose.yml 복사
 scp clouddx@192.168.0.230:/opt/monitoring/docker-compose.yml ./monitoring-backup.yml
 
-# CI/CD VPC EC2 생성 (t3.medium)
+# EKS VPC private subnet에 모니터링 EC2 생성 (t3.medium)
 # docker-compose.yml에서 변경할 사항:
 # 1. Alloy remote_write endpoint 주소 → EC2 내부 IP (자기 자신)
 # 2. 외부 접근 SG 규칙: 3000(Grafana), 9009(Mimir) 포트
@@ -828,7 +832,7 @@ scp clouddx@192.168.0.230:/opt/monitoring/docker-compose.yml ./monitoring-backup
 # EKS Alloy DaemonSet 설정 업데이트
 # k8s-manifests/base/monitoring/alloy-config.yaml
 # 기존: url = "http://192.168.0.230:9009/api/v1/push"
-# 변경: url = "http://10.1.x.x:9009/api/v1/push"  ← 새 EC2 내부 IP
+# 변경: url = "http://10.0.4.x:9009/api/v1/push"  ← EKS VPC private subnet EC2 내부 IP
 
 kubectl apply -f k8s-manifests/base/monitoring/alloy-config.yaml
 kubectl rollout restart daemonset alloy -n monitoring
