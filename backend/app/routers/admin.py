@@ -17,6 +17,7 @@ import json
 import logging
 import math
 import os
+import time
 from datetime import datetime, timezone, timedelta
 
 import boto3
@@ -24,7 +25,7 @@ import httpx
 from botocore.config import Config
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..database import get_news_collection
+from ..database import get_database, get_news_collection
 from .auth import get_current_user
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(get_current_user)])
@@ -1050,10 +1051,13 @@ async def get_node_history():
 
 # ─── 데이터 레이어 메트릭 ────────────────────────────────────────────────────────
 
+_mongo_io_prev: dict = {}  # {ts: float, opcounters: dict}
+
+
 @router.get("/data-metrics")
 async def get_data_metrics():
     """
-    Mimir에서 Redis/Kafka/ES 메트릭 조회.
+    Mimir에서 Redis/Kafka/ES/Disk 메트릭 조회 + MongoDB serverStatus 직접 조회.
     kafka-exporter(9308), redis-exporter(9121)가 Alloy에 의해 스크랩된 데이터.
     """
     now = datetime.now(timezone.utc)
@@ -1074,6 +1078,8 @@ async def get_data_metrics():
         "es_indexing_rate": ["sum(rate(elasticsearch_indices_indexing_index_total[5m]))"],
         "es_jvm_heap_used": ['sum(elasticsearch_jvm_memory_used_bytes{area="heap"})'],
         "es_jvm_heap_max": ['sum(elasticsearch_jvm_memory_max_bytes{area="heap"})'],
+        "disk_read_bps": ["sum(rate(node_disk_read_bytes_total[5m]))"],
+        "disk_write_bps": ["sum(rate(node_disk_written_bytes_total[5m]))"],
     }
 
     raw: dict = {}
@@ -1107,6 +1113,45 @@ async def get_data_metrics():
     def to_gb(v): return round(v / 1024 / 1024 / 1024, 2) if v else None
     def to_pct(used, max_v): return round(used / max_v * 100, 1) if used and max_v else None
 
+    # MongoDB serverStatus (ops/sec delta 계산)
+    global _mongo_io_prev
+    mongo_io: dict = {"available": False}
+    try:
+        db = get_database()
+        if db is not None:
+            status = await db.command("serverStatus")
+            conns = status.get("connections", {})
+            clients = status.get("globalLock", {}).get("activeClients", {})
+            ops = status.get("opcounters", {})
+            now_ts = time.time()
+
+            ops_read_per_sec = None
+            ops_write_per_sec = None
+            if _mongo_io_prev:
+                elapsed = now_ts - _mongo_io_prev["ts"]
+                if elapsed > 0:
+                    prev = _mongo_io_prev["ops"]
+                    reads  = max(0, (ops.get("query", 0) + ops.get("getmore", 0))
+                                  - (prev.get("query", 0) + prev.get("getmore", 0)))
+                    writes = max(0, (ops.get("insert", 0) + ops.get("update", 0) + ops.get("delete", 0))
+                                  - (prev.get("insert", 0) + prev.get("update", 0) + prev.get("delete", 0)))
+                    ops_read_per_sec  = round(reads  / elapsed, 1)
+                    ops_write_per_sec = round(writes / elapsed, 1)
+            _mongo_io_prev = {"ts": now_ts, "ops": dict(ops)}
+
+            mongo_io = {
+                "connections":      conns.get("current"),
+                "active_readers":   clients.get("readers"),
+                "active_writers":   clients.get("writers"),
+                "ops_read_per_sec":  ops_read_per_sec,
+                "ops_write_per_sec": ops_write_per_sec,
+                "available": True,
+            }
+    except Exception as e:
+        logger.warning("MongoDB serverStatus 조회 실패: %s", e)
+
+    def to_mbps(v): return round(v / 1024 / 1024, 2) if v is not None else None
+
     return {
         "redis": {
             "memory_used_gb":  to_gb(raw.get("redis_memory_used")),
@@ -1130,6 +1175,12 @@ async def get_data_metrics():
             "jvm_heap_pct":   to_pct(raw.get("es_jvm_heap_used"), raw.get("es_jvm_heap_max")),
             "available":      raw.get("es_jvm_heap_used") is not None,
         },
+        "disk": {
+            "read_mbps":  to_mbps(raw.get("disk_read_bps")),
+            "write_mbps": to_mbps(raw.get("disk_write_bps")),
+            "available":  raw.get("disk_read_bps") is not None,
+        },
+        "mongodb": mongo_io,
     }
 
 

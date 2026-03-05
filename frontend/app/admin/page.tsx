@@ -45,6 +45,8 @@ type DataMetrics = {
   redis:         { memory_used_gb: number|null; memory_max_gb: number|null; memory_pct: number|null; clients: number|null; hit_rate_pct: number|null; available: boolean };
   kafka:         { consumer_lag: number|null; throughput_msg_per_min: number|null; available: boolean };
   elasticsearch: { indexing_rate: number|null; jvm_heap_used_gb: number|null; jvm_heap_max_gb: number|null; jvm_heap_pct: number|null; available: boolean };
+  disk:          { read_mbps: number|null; write_mbps: number|null; available: boolean };
+  mongodb:       { connections: number|null; active_readers: number|null; active_writers: number|null; ops_read_per_sec: number|null; ops_write_per_sec: number|null; available: boolean };
 };
 type TraceEntry = { traceID: string; rootServiceName: string; rootTraceName: string; durationMs: number; startTimeMs: number; isError: boolean; grafana_url: string };
 type TracesData = { traces: TraceEntry[]; error_traces: TraceEntry[]; client_error_traces: TraceEntry[]; available: boolean };
@@ -1005,6 +1007,76 @@ export default function AdminDashboard() {
                         <span className="text-white/50">처리량/분</span>
                         <span className="font-mono" style={{ color: C.blue }}>
                           <Val v={dataMetrics.kafka.throughput_msg_per_min} unit="" decimals={0} />
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+
+                {/* Disk I/O (node_exporter via Mimir) */}
+                <Card>
+                  <p className="text-xs text-white/40 mb-3">
+                    💾 Disk I/O
+                    <Info tip={"클러스터 전체 노드의 디스크 읽기/쓰기 처리량 (node_exporter 5m rate)\n읽기: 디스크에서 데이터를 읽는 속도\n쓰기: 디스크에 데이터를 저장하는 속도\n지속적으로 높은 경우 I/O 병목 가능성 존재"} />
+                  </p>
+                  {loadingDataM ? <Skel h="h-16" /> : !dataMetrics?.disk?.available ? (
+                    <p className="text-xs text-white/20">node_exporter 미배포</p>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">읽기</span>
+                        <span className="font-mono font-bold" style={{ color: C.cyan }}>
+                          <Val v={dataMetrics.disk.read_mbps} unit=" MB/s" decimals={1} />
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">쓰기</span>
+                        <span className="font-mono font-bold" style={{ color: C.amber }}>
+                          <Val v={dataMetrics.disk.write_mbps} unit=" MB/s" decimals={1} />
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">합계</span>
+                        <span className="font-mono" style={{ color: C.blue }}>
+                          {dataMetrics.disk.read_mbps != null && dataMetrics.disk.write_mbps != null
+                            ? <Val v={dataMetrics.disk.read_mbps + dataMetrics.disk.write_mbps} unit=" MB/s" decimals={1} />
+                            : "N/A"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+
+                {/* MongoDB I/O (serverStatus 직접 조회) */}
+                <Card>
+                  <p className="text-xs text-white/40 mb-3">
+                    🗄️ MongoDB I/O
+                    <Info tip={"MongoDB serverStatus 직접 조회 (30s 인터벌)\nops/sec: 이전 호출 대비 opcounters 델타값\n읽기: query + getmore 연산\n쓰기: insert + update + delete 연산\n첫 호출 시 ops/sec는 N/A (델타 계산 불가)"} />
+                  </p>
+                  {loadingDataM ? <Skel h="h-16" /> : !dataMetrics?.mongodb?.available ? (
+                    <p className="text-xs text-white/20">메트릭 없음</p>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">커넥션</span>
+                        <span className="font-mono font-bold" style={{ color: (dataMetrics.mongodb.connections ?? 0) > 100 ? C.amber : C.emerald }}>
+                          {dataMetrics.mongodb.connections ?? "N/A"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">읽기 ops/s</span>
+                        <span className="font-mono" style={{ color: C.cyan }}>
+                          {dataMetrics.mongodb.ops_read_per_sec != null
+                            ? <Val v={dataMetrics.mongodb.ops_read_per_sec} unit="" decimals={1} />
+                            : <span className="text-white/20">-</span>}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">쓰기 ops/s</span>
+                        <span className="font-mono" style={{ color: C.amber }}>
+                          {dataMetrics.mongodb.ops_write_per_sec != null
+                            ? <Val v={dataMetrics.mongodb.ops_write_per_sec} unit="" decimals={1} />
+                            : <span className="text-white/20">-</span>}
                         </span>
                       </div>
                     </div>
