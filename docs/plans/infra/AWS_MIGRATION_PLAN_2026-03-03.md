@@ -1,7 +1,7 @@
 # AWS Migration Plan 2026-03-03 (EKS + ECR)
 
 작성일: `2026-03-03`
-최종 수정: `2026-03-04` (VPC 아키텍처, 오토스케일링 비교, 보안/관측 설계 전면 보완)
+최종 수정: `2026-03-05` (MariaDB 연결 방식 수정 — 공인 IP 직접 연결, StrongSwan VPN 불필요)
 
 ---
 
@@ -38,17 +38,22 @@
 │  │  ArgoCD                                                     │ │
 │  │  Monitoring EC2 (LGTM + AI 분석)                           │ │
 │  └────────────────────────┬───────────────────────────────────┘ │
-│                           │ VPN Gateway (Site-to-Site)          │
+│                           │ NAT GW → 인터넷 (공인 IP 직접 연결) │
 └───────────────────────────┼─────────────────────────────────────┘
-                            │ StrongSwan IPSec 터널
-                    ┌───────┴──────────────────┐
-                    │ 학원 온프레 (192.168.0.0/24) │
-                    │ MariaDB (회원/인증)          │
-                    └──────────────────────────┘
+                            │ TCP 15432 (TLS 권장)
+                    ┌───────┴──────────────────────┐
+                    │ 학원 제공 서버 (공인 IP)        │
+                    │ MariaDB 211.46.52.153:15432   │
+                    │ (회원/인증)                    │
+                    └──────────────────────────────┘
 ```
 
 > **CIDR 비중복 원칙**: VPC Peering 시 각 VPC의 CIDR 대역이 겹치면 라우팅 불가.
-> EKS VPC `10.0.0.0/16` / CI-CD VPC `10.1.0.0/16` / 온프레 `192.168.0.0/24` — 전부 겹치지 않음.
+> EKS VPC `10.0.0.0/16` / CI-CD VPC `10.1.0.0/16` — 겹치지 않음.
+
+> **MariaDB 연결 방식**: 학원 제공 서버는 이미 공인 IP(`211.46.52.153`)로 외부 노출되어 있어
+> EKS → NAT GW → 인터넷 → 211.46.52.153:15432 직접 연결 가능. VPN 불필요.
+> 보안 강화: EKS worker 노드 Security Group에서 outbound 211.46.52.153:15432만 허용.
 
 > **ap-northeast-2c**: 프리티어 혜택이 적용되는 AZ. Monitoring EC2(t3.micro) 배치 시 우선 고려.
 
@@ -67,7 +72,7 @@
 | Redis + Sentinel | tutum-data | 캐시, 세션, Rate Limiting |
 | Kafka (KRaft) | tutum-data | 이벤트 스트리밍 |
 | Elasticsearch | tutum-data | 뉴스 검색 |
-| MariaDB | 온프레 (VPN) | 회원/인증 |
+| MariaDB | 학원 제공 서버 (공인 IP, 직접 연결) | 회원/인증 |
 
 ### 2-3. 트래픽 흐름
 
@@ -253,17 +258,15 @@ Monitoring EC2 (ap-northeast-2c, t3.medium 이상)
 
 ## 6. 리스크 분석
 
-### R1: MariaDB 네트워크 단절
+### R1: MariaDB 연결 방식
 
 | 항목 | 내용 |
 |------|------|
-| 현황 | MariaDB는 학원 온프레미스 서버(192.168.x.x)에서 운영 중 |
-| 문제 | EKS(AWS VPC)에서 학원 내부망으로의 직접 접근 불가 |
-| 영향 | 회원가입/로그인(OAuth 포함) 전체 불능 |
-| **확정 해결 방안** | **AWS VPN Gateway + StrongSwan Site-to-Site IPSec 터널** |
-| 구성 | AWS VGW(Virtual Private Gateway) ↔ StrongSwan(학원 PC) IPSec 터널 |
-| 전제 조건 | 학원 공유기/방화벽에서 IPSec(UDP 500, 4500) 포트 허용 필요 |
-| 결정 필요 | Phase A 시작 전 학원 네트워크 담당자 확인 |
+| 현황 | MariaDB는 학원 제공 서버 **공인 IP `211.46.52.153:15432`** 로 운영 중 |
+| 연결 방식 | EKS worker → NAT GW → 인터넷 → `211.46.52.153:15432` **직접 연결** (VPN 불필요) |
+| 보안 조치 | EKS worker SG: outbound `211.46.52.153:15432` only / MariaDB TLS 연결 권장 |
+| 장기 계획 | 프로젝트 종료(학원 서버 반납) 이후 **AWS RDS(MariaDB)** 전환 검토 |
+| 영향 | R1 리스크 대폭 해소 — VPN 구성/협의 불필요, Phase A 사전 작업 제거 |
 
 ### R2: Monitoring VM 접근 불가
 
@@ -303,14 +306,14 @@ Monitoring EC2 (ap-northeast-2c, t3.medium 이상)
 | ALB | ~20 |
 | EBS (gp3 300GB) | ~24 |
 | NAT Gateway | ~45 |
-| VPN Gateway | ~36 |
+| VPN Gateway | ~~36~~ → **0** (MariaDB 공인 IP 직접 연결) |
 | S3 + Glacier + CloudTrail | ~15 |
 | ECR | ~5 |
 | CloudWatch | ~15 |
-| **합계** | **~477** |
+| **합계** | **~441** |
 
-> 900 USD 이하 충분히 달성 가능. StrongSwan VPN 추가(+36)해도 안전권.
-> RDS로 MariaDB 이전 시 추가 ~$30-50/월 발생 (현재 계획은 온프레 유지 + VPN).
+> VPN Gateway 불필요(MariaDB 공인 IP 직접 연결)로 기존 대비 -$36 절감.
+> RDS로 MariaDB 이전 시 추가 ~$30-50/월 발생 (현재 계획은 학원 서버 직접 연결 유지).
 
 ---
 
@@ -345,7 +348,7 @@ Monitoring EC2 (ap-northeast-2c, t3.medium 이상)
 2. **플랫폼 담당**
    - EKS 클러스터/노드 그룹 운영 (VPC 2개 + Peering)
    - ALB Ingress Controller + ACM 연동
-   - StrongSwan Site-to-Site VPN 구성 (R1)
+   - EKS worker SG outbound 211.46.52.153:15432 허용 (MariaDB 직접 연결)
    - Session Manager 설정 (키페어 대체)
    - 장애 대응 runbook
 
@@ -377,7 +380,7 @@ Monitoring EC2 (ap-northeast-2c, t3.medium 이상)
 2. GitLab CI 변수 등록 (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `ECR_REGISTRY`)
 3. AWS Organizations + OU 구성 + SCP 초기 정책 적용
 4. EKS VPC / CI-CD VPC CIDR 설계 (비중복 확인)
-5. **StrongSwan VPN 학원 네트워크 사전 협의** (R1 — 미확정 시 Phase C 배포 불가)
+5. MariaDB 연결 검증: EKS worker SG에 outbound `211.46.52.153:15432` 허용 설정
 
 ### Phase B (D+4 ~ D+7): EKS 구성
 1. EKS VPC + CI-CD VPC 생성, VPC Peering 설정
@@ -392,7 +395,7 @@ Monitoring EC2 (ap-northeast-2c, t3.medium 이상)
 1. GitLab CI → ECR push 전환 + Alpine Linux 이미지 전환
 2. Cosign 키 재발급 + Kyverno policy registry 경로 수정 (R3)
 3. k8s-manifests image 경로 ECR 통일
-4. StrongSwan Site-to-Site VPN 구성 완료 → MariaDB 연결 검증
+4. MariaDB 연결 검증 (EKS → 211.46.52.153:15432 직접 연결, 회원/로그인 E2E)
 5. staging E2E 검증
 
 ### Phase D (D+13 ~ D+18): 데이터/관측
@@ -405,7 +408,7 @@ Monitoring EC2 (ap-northeast-2c, t3.medium 이상)
 
 ### Phase E (D+19 ~ D+24): 안정화
 1. canary/rollback 리허설
-2. 장애 시나리오 점검 (VPN 단절, 노드 장애, Kafka lag 폭증)
+2. 장애 시나리오 점검 (MariaDB 서버 접근 불가, 노드 장애, Kafka lag 폭증)
 3. SCP/IAM 권한 최소화 최종 검토
 4. 운영 문서 확정
 
@@ -413,7 +416,7 @@ Monitoring EC2 (ap-northeast-2c, t3.medium 이상)
 
 ## 10. 비용 가드레일 (총 900 USD 이하)
 
-1. 월간 비용 상한 관리: `EKS + EC2 + ALB + EBS + NAT + VPN + S3 + CloudWatch`
+1. 월간 비용 상한 관리: `EKS + EC2 + ALB + EBS + NAT + S3 + CloudWatch`
 2. Spot 혼용 (비핵심 워크로드: news-consumer, elastic-consumer 등)으로 절감
 3. S3 lifecycle으로 저장 비용 절감 (CloudTrail 포함)
 4. 미사용 자원 정리 자동화 (EBS, ELB, NAT)
@@ -428,7 +431,7 @@ Monitoring EC2 (ap-northeast-2c, t3.medium 이상)
 2. `develop → ECR(stg) → EKS` 배포 성공
 3. `main → ECR(prod) → EKS` 배포 성공
 4. OAuth, 시세, 뉴스, OCR, SES, MinIO E2E 통과
-5. MariaDB 연결 정상 (StrongSwan VPN 경유, 회원/로그인 E2E 포함)
+5. MariaDB 연결 정상 (211.46.52.153:15432 직접 연결, 회원/로그인 E2E 포함)
 6. Cosign 서명 검증 정상 (Kyverno 미서명 이미지 차단 확인)
 7. LGTM 대시보드 5종 + AI 분석 운영 가능 상태
 8. CloudTrail 활성화, SCP 적용, Session Manager 접근 확인
