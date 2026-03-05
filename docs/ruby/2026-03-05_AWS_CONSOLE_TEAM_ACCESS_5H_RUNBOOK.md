@@ -9,7 +9,7 @@
 1. 팀원별 콘솔 계정 생성 및 MFA 강제 적용 완료
 2. 역할별 IAM 그룹/정책 적용 완료
 3. GitLab CI 전용 IAM 사용자(또는 역할) 권한 확정 및 변수 등록 완료
-4. ECR/EKS 수동 점검 파이프라인 통과 (`aws:precheck`, `aws:ecr-bootstrap`, `aws:eks-cluster-check`)
+4. ECR/EKS 수동 점검 파이프라인 통과 (`aws:precheck`, `aws:ecr-bootstrap`, `aws:ecr-push-check`, `aws:eks-cluster-check`, `aws:eks-kubectl-smoke`)
 5. 예산 알람(Budget) + 운영 알람(SNS/Email) 최소 1개 이상 활성화
 6. 팀 인계표(누가 어떤 콘솔 메뉴까지 접근 가능한지) 공유 완료
 
@@ -19,7 +19,7 @@
 | 00:00~00:40 | 계정 보안 기본값 점검 | Root MFA on, 불필요 Access Key 제거 |
 | 00:40~01:50 | IAM 사용자/그룹/권한 생성 | 팀원 전원 콘솔 로그인 + MFA 등록 |
 | 01:50~02:40 | GitLab CI용 IAM 권한 확정 | CI 변수 등록 후 AWS 수동 잡 준비 완료 |
-| 02:40~03:20 | ECR/EKS 파이프라인 검증 | 수동 잡 3개 성공 |
+| 02:40~03:20 | ECR/EKS 파이프라인 검증 | 수동 잡 5개 성공 |
 | 03:20~04:00 | Budget/알람 설정 | 월 예산 경보 발송 확인 |
 | 04:00~05:00 | 인계 문서/체크리스트 공유 | 내일 대체 작업 가능 상태 |
 
@@ -37,7 +37,7 @@
   - 추가: `IAMUserChangePassword`
 - `tutum-cicd-operator`
   - `AmazonEC2ContainerRegistryPowerUser`
-  - `AmazonEKSReadOnlyAccess`
+  - `TutumGitlabCiEKSReadOnly` (customer policy, `eks:DescribeCluster` 포함)
   - `CloudWatchReadOnlyAccess`
 - `tutum-observability-readonly`
   - `CloudWatchReadOnlyAccess`
@@ -74,7 +74,8 @@
 - `ECR_REPOSITORY_BACKEND=tutum/backend`
 - `ECR_REPOSITORY_FRONTEND=tutum/frontend`
 - `ECR_REPOSITORY_WORKERS=tutum/workers`
-- `EKS_CLUSTER_NAME_STG=<staging-cluster-name>`
+- `EKS_CLUSTER_NAME_STG=tutum-stg-eks`
+- `EKS_CLUSTER_NAME_PROD=tutum-prd-eks`
 
 모두 `Masked + Protected` 권장.
 
@@ -89,7 +90,9 @@
 7. GitLab Pipeline 수동 실행:
    - `aws:precheck`
    - `aws:ecr-bootstrap`
+   - `aws:ecr-push-check`
    - `aws:eks-cluster-check`
+   - `aws:eks-kubectl-smoke`
 
 ## 6. 예산/알람 최소 세팅
 - AWS Budgets:
@@ -105,12 +108,18 @@
 - 공통: 권한 이슈 발생 시 IAM 그룹 정책 변경 이력 기록
 
 ## 8. 최종 체크리스트
-- [ ] 팀원 콘솔 로그인 성공
-- [ ] 팀원 MFA 등록 완료
-- [ ] CI 변수 등록 완료
-- [ ] `aws:precheck` 성공
-- [ ] `aws:ecr-bootstrap` 성공
-- [ ] `aws:eks-cluster-check` 성공
-- [ ] Budget 알람 활성화
-- [ ] 팀 채널에 인계 공지 완료
+- [x] 팀원 콘솔 로그인 성공
+- [x] 팀원 MFA 등록 완료
+- [x] CI 변수 등록 완료
+- [x] `aws:precheck` 성공
+- [x] `aws:ecr-bootstrap` 성공
+- [x] `aws:ecr-push-check` 성공
+- [x] `aws:eks-cluster-check` 성공
+- [x] `aws:eks-kubectl-smoke` 성공
+- [x] Budget 알람 활성화
+- [x] 팀 채널에 인계 공지 완료
+
+## 9. 2026-03-05 최종 참조
+- 확정 설정: `docs/ruby/aws_settings/2026-03-05_confirmed_settings.md`
+- 실행 결과: `docs/ruby/2026-03-04_AWS_EXECUTION_RESULT.md`
 

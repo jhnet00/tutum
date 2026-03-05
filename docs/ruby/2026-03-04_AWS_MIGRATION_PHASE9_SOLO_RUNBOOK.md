@@ -8,10 +8,10 @@
 - 문서 우선순위: **기준 문서 > 본 런북** (충돌 시 기준 문서 내용 우선)
 - 레지스트리 정책: AWS 배포 경로는 **ECR 고정** (`develop/main -> ECR -> EKS`)
 - 재시작 지점(2026-03-05): `aws:precheck`, `aws:ecr-bootstrap`, `aws:ecr-push-check` 완료
-- 다음 시작 단계: `aws:eks-cluster-check` -> `aws:eks-kubectl-smoke` 순서로 수동 실행
+- 추가 검증 단계: `aws:eks-cluster-check` -> `aws:eks-kubectl-smoke` 수동 실행 완료(2026-03-05)
 - 오늘 권한 세팅 실행 문서: `docs/ruby/2026-03-05_AWS_CONSOLE_TEAM_ACCESS_5H_RUNBOOK.md`
-- 주의: EKS 클러스터가 아직 생성되지 않았다면 `aws:eks-cluster-check` 실패가 정상이다.
-- 선행 조건: 먼저 AWS 콘솔에서 staging EKS 클러스터 생성 후 `EKS_CLUSTER_NAME_STG` 변수 등록
+- 참고: EKS 클러스터 미생성 시 `aws:eks-cluster-check` 실패가 정상이며, 현재는 stg/prod 클러스터 생성 완료 상태다.
+- 선행 조건: `EKS_CLUSTER_NAME_STG`, `EKS_CLUSTER_NAME_PROD` 변수 등록 및 스코프 확인
 
 ## 진행 상태 (2026-03-05 기준)
 
@@ -21,13 +21,13 @@
 - [x] Step 4: Session Manager 정책 초안 문서화
 - [x] Step 5: VPC/CIDR 설계값 확정 기록
 - [x] Step 6: 실행 결과 문서 작성
-- [ ] 추가 검증 1: `aws:eks-cluster-check` 실행 로그 캡처 후 실행 결과 문서에 반영
-- [ ] 추가 검증 2: `aws:eks-kubectl-smoke` 실행 로그 캡처 후 실행 결과 문서에 반영
+- [x] 추가 검증 1: `aws:eks-cluster-check` 실행 로그 캡처 후 실행 결과 문서 반영 완료
+- [x] 추가 검증 2: `aws:eks-kubectl-smoke` 실행 로그 캡처 후 실행 결과 문서 반영 완료
 
 ## 즉시 실행 최소 조건 (필수 2개)
 
-1. EKS 클러스터 + 노드그룹 1개 생성 (예: `tutum-stg-eks`)
-2. GitLab 변수 등록: `EKS_CLUSTER_NAME_STG=<클러스터명>`
+1. STG/PROD EKS 클러스터 + 노드그룹 생성 (`tutum-stg-eks`, `tutum-prd-eks`)
+2. GitLab 변수 등록: `EKS_CLUSTER_NAME_STG`, `EKS_CLUSTER_NAME_PROD`
 
 ## 실행 환경 기준 (반드시 먼저 확인)
 
@@ -199,7 +199,7 @@ aws ssm start-session --target <INSTANCE_ID> --region ap-northeast-2
 ## Step 5) VPC/CIDR 설계 확정 기록 (30분)
 
 기준(문서 합의안):
-- EKS VPC: `10.0.0.0/16`
+- EKS VPC: `10.60.0.0/16`
 - CI/CD VPC: `10.1.0.0/16`
 - On-prem: `192.168.0.0/24`
 
