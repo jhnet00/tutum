@@ -11,6 +11,16 @@
 - 다음 시작 단계: `aws:eks-cluster-check` 수동 실행 후 EKS 상태 확인
 - 오늘 권한 세팅 실행 문서: `docs/ruby/2026-03-05_AWS_CONSOLE_TEAM_ACCESS_5H_RUNBOOK.md`
 
+## 진행 상태 (2026-03-05 기준)
+
+- [x] Step 1: AWS 실행 환경 점검 완료 (`aws:precheck` 성공)
+- [x] Step 2: ECR 준비/검증 완료 (`aws:ecr-bootstrap`, `aws:ecr-push-check` 성공)
+- [x] Step 3: GitLab CI 변수 정의/등록표 확정
+- [x] Step 4: Session Manager 정책 초안 문서화
+- [x] Step 5: VPC/CIDR 설계값 확정 기록
+- [x] Step 6: 실행 결과 문서 작성
+- [ ] 추가 검증: `aws:eks-cluster-check` 실행 로그 캡처 후 실행 결과 문서에 반영
+
 ## 실행 환경 기준 (반드시 먼저 확인)
 
 - 기본 실행 위치: **GitLab Runner (`tags: [k8s]`)**
