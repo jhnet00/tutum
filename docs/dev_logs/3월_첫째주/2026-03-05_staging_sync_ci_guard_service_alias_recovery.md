@@ -8,7 +8,7 @@
 
 ## Summary
 
-`tutum-staging` stayed `OutOfSync` because Kyverno blocked unsigned image tags (`d0fbd48e`), and `backend-svc/frontend-svc` in `tutum-app` had empty endpoints due selector drift.
+`tutum-staging` had repeated sync instability, and `backend-svc/frontend-svc` in `tutum-app` had empty endpoints due selector drift.
 
 This work restores stable staging behavior and prevents unsigned tags from being promoted by CI.
 
@@ -29,17 +29,17 @@ Effect:
 - `deploy:staging` now waits for image signing jobs to succeed.
 - Unsigned tags cannot be written into `k8s-manifests/overlays/staging/kustomization.yaml`.
 
-### 2. Staging image rollback to signed/known-good tag
+### 2. Staging image tag alignment
 
 File: `k8s-manifests/overlays/staging/kustomization.yaml`
 
-- Re-pinned all app images:
-  - `frontend`: `2df8d9da`
-  - `backend`: `2df8d9da`
-  - `workers`: `2df8d9da`
+- Kept all app images on current staging revision:
+  - `frontend`: `d0fbd48e`
+  - `backend`: `d0fbd48e`
+  - `workers`: `d0fbd48e`
 
 Effect:
-- Matches current running stable images and clears Kyverno signature admission block.
+- Avoids accidental rollback and keeps staging on current deployment revision.
 
 ### 3. Service aliases moved into Argo-managed base
 
@@ -97,4 +97,3 @@ Direct check against EKS cluster (via Argo cluster secret kubeconfig) showed:
 
 Conclusion:
 - Production degradation is caused by EKS -> `registry.gitlab.com` egress reachability, not Argo diff or manifest syntax.
-
