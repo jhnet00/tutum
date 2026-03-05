@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: es-backfill
+  namespace: tutum-app
+  labels:
+    app: es-backfill
+    app.kubernetes.io/name: es-backfill
+    app.kubernetes.io/part-of: tutum
+spec:
+  # 완료 후 5분 뒤 자동 삭제
+  ttlSecondsAfterFinished: 300
+  # 실패 시 최대 3회 재시도
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: es-backfill
+    spec:
+      restartPolicy: OnFailure
+      nodeSelector:
+        workload: app
+      imagePullSecrets:
+        - name: gitlab-registry-secret
+      containers:
+        - name: backfill
+          image: registry.gitlab.com/tutum-project/tutum-app/backend/workers:latest
+          imagePullPolicy: Always
+          command: ["python", "-u", "backfill_es.py"]
+          env:
+            - name: BATCH_SIZE
+              value: "100"
+          envFrom:
+            - configMapRef:
+                name: news-pipeline-config
+            - secretRef:
+                name: news-pipeline-secret
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
