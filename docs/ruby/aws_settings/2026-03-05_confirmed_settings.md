@@ -15,8 +15,12 @@
 | Staging 클러스터명 | `tutum-stg-eks` | 네이밍 일관성 | 확정 |
 | Production 클러스터명 | `tutum-prd-eks` | 환경 분리 명확화 | 확정 |
 | Staging 노드그룹명 | `ng-stg-general` | 역할 식별 용이 | 확정 |
+| Production 노드그룹명 | `ng-prd-general` | 환경/역할 분리 | 확정 |
+| Production 노드 타입 | `m6i.large` | 안정성 우선 운영 | 확정 |
+| Production 디스크 | `gp3 100Gi` (encrypted) | 운영 여유/복구 안정성 | 확정 |
 | VPC | 기존 VPC 재사용 대신 EKS 전용 신규 생성 | 충돌/라우팅 리스크 최소화 | 확정 |
-| VPC CIDR 예시 | `10.60.0.0/16` | 서브넷 확장성 확보 | 확정 |
+| Staging VPC CIDR | `10.60.0.0/16` | 서브넷 확장성 확보 | 확정 |
+| Production VPC CIDR | `10.61.0.0/16` | 환경 간 대역 분리 | 확정 |
 | Subnet 규칙 | 모든 서브넷 CIDR은 VPC CIDR의 부분집합이어야 함 | `CIDR is not a subset of VPC` 오류 방지 | 확정 |
 | Public Access CIDR 규칙 | 사설망(`192.168.x.x`) 금지, 공인IP `/32` 사용 | EKS endpoint 접근 규칙 준수 | 확정 |
 | NAT 전략 | 비용 우선 시 `Zonal` 1개(1 AZ) | 초기 비용 절감 | 확정 |
@@ -33,8 +37,8 @@
 | `ECR_REPOSITORY_BACKEND` | `tutum/backend` | ECR |
 | `ECR_REPOSITORY_FRONTEND` | `tutum/frontend` | ECR |
 | `ECR_REPOSITORY_WORKERS` | `tutum/workers` | ECR |
-| `EKS_CLUSTER_NAME_STG` | `tutum-stg-eks`(생성 후 실제명) | 필수 |
-| `EKS_CLUSTER_NAME_PROD` | `tutum-prd-eks`(생성 후 실제명) | prod 생성 후 |
+| `EKS_CLUSTER_NAME_STG` | `tutum-stg-eks` | 필수 |
+| `EKS_CLUSTER_NAME_PROD` | `tutum-prd-eks` | 필수(prod) |
 
 주의:
 - `develop`이 protected 브랜치가 아니면, 해당 변수 `Protected` 체크 시 잡에서 읽지 못할 수 있음.
@@ -46,10 +50,23 @@
 | `aws:precheck` | AWS 인증/기본 점검 | 완료 |
 | `aws:ecr-bootstrap` | ECR repo 생성/조회 | 완료 |
 | `aws:ecr-push-check` | ECR 로그인/푸시 스모크 테스트 | 완료 |
-| `aws:eks-cluster-check` | EKS 클러스터/노드그룹 상태 점검 | 대기 (클러스터 생성 후 실행) |
-| `aws:eks-kubectl-smoke` | kubeconfig 갱신 + `kubectl get nodes` 점검 | 대기 (클러스터 생성 후 실행) |
+| `aws:eks-cluster-check` | EKS 클러스터/노드그룹 상태 점검 | 완료 (stg 기준) |
+| `aws:eks-kubectl-smoke` | kubeconfig 갱신 + `kubectl get nodes` 점검 | 완료 (stg 기준) |
 
-## 5) 오류 이력 및 원인
+## 5) 운영 스냅샷 (2026-03-05 기준)
+
+| 항목 | 값 |
+|---|---|
+| Region | `ap-northeast-2` |
+| STG Cluster | `tutum-stg-eks` |
+| PROD Cluster | `tutum-prd-eks` |
+| PROD NodeGroup | `ng-prd-general` |
+| PROD Instance | `m6i.large` |
+| PROD Capacity | `ON_DEMAND` |
+| PROD Scaling | `min=2, desired=2, max=4` |
+| PROD Disk | `gp3 100Gi` (encrypted) |
+
+## 6) 오류 이력 및 원인
 
 | 오류 메시지 | 원인 | 조치 |
 |---|---|---|
@@ -57,10 +74,10 @@
 | `The CIDR '192.168.0.0/24' is invalid` | Public access CIDR에 사설 대역 입력 | 공인 IP `/32`로 변경 |
 | `CIDR is not a subset of the VPC CIDR` | 서브넷 CIDR이 VPC CIDR 밖에 있음 | 서브넷을 VPC 대역 내부로 재설정 |
 
-## 6) 다음 액션
+## 7) 다음 액션
 
-1. AWS 콘솔에서 `tutum-stg-eks` + `ng-stg-general` 생성
-2. `EKS_CLUSTER_NAME_STG` 변수 등록
-3. GitLab에서 `aws:eks-cluster-check` -> `aws:eks-kubectl-smoke` 실행
-4. 실행 결과를 `docs/ruby/2026-03-04_AWS_EXECUTION_RESULT.md`에 반영
+1. GitLab 변수 점검: `EKS_CLUSTER_NAME_STG`, `EKS_CLUSTER_NAME_PROD` 보호/스코프 확인
+2. `tutum-prd-eks` Access Entry 적용 (운영자 Admin + CI 최소권한 분리)
+3. ArgoCD production 대상 클러스터 연결 확인 (manual sync 유지)
+4. `docs/ruby/2026-03-04_AWS_EXECUTION_RESULT.md`에 prod 생성/검증 로그 반영
 
