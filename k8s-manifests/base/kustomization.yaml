@@ -19,7 +19,6 @@ resources:
   - data/kafka-exporter.yaml
   - data/elasticsearch.yaml
   - data/elasticsearch-exporter.yaml
-  - data/kibana.yaml
   - storage/minio-secret.yaml
   - storage/minio.yaml
   - workers/price-producer.yaml
