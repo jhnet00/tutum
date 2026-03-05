@@ -12,6 +12,7 @@ resources:
   - ingress/gateway.yaml
   - ingress/virtualservice.yaml
   - ingress/peer-authentication.yaml
+  - ingress/service-aliases.yaml
   - data/mongodb.yaml
   - data/redis.yaml
   - data/redis-exporter.yaml
