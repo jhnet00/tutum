@@ -288,7 +288,7 @@ alert_rules = {
                     "relativeTimeRange": {"from": 300, "to": 0},
                     "datasourceUid": MIMIR_UID,
                     "model": {
-                        "expr": "(1 - node_filesystem_avail_bytes / node_filesystem_size_bytes) > 0.85",
+                        "expr": "(1 - (node_filesystem_avail_bytes{mountpoint=\"/\",fstype!~\"tmpfs|squashfs|overlay|nsfs|ramfs|autofs|proc|sysfs|cgroup2fs\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!~\"tmpfs|squashfs|overlay|nsfs|ramfs|autofs|proc|sysfs|cgroup2fs\"})) > 0.85 and on(instance,device,mountpoint) node_filesystem_readonly{mountpoint=\"/\"} == 0",
                         "refId": "A"
                     }
                 },
