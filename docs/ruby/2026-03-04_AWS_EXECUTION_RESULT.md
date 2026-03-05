@@ -27,6 +27,7 @@
   - `aws:ecr-bootstrap`
   - `aws:ecr-push-check`
   - `aws:eks-cluster-check`
+  - `aws:eks-kubectl-smoke`
 
 - 핵심 검증 포인트:
   - AWS 자격증명 주입 확인
@@ -36,13 +37,15 @@
 ## 4. 현재 남은 실행 항목 (런북 마감용)
 
 1. GitLab Pipeline에서 `aws:eks-cluster-check` 수동 실행
-2. 실행 결과를 아래 형식으로 기록
+2. 이어서 `aws:eks-kubectl-smoke` 수동 실행
+3. 실행 결과를 아래 형식으로 기록
 
 ```text
 - 실행일:
 - 클러스터명(EKS_CLUSTER_NAME_STG):
 - cluster.status:
 - nodegroup.status:
+- kubectl get nodes 결과:
 - 비고:
 ```
 
@@ -51,4 +54,3 @@
 - `docs/ruby/2026-03-04_AWS_MIGRATION_PHASE9_SOLO_RUNBOOK.md`
 - `docs/ruby/2026-03-05_AWS_CONSOLE_TEAM_ACCESS_5H_RUNBOOK.md`
 - `docs/plans/infra/AWS_MIGRATION_PLAN_2026-03-03.md`
-

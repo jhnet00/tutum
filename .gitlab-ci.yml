@@ -302,6 +302,38 @@ aws:eks-cluster-check:
       when: manual
     - when: never
 
+aws:eks-kubectl-smoke:
+  stage: test
+  image: amazon/aws-cli:2.15.44
+  tags: [k8s]
+  when: manual
+  script:
+    - |
+      set -e
+      test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
+      test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
+      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+      test -n "${EKS_CLUSTER_NAME_STG:-}" || { echo "ERROR: EKS_CLUSTER_NAME_STG is missing"; exit 1; }
+
+      echo "Installing kubectl..."
+      KUBECTL_VERSION="$(curl -L -s https://dl.k8s.io/release/stable.txt)"
+      curl -L -o kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+      chmod +x kubectl
+      mv kubectl /usr/local/bin/kubectl
+
+      echo "Updating kubeconfig from EKS..."
+      aws eks update-kubeconfig \
+        --region "${AWS_DEFAULT_REGION}" \
+        --name "${EKS_CLUSTER_NAME_STG}"
+
+      echo "Checking Kubernetes access..."
+      kubectl get nodes -o wide
+      kubectl get ns
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
+
 # ============================================
 # Stage 3: SonarQube Scan
 # ============================================
