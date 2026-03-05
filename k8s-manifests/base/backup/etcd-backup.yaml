@@ -1,8 +1,12 @@
 # etcd 일일 스냅샷 백업 CronJob
 # 매일 02:30 KST (17:30 UTC) 실행
-# etcdctl snapshot save → gzip → MinIO (tutum-backups/etcd/YYYY-MM-DD/)
+# 방식: etcdctl snapshot → gzip → MinIO mc upload
 # 보관: 30일
-
+#
+# 구조: initContainer(etcd 스냅샷) + main container(alpine: gzip + mc 업로드)
+#   → registry.k8s.io/etcd 이미지에 gzip/wget 미포함 문제 해결 (2026-03-05)
+#   → hostNetwork + dnsPolicy: ClusterFirstWithHostNet 으로 MinIO DNS 해석 보장
+#
 # MinIO 접근 크리덴셜 (kube-system 네임스페이스용 복사본)
 # minio-secret은 tutum-storage에 있어 직접 참조 불가 — kube-system에 별도 보관
 apiVersion: v1
@@ -42,13 +46,21 @@ spec:
               operator: Exists
               effect: NoSchedule
           hostNetwork: true
+          # hostNetwork=true 시 ClusterFirstWithHostNet 필수
+          # (없으면 *.svc.cluster.local DNS 해석 실패 → MinIO 접속 불가)
+          dnsPolicy: ClusterFirstWithHostNet
           volumes:
             - name: etcd-certs
               hostPath:
                 path: /etc/kubernetes/pki/etcd
                 type: Directory
-          containers:
-            - name: etcd-backup
+            - name: shared-data
+              emptyDir: {}
+          initContainers:
+            # ── Step 1: etcd 스냅샷 생성 ──────────────────────────────────
+            # registry.k8s.io/etcd 이미지에만 etcdctl 존재
+            # 스냅샷 파일을 emptyDir(/shared)에 저장하여 main container와 공유
+            - name: etcd-snapshot
               image: registry.k8s.io/etcd:3.5.10-0
               command:
                 - /bin/sh
@@ -56,34 +68,62 @@ spec:
                 - |
                   set -e
                   DATE=$(date +%Y-%m-%d)
-                  SNAPSHOT="/tmp/etcd-snapshot-${DATE}.db"
+                  echo "${DATE}" > /shared/backup-date
+                  SNAPSHOT="/shared/etcd-snapshot-${DATE}.db"
 
                   echo "[$(date)] etcd 스냅샷 시작: ${DATE}"
-
                   ETCDCTL_API=3 etcdctl snapshot save "${SNAPSHOT}" \
                     --endpoints=https://127.0.0.1:2379 \
                     --cacert=/etc/etcd-certs/ca.crt \
                     --cert=/etc/etcd-certs/healthcheck-client.crt \
                     --key=/etc/etcd-certs/healthcheck-client.key
 
-                  echo "[$(date)] etcd 스냅샷 완료: $(du -sh ${SNAPSHOT})"
+                  echo "[$(date)] 스냅샷 완료: $(ls -lh ${SNAPSHOT} | awk '{print $5}')"
+              volumeMounts:
+                - name: etcd-certs
+                  mountPath: /etc/etcd-certs
+                  readOnly: true
+                - name: shared-data
+                  mountPath: /shared
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: 300m
+                  memory: 256Mi
+          containers:
+            # ── Step 2: gzip 압축 + MinIO 업로드 ─────────────────────────
+            # alpine: gzip/wget 내장, mc는 apk로 설치
+            - name: etcd-backup
+              image: alpine:3.19
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  DATE=$(cat /shared/backup-date)
+                  SNAPSHOT="/shared/etcd-snapshot-${DATE}.db"
 
+                  echo "[$(date)] mc 설치"
+                  apk add --no-cache mc --quiet
+
+                  echo "[$(date)] gzip 압축: ${SNAPSHOT}"
                   gzip "${SNAPSHOT}"
 
-                  # mc 설치 및 MinIO 업로드
-                  wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O /usr/local/bin/mc
-                  chmod +x /usr/local/bin/mc
-
+                  echo "[$(date)] MinIO 연결 설정"
                   mc alias set minio \
                     http://minio.tutum-storage.svc.cluster.local:9000 \
                     "${MINIO_ROOT_USER}" \
-                    "${MINIO_ROOT_PASSWORD}"
+                    "${MINIO_ROOT_PASSWORD}" \
+                    --api S3v4 --quiet
 
-                  mc mb --ignore-existing minio/tutum-backups
+                  mc mb --ignore-existing minio/tutum-backups --quiet
 
-                  mc cp "${SNAPSHOT}.gz" "minio/tutum-backups/etcd/${DATE}/"
+                  echo "[$(date)] MinIO 업로드: tutum-backups/etcd/${DATE}/"
+                  mc cp "${SNAPSHOT}.gz" "minio/tutum-backups/etcd/${DATE}/" --quiet
 
-                  echo "[$(date)] MinIO 업로드 완료: tutum-backups/etcd/${DATE}/"
+                  echo "[$(date)] 업로드 완료"
 
                   # 30일 이전 백업 정리
                   mc rm --recursive --force --older-than 720h \
@@ -102,9 +142,8 @@ spec:
                       name: minio-backup-secret
                       key: MINIO_ROOT_PASSWORD
               volumeMounts:
-                - name: etcd-certs
-                  mountPath: /etc/etcd-certs
-                  readOnly: true
+                - name: shared-data
+                  mountPath: /shared
               resources:
                 requests:
                   cpu: 100m

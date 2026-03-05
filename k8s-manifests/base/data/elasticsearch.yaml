@@ -38,6 +38,32 @@ spec:
     spec:
       nodeSelector:
         workload: data
+      # repository-s3 플러그인 설치 (elasticsearch-backup CronJob의 S3 스냅샷 저장소 등록에 필요)
+      # 공식 이미지(8.17.0)에 미포함 → initContainer로 플러그인 설치 후 플러그인 디렉토리를 emptyDir 공유
+      initContainers:
+        - name: install-s3-plugin
+          image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "[init] repository-s3 플러그인 설치 시작"
+              elasticsearch-plugin install --batch repository-s3
+              echo "[init] 플러그인 설치 완료"
+          volumeMounts:
+            - name: es-plugins
+              mountPath: /usr/share/elasticsearch/plugins
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+      volumes:
+        - name: es-plugins
+          emptyDir: {}
       containers:
         - name: elasticsearch
           image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
@@ -74,6 +100,8 @@ spec:
           volumeMounts:
             - name: es-data
               mountPath: /usr/share/elasticsearch/data
+            - name: es-plugins
+              mountPath: /usr/share/elasticsearch/plugins
   volumeClaimTemplates:
     - metadata:
         name: es-data
