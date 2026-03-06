@@ -1,4 +1,13 @@
 # staging 리소스 제한 패치 (KEDA 관리 대상인 backend/frontend는 replicas 제거)
+# EKS staging: cloudflared 불필요 (ALB 사용), replica=0으로 비활성화
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: tutum-app
+spec:
+  replicas: 0
 apiVersion: apps/v1
 kind: Deployment
 metadata:
