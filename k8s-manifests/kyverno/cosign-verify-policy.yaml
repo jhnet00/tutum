@@ -27,7 +27,7 @@ spec:
                 - tutum-app
       verifyImages:
         - imageReferences:
-            - "registry.gitlab.com/tutum-project/tutum-app/backend*"
+            - "903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/*"
           mutateDigest: false
           verifyDigest: false
           attestors:
@@ -35,9 +35,6 @@ spec:
                 - keys:
                     publicKeys: |-
                       -----BEGIN PUBLIC KEY-----
-                      MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEQB0CTxfmiWUmcHj9cLeVx1+TlWJs
-                      8ePq0NrC06ITTozDWsXA5kNh83vCYB8IwSZxTopP1t1ufj+3B2SYxCdC3g==
+                      MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE3jV1os/fuTuPPvF0XFpFlYiP156q
+                      OUnqtAxXN2oGy/cTFktgFYyWFt6lAaB+8GSCRb9FhW4JXzQucDm1O/c8tw==
                       -----END PUBLIC KEY-----
-                    secret:
-                      name: gitlab-registry-secret
-                      namespace: kyverno

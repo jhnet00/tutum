@@ -4,7 +4,7 @@
 #
 # 인프라 구성:
 #   - GitLab Runner: K8s Helm (gitlab-runner ns)
-#   - Container Registry: GitLab CR (registry.gitlab.com)
+#   - Container Registry: AWS ECR (ap-northeast-2)
 #   - SonarQube: K8s Helm (sonarqube ns, ClusterIP)
 #   - Cosign: 이미지 서명 (키: COSIGN_PRIVATE_KEY CI/CD Variable)
 #   - ArgoCD: K8s (argocd ns, ClusterIP)
@@ -30,10 +30,10 @@ default:
   tags: [k8s]  # 자체 러너 사용 (공유 러너 분 소모 방지)
 
 variables:
-  # GitLab Container Registry (CI_REGISTRY_IMAGE 자동 제공)
-  FRONTEND_IMAGE: "${CI_REGISTRY_IMAGE}/frontend"
-  BACKEND_IMAGE: "${CI_REGISTRY_IMAGE}"
-  WORKERS_IMAGE: "${CI_REGISTRY_IMAGE}/workers"
+  # AWS ECR (ECR_REGISTRY = 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com)
+  FRONTEND_IMAGE: "${ECR_REGISTRY}/tutum/frontend"
+  BACKEND_IMAGE: "${ECR_REGISTRY}/tutum/backend"
+  WORKERS_IMAGE: "${ECR_REGISTRY}/tutum/workers"
   # K8s 내부 서비스 주소
   ARGOCD_SERVER: "argocd-server.argocd.svc.cluster.local"
   # k8s-manifests: 백엔드 레포 내 k8s-manifests/ 디렉토리 직접 관리
@@ -415,7 +415,7 @@ build:frontend:
     KUBERNETES_EPHEMERAL_STORAGE_LIMIT: "10Gi"
   before_script:
     - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - printf '{"credHelpers":{"%s":"ecr-login"}}' "${ECR_REGISTRY}" > /kaniko/.docker/config.json
   script:
     - /kaniko/executor
       --context "${CI_PROJECT_DIR}/frontend"
@@ -439,7 +439,7 @@ build:backend:
     KUBERNETES_EPHEMERAL_STORAGE_LIMIT: "10Gi"
   before_script:
     - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - printf '{"credHelpers":{"%s":"ecr-login"}}' "${ECR_REGISTRY}" > /kaniko/.docker/config.json
   script:
     - /kaniko/executor
       --context "${CI_PROJECT_DIR}/backend"
@@ -464,7 +464,7 @@ build:workers:
     KUBERNETES_EPHEMERAL_STORAGE_LIMIT: "6Gi"
   before_script:
     - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"auth\":\"$(printf "%s:%s" "${CI_REGISTRY_USER}" "${CI_REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
+    - printf '{"credHelpers":{"%s":"ecr-login"}}' "${ECR_REGISTRY}" > /kaniko/.docker/config.json
   script:
     - /kaniko/executor
       --context "${CI_PROJECT_DIR}/backend/workers"
@@ -487,9 +487,12 @@ security:frontend:
   tags: [k8s]
   image: aquasec/trivy:latest
   variables:
-    TRIVY_USERNAME: ${CI_REGISTRY_USER}
-    TRIVY_PASSWORD: ${CI_REGISTRY_PASSWORD}
     TRIVY_DB_REPOSITORY: "ghcr.io/aquasecurity/trivy-db:2"
+  before_script:
+    - apk add --no-cache aws-cli
+    - export TRIVY_USERNAME=AWS
+    - export TRIVY_PASSWORD=$(aws ecr get-login-password --region ${AWS_DEFAULT_REGION})
+    - export TRIVY_AUTH_URL=${ECR_REGISTRY}
   script:
     - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
@@ -506,9 +509,12 @@ security:backend:
   tags: [k8s]
   image: aquasec/trivy:latest
   variables:
-    TRIVY_USERNAME: ${CI_REGISTRY_USER}
-    TRIVY_PASSWORD: ${CI_REGISTRY_PASSWORD}
     TRIVY_DB_REPOSITORY: "ghcr.io/aquasecurity/trivy-db:2"
+  before_script:
+    - apk add --no-cache aws-cli
+    - export TRIVY_USERNAME=AWS
+    - export TRIVY_PASSWORD=$(aws ecr get-login-password --region ${AWS_DEFAULT_REGION})
+    - export TRIVY_AUTH_URL=${ECR_REGISTRY}
   script:
     - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
@@ -526,9 +532,12 @@ security:workers:
   tags: [k8s]
   image: aquasec/trivy:latest
   variables:
-    TRIVY_USERNAME: ${CI_REGISTRY_USER}
-    TRIVY_PASSWORD: ${CI_REGISTRY_PASSWORD}
     TRIVY_DB_REPOSITORY: "ghcr.io/aquasecurity/trivy-db:2"
+  before_script:
+    - apk add --no-cache aws-cli
+    - export TRIVY_USERNAME=AWS
+    - export TRIVY_PASSWORD=$(aws ecr get-login-password --region ${AWS_DEFAULT_REGION})
+    - export TRIVY_AUTH_URL=${ECR_REGISTRY}
   script:
     - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: true
@@ -572,7 +581,6 @@ sign:frontend:
   variables:
     COSIGN_YES: "true"
   script:
-    - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
@@ -591,7 +599,6 @@ sign:backend:
   variables:
     COSIGN_YES: "true"
   script:
-    - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
@@ -611,7 +618,6 @@ sign:workers:
   variables:
     COSIGN_YES: "true"
   script:
-    - cosign login ${CI_REGISTRY} -u ${CI_REGISTRY_USER} -p ${CI_REGISTRY_PASSWORD}
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
@@ -644,9 +650,9 @@ deploy:staging:
     - git config user.email ci@tutum.dev
     - git config user.name "GitLab CI"
     - git checkout develop
-    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/frontend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/staging/kustomization.yaml'
-    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/staging/kustomization.yaml'
-    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/workers$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/staging/kustomization.yaml'
+    - 'sed -i "/name: ${ECR_REGISTRY}\/tutum\/frontend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/staging/kustomization.yaml'
+    - 'sed -i "/name: ${ECR_REGISTRY}\/tutum\/backend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/staging/kustomization.yaml'
+    - 'sed -i "/name: ${ECR_REGISTRY}\/tutum\/workers$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/staging/kustomization.yaml'
     - git add k8s-manifests/overlays/staging/kustomization.yaml
     - 'git diff --cached --quiet || git commit -m "deploy: staging ${CI_COMMIT_SHORT_SHA} [skip ci]"'
     - git push origin develop
@@ -668,9 +674,9 @@ deploy:production:
     - git config user.email ci@tutum.dev
     - git config user.name "GitLab CI"
     - git checkout main
-    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/frontend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/production/kustomization.yaml'
-    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/production/kustomization.yaml'
-    - 'sed -i "/name: registry.gitlab.com\/tutum-project\/tutum-app\/backend\/workers$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/production/kustomization.yaml'
+    - 'sed -i "/name: ${ECR_REGISTRY}\/tutum\/frontend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/production/kustomization.yaml'
+    - 'sed -i "/name: ${ECR_REGISTRY}\/tutum\/backend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/production/kustomization.yaml'
+    - 'sed -i "/name: ${ECR_REGISTRY}\/tutum\/workers$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/production/kustomization.yaml'
     - git add k8s-manifests/overlays/production/kustomization.yaml
     - 'git diff --cached --quiet || git commit -m "deploy: production ${CI_COMMIT_SHORT_SHA} [skip ci]"'
     - git push origin main

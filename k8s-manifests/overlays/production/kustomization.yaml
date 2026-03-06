@@ -8,9 +8,9 @@ patches:
   - path: replicas-patch.yaml
 
 images:
-  - name: registry.gitlab.com/tutum-project/tutum-app/backend/frontend
-    newTag: stable
-  - name: registry.gitlab.com/tutum-project/tutum-app/backend
-    newTag: stable
-  - name: registry.gitlab.com/tutum-project/tutum-app/backend/workers
-    newTag: stable
+  - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/frontend
+    newTag: placeholder
+  - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/backend
+    newTag: placeholder
+  - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/workers
+    newTag: placeholder
