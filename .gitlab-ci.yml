@@ -580,6 +580,9 @@ sign:frontend:
   image: bitnami/cosign:latest
   variables:
     COSIGN_YES: "true"
+    AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+    AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+    AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION}"
   script:
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
@@ -598,6 +601,9 @@ sign:backend:
   image: bitnami/cosign:latest
   variables:
     COSIGN_YES: "true"
+    AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+    AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+    AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION}"
   script:
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
@@ -617,6 +623,9 @@ sign:workers:
   image: bitnami/cosign:latest
   variables:
     COSIGN_YES: "true"
+    AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+    AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+    AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION}"
   script:
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
