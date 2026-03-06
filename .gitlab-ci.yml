@@ -531,6 +531,26 @@ security:workers:
 # ============================================
 # Stage 6: Cosign 이미지 서명
 # ============================================
+#
+# [IMPORTANT - DO NOT MODIFY WITHOUT REVIEW]
+#
+# 설계 의도:
+#   각 sign:* 잡은 build:* 잡을 '필수(non-optional) needs'로 가짐.
+#   이는 단순한 순서 보장이 아니라 보안 정책을 강제하기 위한 의도적 설계임:
+#
+#   - build:* 가 skip되면 → sign:* 도 자동 skip (이미지가 없으므로 서명 시도 자체를 방지)
+#   - build:* 가 실패하면 → sign:* 도 실행 안 됨 (미완성 이미지 서명 방지)
+#   - deploy:staging 은 sign:* 3개 모두 성공을 requires → 미서명 이미지 배포 불가
+#
+# [사고 사례 - 2026-03-05]
+#   workers:d0fbd48e 이미지가 sign:workers 실패로 미서명 상태에서,
+#   팀원이 kustomization.yaml을 직접 수동 수정하여 배포 → Kyverno PolicyViolation 반복 발생.
+#   이 needs 체인은 그 재발을 막기 위해 추가된 것임.
+#
+# [AI 에이전트 주의]
+#   'optional: true' 가 없는 needs 항목을 임의로 optional로 바꾸거나 삭제하지 말 것.
+#   security:* 는 optional이 맞으나 (Trivy 결과와 무관하게 서명), build:* 는 필수임.
+# ============================================
 
 sign:frontend:
   stage: sign
@@ -543,9 +563,9 @@ sign:frontend:
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
-    - job: build:frontend        # build가 skip되면 sign도 skip (필수 의존)
+    - job: build:frontend        # [필수] build skip → sign skip. optional로 변경 금지
     - job: security:frontend
-      optional: true
+      optional: true             # Trivy 결과와 무관하게 서명 진행 (allow_failure: true)
   rules:
     - changes:
         - frontend/**/*
@@ -562,9 +582,9 @@ sign:backend:
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
-    - job: build:backend         # build가 skip되면 sign도 skip (필수 의존)
+    - job: build:backend         # [필수] build skip → sign skip. optional로 변경 금지
     - job: security:backend
-      optional: true
+      optional: true             # Trivy 결과와 무관하게 서명 진행 (allow_failure: true)
   rules:
     - changes:
         - frontend/**/*
@@ -582,9 +602,9 @@ sign:workers:
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
-    - job: build:workers         # build가 skip되면 sign도 skip (필수 의존)
+    - job: build:workers         # [필수] build skip → sign skip. optional로 변경 금지
     - job: security:workers
-      optional: true
+      optional: true             # Trivy 결과와 무관하게 서명 진행 (allow_failure: true)
   rules:
     - changes:
         - frontend/**/*
