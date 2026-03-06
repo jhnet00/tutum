@@ -536,10 +536,12 @@ aws eks describe-cluster --name tutum-stg-eks \
 
 ### B-8. NetworkPolicy 이식
 
+> ✅ **이미 완료 (2026-03-06)**
+
 ```bash
-# AWS VPC CNI Network Policy Engine 활성화 (Calico 불필요)
+# AWS VPC CNI Network Policy Engine 활성화
 aws eks update-addon \
-  --cluster-name tutum-eks \
+  --cluster-name tutum-stg-eks \
   --addon-name vpc-cni \
   --configuration-values '{"enableNetworkPolicy": "true"}'
 
@@ -549,7 +551,225 @@ kubectl apply -f k8s-manifests/base/security/network-policy.yaml
 
 ---
 
-### B-9. MariaDB outbound 허용 (SG 규칙)
+### B-9. NACL (Public Subnet 방화벽)
+
+> ⬜ **미완료** — Public subnet 단위 Stateless 방화벽. SG와 별개 계층.
+
+```bash
+VPC_ID=$(aws ec2 describe-vpcs \
+  --filters "Name=cidr,Values=10.60.0.0/16" \
+  --query 'Vpcs[0].VpcId' --output text)
+
+# Public subnet NACL 생성
+NACL_ID=$(aws ec2 create-network-acl \
+  --vpc-id "$VPC_ID" \
+  --tag-specifications 'ResourceType=network-acl,Tags=[{Key=Name,Value=tutum-public-nacl}]' \
+  --query 'NetworkAcl.NetworkAclId' --output text)
+
+# Inbound: HTTPS(443), HTTP(80), Ephemeral(1024-65535) 허용, 나머지 Deny
+aws ec2 create-network-acl-entry --network-acl-id "$NACL_ID" \
+  --rule-number 100 --protocol tcp --rule-action allow --ingress \
+  --cidr-block 0.0.0.0/0 --port-range From=443,To=443
+aws ec2 create-network-acl-entry --network-acl-id "$NACL_ID" \
+  --rule-number 110 --protocol tcp --rule-action allow --ingress \
+  --cidr-block 0.0.0.0/0 --port-range From=80,To=80
+aws ec2 create-network-acl-entry --network-acl-id "$NACL_ID" \
+  --rule-number 120 --protocol tcp --rule-action allow --ingress \
+  --cidr-block 0.0.0.0/0 --port-range From=1024,To=65535
+# Outbound: all allow (응답 트래픽)
+aws ec2 create-network-acl-entry --network-acl-id "$NACL_ID" \
+  --rule-number 100 --protocol -1 --rule-action allow --egress \
+  --cidr-block 0.0.0.0/0
+
+# Public subnet에 연결
+PUBLIC_SUBNET_A=$(aws ec2 describe-subnets \
+  --filters "Name=cidr,Values=10.60.1.0/24" \
+  --query 'Subnets[0].SubnetId' --output text)
+PUBLIC_SUBNET_B=$(aws ec2 describe-subnets \
+  --filters "Name=cidr,Values=10.60.2.0/24" \
+  --query 'Subnets[0].SubnetId' --output text)
+aws ec2 replace-network-acl-association \
+  --network-acl-id "$NACL_ID" --association-id <existing-assoc-id>
+```
+
+---
+
+### B-10. VPC Endpoints (ECR, S3, Secrets Manager — 인터넷 미경유)
+
+> ⬜ **미완료** — 현재 ECR pull이 NAT GW → 인터넷 경유. Endpoint 생성 시 내부망 통신.
+> ECR DKR Endpoint: NAT GW 데이터 전송 비용 절감 (GB당 $0.045 절약)
+
+```bash
+VPC_ID=$(aws ec2 describe-vpcs \
+  --filters "Name=cidr,Values=10.60.0.0/16" \
+  --query 'Vpcs[0].VpcId' --output text)
+
+# EKS 노드 SG 조회 (Auto Mode 노드 SG)
+NODE_SG=$(aws ec2 describe-security-groups \
+  --filters "Name=tag:aws:eks:cluster-name,Values=tutum-stg-eks" \
+  --query 'SecurityGroups[0].GroupId' --output text)
+
+PRIVATE_SUBNET_A=$(aws ec2 describe-subnets \
+  --filters "Name=cidr,Values=10.60.11.0/24" \
+  --query 'Subnets[0].SubnetId' --output text)
+PRIVATE_SUBNET_B=$(aws ec2 describe-subnets \
+  --filters "Name=cidr,Values=10.60.12.0/24" \
+  --query 'Subnets[0].SubnetId' --output text)
+
+# 1. ECR API Endpoint (Interface)
+aws ec2 create-vpc-endpoint \
+  --vpc-id "$VPC_ID" \
+  --service-name com.amazonaws.ap-northeast-2.ecr.api \
+  --vpc-endpoint-type Interface \
+  --subnet-ids "$PRIVATE_SUBNET_A" "$PRIVATE_SUBNET_B" \
+  --security-group-ids "$NODE_SG" \
+  --private-dns-enabled \
+  --tag-specifications 'ResourceType=vpc-endpoint,Tags=[{Key=Name,Value=tutum-ecr-api}]'
+
+# 2. ECR DKR Endpoint (Interface) — 이미지 레이어 pull
+aws ec2 create-vpc-endpoint \
+  --vpc-id "$VPC_ID" \
+  --service-name com.amazonaws.ap-northeast-2.ecr.dkr \
+  --vpc-endpoint-type Interface \
+  --subnet-ids "$PRIVATE_SUBNET_A" "$PRIVATE_SUBNET_B" \
+  --security-group-ids "$NODE_SG" \
+  --private-dns-enabled \
+  --tag-specifications 'ResourceType=vpc-endpoint,Tags=[{Key=Name,Value=tutum-ecr-dkr}]'
+
+# 3. S3 Gateway Endpoint (무료, route table에 자동 추가)
+PRIVATE_RTB_A=$(aws ec2 describe-route-tables \
+  --filters "Name=association.subnet-id,Values=$PRIVATE_SUBNET_A" \
+  --query 'RouteTables[0].RouteTableId' --output text)
+PRIVATE_RTB_B=$(aws ec2 describe-route-tables \
+  --filters "Name=association.subnet-id,Values=$PRIVATE_SUBNET_B" \
+  --query 'RouteTables[0].RouteTableId' --output text)
+aws ec2 create-vpc-endpoint \
+  --vpc-id "$VPC_ID" \
+  --service-name com.amazonaws.ap-northeast-2.s3 \
+  --vpc-endpoint-type Gateway \
+  --route-table-ids "$PRIVATE_RTB_A" "$PRIVATE_RTB_B" \
+  --tag-specifications 'ResourceType=vpc-endpoint,Tags=[{Key=Name,Value=tutum-s3-gw}]'
+
+# 4. Secrets Manager Endpoint (Interface) — Phase B에서 Secrets Manager 사용 시
+aws ec2 create-vpc-endpoint \
+  --vpc-id "$VPC_ID" \
+  --service-name com.amazonaws.ap-northeast-2.secretsmanager \
+  --vpc-endpoint-type Interface \
+  --subnet-ids "$PRIVATE_SUBNET_A" "$PRIVATE_SUBNET_B" \
+  --security-group-ids "$NODE_SG" \
+  --private-dns-enabled \
+  --tag-specifications 'ResourceType=vpc-endpoint,Tags=[{Key=Name,Value=tutum-secretsmgr}]'
+```
+
+---
+
+### B-11. AWS WAF (ALB WebACL 연결)
+
+> ⬜ **미완료** — ACM 인증서 ISSUED + ALB Ingress 생성 후 WAF WebACL 연결
+
+```bash
+# WAF WebACL 생성 (ap-northeast-2, REGIONAL — ALB용)
+WAF_ARN=$(aws wafv2 create-web-acl \
+  --name tutum-waf \
+  --scope REGIONAL \
+  --region ap-northeast-2 \
+  --default-action Allow={} \
+  --rules '[
+    {
+      "Name":"AWSManagedRulesCommonRuleSet",
+      "Priority":1,
+      "OverrideAction":{"None":{}},
+      "Statement":{"ManagedRuleGroupStatement":{"VendorName":"AWS","Name":"AWSManagedRulesCommonRuleSet"}},
+      "VisibilityConfig":{"SampledRequestsEnabled":true,"CloudWatchMetricsEnabled":true,"MetricName":"CommonRules"}
+    },
+    {
+      "Name":"RateLimit2000",
+      "Priority":2,
+      "Action":{"Block":{}},
+      "Statement":{"RateBasedStatement":{"Limit":2000,"AggregateKeyType":"IP"}},
+      "VisibilityConfig":{"SampledRequestsEnabled":true,"CloudWatchMetricsEnabled":true,"MetricName":"RateLimit"}
+    }
+  ]' \
+  --visibility-config SampledRequestsEnabled=true,CloudWatchMetricsEnabled=true,MetricName=tutumWAF \
+  --query 'Summary.ARN' --output text)
+
+# ALB ARN 조회 (Ingress 생성 후)
+ALB_ARN=$(aws elbv2 describe-load-balancers \
+  --query 'LoadBalancers[?contains(LoadBalancerName,`tutum`)].LoadBalancerArn' \
+  --output text)
+
+# WebACL → ALB 연결
+aws wafv2 associate-web-acl \
+  --web-acl-arn "$WAF_ARN" \
+  --resource-arn "$ALB_ARN" \
+  --region ap-northeast-2
+```
+
+---
+
+### B-12. GuardDuty (위협 탐지)
+
+> ⬜ **미완료** — 계정 수준 활성화 (월 ~$10~30, 트래픽 기반)
+
+```bash
+# GuardDuty 활성화
+DETECTOR_ID=$(aws guardduty create-detector \
+  --enable \
+  --features '[
+    {"Name":"EKS_AUDIT_LOGS","Status":"ENABLED"},
+    {"Name":"EKS_RUNTIME_MONITORING","Status":"ENABLED"},
+    {"Name":"S3_DATA_EVENTS","Status":"ENABLED"}
+  ]' \
+  --query 'DetectorId' --output text)
+
+echo "GuardDuty Detector ID: $DETECTOR_ID"
+
+# SNS Topic → Slack 알림 (EventBridge 연동)
+aws events put-rule \
+  --name tutum-guardduty-findings \
+  --event-pattern '{"source":["aws.guardduty"],"detail-type":["GuardDuty Finding"]}' \
+  --region ap-northeast-2
+```
+
+---
+
+### B-13. AWS Secrets Manager (K8s Secret 대체)
+
+> ⬜ **미완료** — app-secrets, OAuth 키 등을 AWS 관리형 시크릿으로 전환
+> EKS IRSA + External Secrets Operator 또는 Secrets Store CSI Driver 사용
+
+```bash
+# on-prem 시크릿 내용 추출 (cp-1에서)
+kubectl get secret app-secrets -n tutum-app -o jsonpath='{.data}' | python3 -c "
+import json, sys, base64
+data = json.load(sys.stdin)
+for k, v in data.items():
+    print(f'{k}={base64.b64decode(v).decode()}')
+"
+
+# AWS Secrets Manager에 등록
+aws secretsmanager create-secret \
+  --name tutum/app-secrets \
+  --region ap-northeast-2 \
+  --secret-string file://app-secrets.env
+
+# External Secrets Operator 설치
+helm repo add external-secrets https://charts.external-secrets.io
+helm install external-secrets external-secrets/external-secrets \
+  -n external-secrets --create-namespace
+
+# IRSA: backend SA에 secretsmanager:GetSecretValue 권한 부여
+eksctl create iamserviceaccount \
+  --name backend \
+  --namespace tutum-app \
+  --cluster tutum-stg-eks \
+  --attach-policy-arn arn:aws:iam::aws:policy/SecretsManagerReadWrite \
+  --approve
+```
+
+---
+
+### B-14. MariaDB outbound 허용 (SG 규칙)
 
 ```bash
 WORKER_SG=$(aws ec2 describe-security-groups \
@@ -1011,21 +1231,36 @@ aws budgets create-budget \
 - [x] ACM `*.tutum.my` 인증서 발급 신청 + Route53 DNS validation CNAME 등록 완료
 
 ### Phase B (EKS 구성) — 🔶 진행 중
+**기본 인프라**
 - [x] EKS 클러스터 생성 (`tutum-stg-eks` ACTIVE, `tutum-prd-eks` ACTIVE, Auto Mode, K8s v1.29)
 - [x] 네임스페이스 생성 (tutum-app, tutum-data, tutum-storage, monitoring, keda)
-- [ ] **시크릿 재생성** (app-secrets, OAuth 키, gitlab-registry-secret 등) — EKS에 미생성
 - [x] Istio minimal profile 설치 (istiod Running, IngressGateway 없음)
 - [x] 사이드카 주입: tutum-app, tutum-data 네임스페이스 label 완료
 - [x] ALB Ingress Controller 설치 (2/2 Running, eks/aws-load-balancer-controller v3.1.0)
-- [ ] **KEDA 설치 + ScaledObject 적용** (on-prem 정상, EKS 미설치)
-- [ ] **Kyverno 설치 + ECR 정책 적용** (on-prem 적용 완료, EKS 미설치)
-- [ ] **ECR 토큰 갱신 CronJob** (`kyverno` ns, 6시간마다 ECR 토큰 갱신)
 - [x] ArgoCD 설치 (7/7 Running, private subnet 10.60.11.x)
-- [ ] **ArgoCD GitLab 리포 연결** (`argocd repo add`)
-- [ ] **staging-app.yaml destination → `https://kubernetes.default.svc`**
 - [x] NetworkPolicy 이식 (vpc-cni network policy 활성화 + manifest 적용)
 - [x] MariaDB 연결 확인 (SSM send-command → `MARIADB_REACHABLE` ✅)
+
+**미완료 — 기본**
+- [ ] **시크릿 재생성** (app-secrets, OAuth 키, gitlab-registry-secret 등) — EKS에 미생성
+- [ ] **KEDA 설치 + ScaledObject 적용** (on-prem 정상, EKS 미설치)
+- [ ] **Kyverno 설치 + ECR 정책 적용** (on-prem 완료, EKS 미설치)
+- [ ] **ECR 토큰 갱신 CronJob** (`kyverno` ns, 6시간마다 ECR 토큰 갱신)
+- [ ] **ArgoCD GitLab 리포 연결** (`argocd repo add`)
+- [ ] **staging-app.yaml destination → `https://kubernetes.default.svc`**
 - [ ] Worker SG outbound 211.46.52.153:15432 명시적 허용 (현재 기본 SG로 통과 중)
+
+**미완료 — 보안 강화 (B-9 ~ B-13)**
+- [ ] **NACL 생성** — public subnet (10.60.1/2.0/24): 80/443 inbound only
+- [ ] **VPC Endpoint: ECR API** (Interface, private subnet) — ECR 인증 내부망
+- [ ] **VPC Endpoint: ECR DKR** (Interface, private subnet) — 이미지 pull NAT GW 비용↓
+- [ ] **VPC Endpoint: S3 Gateway** (무료, route table 자동 추가) — S3 내부망
+- [ ] **VPC Endpoint: Secrets Manager** (Interface) — 시크릿 조회 내부망
+- [ ] **AWS WAF WebACL** 생성 + ALB 연결 (AWSManagedRulesCommonRuleSet + RateLimit 2000/5min)
+- [ ] **GuardDuty 활성화** (EKS Audit Logs + Runtime Monitoring + S3 Data Events)
+- [ ] **GuardDuty → SNS → Slack `#tutum-alerts`** EventBridge 연동
+- [ ] **AWS KMS CMK** 생성 (EBS PVC 암호화, S3 버킷 암호화용)
+- [ ] **AWS Secrets Manager** app-secrets 등록 + External Secrets Operator + IRSA
 
 ### Phase C (CI/CD 전환) — 🔶 코드 완료, 파이프라인 미실행
 - [x] `backend/Dockerfile`, `backend/workers/Dockerfile` → `python:3.11-alpine` 전환

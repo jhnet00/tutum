@@ -116,14 +116,20 @@ GitLab CI (SaaS)
 
 ## 3. 네트워크 / 보안 원칙
 
-### 3-1. 외부 접근
+### 3-1. 외부 접근 (Public-facing 보안 계층)
 
-| 계층 | 기술 | 비고 |
-|------|------|------|
-| DNS | Route53 | A 레코드 → ALB |
-| TLS 종료 | ACM + ALB | 와일드카드 인증서 권장 |
-| WAF | AWS WAF | Managed Rule + Rate Limit |
-| 서비스 간 mTLS | Istio (Envoy) | 내부 트래픽 암호화 |
+| 계층 | 기술 | 구현 방법 | 비고 |
+|------|------|----------|------|
+| DNS | Route53 | A 레코드 → ALB | ✅ ACM 진행 중 |
+| DDoS 방어 | **AWS Shield Standard** | 자동 활성화 (무료) | 기본 L3/L4 보호 |
+| WAF | **AWS WAF v2** | ALB에 WebACL 연결 | Managed Rule(AWS Core) + Rate Limit (IP당 2000req/5min) |
+| TLS 종료 | ACM + ALB | `*.tutum.my` 와일드카드 | ⬜ ISSUED 후 Ingress에 annotation 추가 |
+| 서비스 간 mTLS | Istio (Envoy Sidecar) | PeerAuthentication STRICT | ✅ on-prem 적용, EKS 이식 예정 |
+
+> **WAF WebACL 최소 룰셋** (ALB에 연결):
+> - `AWSManagedRulesCommonRuleSet` — OWASP Top 10 기본 차단
+> - `AWSManagedRulesKnownBadInputsRuleSet` — 악성 입력 차단
+> - `RateBasedRule` — IP당 2000 req/5min 초과 시 Block
 
 ### 3-2. NetworkPolicy (네임스페이스 단위 격리)
 
@@ -136,29 +142,77 @@ GitLab CI (SaaS)
 | keda | Deny All Ingress | tutum-data(Kafka 조회용) |
 
 > on-prem K8s에서 이미 적용된 NetworkPolicy 구조를 EKS에 그대로 이식.
-> EKS CNI(VPC CNI 또는 Calico) 기반으로 동일하게 동작.
+> EKS vpc-cni Network Policy 기반으로 동일하게 동작. ✅ EKS 이식 완료
 
-### 3-3. IAM / 접근 제어
+### 3-3. NACL (Subnet 단위 방화벽)
 
-- **IRSA (IAM Roles for Service Accounts)**: Pod별 최소 권한 IAM Role
-- **Session Manager**: EC2 SSH 키페어 사용 금지. 포트 22 비허용. AWS SSM으로 쉘 접근.
-- **Secrets Manager + External Secrets Operator**: K8s Secret을 AWS Secrets Manager에서 동기화
-- **ECR 이미지 스캔**: 푸시 시 자동 스캔 활성화
+> K8s NetworkPolicy(Pod 레벨)와 별개로 VPC subnet 레벨의 Stateless 방화벽.
+> Public subnet에만 적용 (ALB, NAT GW). Private subnet은 SG로 충분.
 
-### 3-4. 감사 / 거버넌스
+| Subnet | NACL 규칙 | 목적 |
+|--------|----------|------|
+| Public (10.60.1.0/24, 10.60.2.0/24) | Inbound: 80/443 허용, 나머지 Deny | 외부 트래픽 제한 |
+| Public | Outbound: 1024-65535 허용 (Ephemeral) | 응답 트래픽 |
+| Private (10.60.11~12.0/24) | 기본값 유지 (all allow) | SG/NP로 제어 |
 
+### 3-4. VPC Endpoints (AWS 서비스 내부 통신 — 인터넷 미경유)
+
+> **현재 문제**: EKS 노드 → NAT GW → 인터넷 → ECR/S3 (데이터 전송 비용 발생)
+> **개선**: VPC Endpoint 생성 시 NAT GW 통과 없이 AWS 내부망 직접 통신
+
+| Endpoint | 타입 | 대상 서비스 | 효과 |
+|----------|------|-----------|------|
+| `com.amazonaws.ap-northeast-2.ecr.api` | Interface | ECR API | ECR 인증 트래픽 내부화 |
+| `com.amazonaws.ap-northeast-2.ecr.dkr` | Interface | ECR Docker | 이미지 pull 내부화 (NAT GW 비용↓) |
+| `com.amazonaws.ap-northeast-2.s3` | Gateway | S3 | MinIO→S3 이전 후 S3 접근 내부화 |
+| `com.amazonaws.ap-northeast-2.secretsmanager` | Interface | Secrets Manager | 시크릿 조회 내부화 |
+
+```bash
+# ECR Interface Endpoint 생성 (private subnet SG 연결)
+aws ec2 create-vpc-endpoint \
+  --vpc-id <VPC_ID> \
+  --service-name com.amazonaws.ap-northeast-2.ecr.dkr \
+  --vpc-endpoint-type Interface \
+  --subnet-ids <private-subnet-a> <private-subnet-b> \
+  --security-group-ids <node-sg> \
+  --private-dns-enabled
+
+# S3 Gateway Endpoint (route table 연결 — 무료)
+aws ec2 create-vpc-endpoint \
+  --vpc-id <VPC_ID> \
+  --service-name com.amazonaws.ap-northeast-2.s3 \
+  --vpc-endpoint-type Gateway \
+  --route-table-ids <private-rtb-a> <private-rtb-b>
+```
+
+### 3-5. IAM / 접근 제어
+
+- **IRSA (IAM Roles for Service Accounts)**: Pod별 최소 권한 IAM Role (S3, Bedrock, Textract 등)
+- **Session Manager**: ✅ EC2 SSH 키페어 없음. 포트 22 비허용. AWS SSM으로 쉘 접근. (완료)
+- **AWS Secrets Manager**: K8s `app-secrets` 를 Secrets Manager에서 관리
+  - EKS Pod → IRSA → Secrets Manager (VPC Endpoint 경유)
+  - `External Secrets Operator` 또는 CSI Driver로 K8s Secret 자동 동기화
+- **AWS KMS**: EBS 볼륨(PVC) + S3 버킷 암호화. CMK(Customer Managed Key) 사용
+  - ECR 이미지 암호화 (AES256 → KMS CMK로 업그레이드 가능)
+- **ECR 이미지 스캔**: 푸시 시 자동 스캔 활성화 (✅ repo 생성 시 설정됨)
+
+### 3-6. 위협 탐지 / 감사
+
+- **AWS GuardDuty**: 비정상 API 호출, 악성 IP, 크립토마이닝 탐지
+  - EKS 런타임 모니터링 활성화 (GuardDuty EKS Protection)
+  - 탐지 결과 → SNS → Slack `#tutum-alerts` 연동
 - **AWS CloudTrail**: 전체 API 호출 기록 → S3 저장 (90일 보관, lifecycle → Glacier)
 - **AWS Organizations + SCP (Service Control Policy)**:
   - OU 단위로 계정 분리 (dev / staging / prod OU)
-  - SCP 예시: 특정 리전(ap-northeast-2) 외 리소스 생성 차단, 루트 계정 콘솔 로그인 차단
-  - 주요 리소스(EKS, RDS) 삭제 방지 SCP 적용
+  - SCP: 특정 리전(ap-northeast-2) 외 리소스 생성 차단, 루트 계정 콘솔 로그인 차단
 
-### 3-5. 이미지 보안
+### 3-7. 이미지 보안 (공급망 보안)
 
-- **Alpine Linux 기반**: 모든 서비스 Dockerfile에서 `python:3.11-alpine`, `node:20-alpine` 등 사용
+- **Alpine Linux 기반**: `python:3.11-alpine`, `node:20-alpine` — ✅ 완료
   → 이미지 크기 대폭 감소 (예: `python:3.11` ~900MB → `python:3.11-alpine` ~50MB)
-- **Cosign 서명**: ECR 기준 키 재발급 후 CI에서 자동 서명
-- **Kyverno**: 미서명 이미지 배포 차단
+- **Trivy**: CI에서 CRITICAL/HIGH 취약점 발견 시 파이프라인 중단 — ✅ 완료
+- **Cosign 서명**: ECR 기준 키 재발급 후 CI에서 자동 서명 — ✅ 완료
+- **Kyverno**: 미서명 이미지 배포 차단 (Enforce) — ✅ on-prem 적용, EKS 이식 예정
 
 ---
 
@@ -315,15 +369,20 @@ Monitoring EC2 (EKS VPC private subnet, ap-northeast-2c, t3.medium 이상)
 | EC2 Monitoring (t3.medium) | EKS VPC private subnet | ~30 |
 | ALB | - | ~20 |
 | EBS gp3 (EKS PVC) | - | ~24 |
-| NAT Gateway | - | ~45 |
-| VPN Gateway | ~~36~~ → **0** (MariaDB 공인 IP 직접 연결) | 0 |
+| NAT Gateway | VPC Endpoint 적용 후 절감 | ~30 |
 | S3 + Glacier + CloudTrail | - | ~15 |
 | ECR (`tutum/*` 3개 리포) | - | ~5 |
 | CloudWatch | - | ~15 |
-| **합계** | | **~377** |
+| **AWS WAF** | WebACL + Managed Rules | ~10 |
+| **GuardDuty** | EKS Protection 포함 | ~15 |
+| **VPC Endpoints** | ECR×2(Interface), S3(Gateway 무료) | ~15 |
+| **KMS CMK** | EBS + S3 암호화 | ~5 |
+| VPN Gateway | ~~36~~ → **0** (MariaDB 공인 IP 직접 연결) | 0 |
+| **합계** | | **~407** |
 
-> 실제 EKS Auto Mode 사용으로 m5.large 고정 비용 대비 절감 가능.
+> VPC Endpoint(ECR DKR) 도입 시 이미지 pull NAT GW 트래픽 절감 → NAT GW 비용 ~$15 절감.
 > tutum-prd-eks 추가 시 EKS Control Plane 비용 ×2 (stg+prd 각각 $73)
+> 보안 서비스(WAF+GuardDuty+KMS+VPC Endpoint) 추가 ~$45/월 — 총 900 USD 이하 유지
 
 > VPN Gateway 불필요(MariaDB 공인 IP 직접 연결)로 기존 대비 -$36 절감.
 > RDS로 MariaDB 이전 시 추가 ~$30-50/월 발생 (현재 계획은 학원 서버 직접 연결 유지).
@@ -407,6 +466,12 @@ Monitoring EC2 (EKS VPC private subnet, ap-northeast-2c, t3.medium 이상)
 7. ⬜ **KEDA 설치 + ScaledObject 적용**
 8. ⬜ **Kyverno + ECR CronJob 설치 + 정책 적용**
 9. ⬜ **ArgoCD GitLab 리포 연결 + staging-app.yaml destination 변경**
+10. ⬜ **NACL 생성** (public subnet 10.60.1/2.0/24 — 80/443 inbound만 허용)
+11. ⬜ **VPC Endpoint 생성** (ECR API, ECR DKR, S3 Gateway)
+12. ⬜ **AWS WAF WebACL 생성 + ALB 연결** (AWSManagedRulesCommonRuleSet + Rate Limit)
+13. ⬜ **GuardDuty 활성화** (EKS Protection 포함, SNS → Slack 알림 연동)
+14. ⬜ **AWS KMS CMK 생성** (EBS PVC 암호화, S3 암호화용)
+15. ⬜ **AWS Secrets Manager** 에 app-secrets 등록 + IRSA + External Secrets Operator
 
 ### Phase C (D+8 ~ D+12): 배포 전환 — 🔶 코드 완료, 파이프라인 미실행
 1. ✅ `backend/workers/Dockerfile` Alpine Linux 전환 (`python:3.11-alpine`)
@@ -417,14 +482,16 @@ Monitoring EC2 (EKS VPC private subnet, ap-northeast-2c, t3.medium 이상)
 6. ⬜ 파이프라인 실행 + ECR push + ArgoCD EKS sync 확인
 7. ⬜ 스테이징 E2E 검증 (로그인, 시세, 뉴스, AI, OCR, MariaDB)
 
-### Phase D (D+13 ~ D+18): 데이터/관측 — ⬜ 미시작
-1. S3 버킷 `tutum-prod-storage` 생성 + KMS 암호화 + 퍼블릭 액세스 차단
-2. MinIO → S3 mc mirror (ocr-images, profile-images)
-3. Backend S3 IRSA 전환 (MINIO_* env 제거)
-4. **Monitoring EC2** (EKS VPC private subnet, t3.medium, Docker Compose LGTM)
-5. EKS Alloy DaemonSet remote_write → Monitoring EC2 내부 IP
-6. Grafana 대시보드 구성 (클러스터 개요 / 파드 분석 / 메트릭+로그+트레이스)
-7. CloudTrail 활성화 + S3 저장 (90일) + Glacier lifecycle
+### Phase D (D+13 ~ D+18): 데이터/관측/보안 강화 — ⬜ 미시작
+1. S3 버킷 `tutum-prod-storage` 생성 + **KMS CMK 암호화** + 퍼블릭 액세스 차단
+2. **VPC Endpoint(S3 Gateway)** 연결 확인 (S3 트래픽 내부망 통신 검증)
+3. MinIO → S3 mc mirror (ocr-images, profile-images) + 파일 수 검증
+4. Backend S3 IRSA 전환 (MINIO_* env 제거, 키리스 인증)
+5. **Monitoring EC2** (EKS VPC private subnet, t3.medium, Docker Compose LGTM)
+6. EKS Alloy DaemonSet remote_write → Monitoring EC2 내부 IP
+7. Grafana 대시보드 구성 (클러스터 개요 / 파드 분석 / 메트릭+로그+트레이스)
+8. **CloudTrail 활성화** + S3 저장 (90일) + Glacier lifecycle
+9. **S3 Lifecycle** 설정 (ocr-images 180일 만료, backups/ Glacier 30일, CloudTrail 90일)
 
 ### Phase E (D+19 ~ D+24): 안정화 — ⬜ 미시작
 1. ACM `*.tutum.my` ISSUED 확인 후 ALB Ingress 생성 (tutum.my 도메인 연결)
