@@ -394,7 +394,18 @@ sonar:backend:
 # Stage 4: Docker Build & Push to GitLab CR
 # ============================================
 
+# GitLab registry jwt/auth 502/503 등 일시 장애 대응용 재시도 정책
+.build_retry_registry: &build_retry_registry
+  retry:
+    max: 2
+    when:
+      - script_failure
+      - runner_system_failure
+      - api_failure
+      - stuck_or_timeout_failure
+
 build:frontend:
+  <<: *build_retry_registry
   stage: build
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
@@ -418,6 +429,7 @@ build:frontend:
         - backend/**/*
 
 build:backend:
+  <<: *build_retry_registry
   stage: build
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
@@ -442,6 +454,7 @@ build:backend:
     - if: '$CI_PIPELINE_SOURCE == "api"'
 
 build:workers:
+  <<: *build_retry_registry
   stage: build
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
