@@ -588,7 +588,7 @@ sign:frontend:
     - mkdir -p ~/.docker
     - printf '{"auths":{"%s":{"auth":"%s"}}}' "${ECR_REGISTRY}" "$(printf 'AWS:%s' "$TOKEN" | base64 -w 0)" > ~/.docker/config.json
   script:
-    - cosign sign --key env://COSIGN_PRIVATE_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - cosign sign --key env://COSIGN_PRIVATE_KEY --registry-referrers-mode=legacy ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
     - job: build:frontend        # [필수] build skip → sign skip. optional로 변경 금지
@@ -613,7 +613,7 @@ sign:backend:
     - mkdir -p ~/.docker
     - printf '{"auths":{"%s":{"auth":"%s"}}}' "${ECR_REGISTRY}" "$(printf 'AWS:%s' "$TOKEN" | base64 -w 0)" > ~/.docker/config.json
   script:
-    - cosign sign --key env://COSIGN_PRIVATE_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - cosign sign --key env://COSIGN_PRIVATE_KEY --registry-referrers-mode=legacy ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
     - job: build:backend         # [필수] build skip → sign skip. optional로 변경 금지
@@ -639,7 +639,7 @@ sign:workers:
     - mkdir -p ~/.docker
     - printf '{"auths":{"%s":{"auth":"%s"}}}' "${ECR_REGISTRY}" "$(printf 'AWS:%s' "$TOKEN" | base64 -w 0)" > ~/.docker/config.json
   script:
-    - cosign sign --key env://COSIGN_PRIVATE_KEY ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
+    - cosign sign --key env://COSIGN_PRIVATE_KEY --registry-referrers-mode=legacy ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
     - job: build:workers         # [필수] build skip → sign skip. optional로 변경 금지
