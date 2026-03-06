@@ -103,3 +103,15 @@ spec:
       securityContext:
         fsGroup: 1000
         runAsUser: 1000
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: tutum-data
+spec:
+  template:
+    spec:
+      nodeSelector: null
+      securityContext:
+        fsGroup: 1000
