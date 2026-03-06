@@ -13,30 +13,36 @@
 
 | 구분 | 현재 (온프레미스) | AWS 이전 후 |
 |------|-----------------|------------|
-| **K8s 클러스터** | VirtualBox VM 6대 (cp×3 + worker×3) | EKS 관리형 클러스터 |
-| **K8s 버전** | v1.29.15 (수동 kubeadm) | EKS v1.29 (AWS 관리) |
-| **노드 스펙** | VM (불균일) | EC2 m5.large × 3 (ASG) |
-| **CNI** | Calico | AWS VPC CNI + Network Policy |
-| **컨테이너 레지스트리** | GitLab CR (registry.gitlab.com) | ECR (프라이빗, 리전 내) |
-| **인그레스** | MetalLB 192.168.0.240 + Istio GW | ALB (internet-facing) |
-| **외부 HTTPS** | Cloudflare Tunnel → 192.168.0.240 | Cloudflare Tunnel → ALB DNS (origin 변경만) |
-| **Service Mesh** | Istio (mTLS STRICT) | Istio (mTLS STRICT) — 그대로 이식 |
-| **MongoDB** | Atlas Cloud (이미 AWS 외부 클라우드) | **변경 없음** |
+| **VM 구성** | VirtualBox **8대** (cp-1/2/3 + worker1/2/3 + monitoring + mongodb) | EKS 관리형 클러스터 |
+| **K8s 버전** | v1.29.15 (수동 kubeadm, Ubuntu 22.04.5, containerd 1.7.28) | EKS v1.29 (AWS 관리) |
+| **노드 스펙** | CP: 192.168.0.220~222 / Worker: 192.168.0.223~225 (모두 Ready) | EKS Auto Mode (Bottlerocket, private subnet 전용) |
+| **CNI** | Calico (tigera-operator) | AWS VPC CNI + Network Policy |
+| **컨테이너 레지스트리** | ~~GitLab CR~~ → **ECR 전환 완료** (Phase C, 2026-03-06) | `903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/{frontend\|backend\|workers}` |
+| **인그레스** | MetalLB VIP 192.168.0.240 + Istio IngressGateway | ALB (internet-facing) — Istio IngressGateway 제거 |
+| **외부 HTTPS** | Cloudflare Tunnel → 192.168.0.240 | Cloudflare Tunnel → ALB DNS (origin만 변경) |
+| **Service Mesh** | Istio (istiod + IngressGateway, mTLS STRICT, tutum-app ns) | Istio minimal profile (istiod만, IngressGateway 제거, mTLS STRICT 유지) |
+| **MongoDB** | K8s StatefulSet **3-replica** (tutum-data ns, PVC 30Gi×3, worker1/2/3 분산) + 독립 VM (192.168.0.231, v7.0.30) | EKS StatefulSet 그대로 이식 |
 | **MariaDB** | 211.46.52.153:15432 (학원 공인 IP) | **변경 없음** (EKS NAT GW → 직접 접속) |
-| **Redis** | K8s StatefulSet (tutum-data, 3-replica) | EKS StatefulSet 그대로 이식 |
-| **Kafka** | K8s StatefulSet, KRaft 3-replica | EKS StatefulSet 그대로 이식 |
-| **Elasticsearch** | K8s StatefulSet (tutum-data, PVC 30Gi) | EKS StatefulSet 그대로 이식 + S3 스냅샷 복원 |
-| **MinIO** | K8s StatefulSet 4-pod (tutum-storage) | S3 버킷으로 대체 |
-| **모니터링** | Docker Compose on 192.168.0.230 | EC2 Docker Compose (EKS VPC private subnet) |
-| **GitOps** | GitLab CI → ArgoCD → on-prem K8s | GitLab CI → ECR → ArgoCD → EKS |
-| **Autoscaling** | KEDA | KEDA (그대로 이식) |
-| **보안 정책** | Kyverno (Enforce) + Cosign | Kyverno + Cosign (ECR 대응 재구성) |
+| **Redis** | K8s StatefulSet 3-replica, Master+2Replica (tutum-data, PVC 5Gi×3) | EKS StatefulSet 그대로 이식 |
+| **Kafka** | K8s StatefulSet KRaft 3-replica (tutum-data, PVC 20Gi×3, RF=3) | EKS StatefulSet 그대로 이식 |
+| **Elasticsearch** | K8s StatefulSet 1-replica (tutum-data, PVC 30Gi) | EKS StatefulSet 그대로 이식 + S3 스냅샷 복원 |
+| **MinIO** | K8s StatefulSet **4-pod** (tutum-storage, PVC 20Gi×4) | S3 버킷으로 대체 |
+| **모니터링** | 독립 VM (192.168.0.230) Docker Compose — Grafana(3000), Loki(3100), Tempo(3200), Mimir(9009), InfluxDB(8086), Kiali(20001) | EC2 Docker Compose (EKS VPC private subnet) |
+| **GitOps** | GitLab CI → ECR → ArgoCD (tutum-staging: develop, tutum-production: main) | GitLab CI → ECR → ArgoCD → EKS |
+| **Autoscaling** | KEDA 5종 ScaledObject (backend 2-5, frontend 2-4, price/news/elastic consumer) | KEDA 그대로 이식 |
+| **보안 정책** | Kyverno Enforce + Cosign (ECR 공개키 적용 완료, on-prem 적용 완료) | Kyverno + Cosign (EKS 재설치 필요) |
+| **StorageClass** | local-path-provisioner | AWS EBS CSI gp3 |
 
 ### 변경 없는 항목 (이전 불필요)
-- MongoDB: 이미 Atlas Cloud (온프레미스에 없음)
-- MariaDB: 학원 공인 IP, EKS에서도 직접 TCP 연결 (VPN 불필요)
-- GitLab: SaaS, CI/CD 파이프라인 재구성만 필요
-- Cloudflare Tunnel: 터널 자체는 유지, origin URL(IP)만 변경
+- MariaDB: 학원 공인 IP(211.46.52.153:15432), EKS에서도 NAT GW → 직접 TCP 연결 (VPN 불필요)
+- GitLab: SaaS, CI/CD 파이프라인은 Phase C에서 이미 ECR 전환 완료
+- Cloudflare Tunnel: 터널 자체는 유지, origin URL(IP)만 ALB DNS로 변경 (Phase E)
+
+### 이미 완료된 항목 (이전 작업에서 처리됨)
+- **컨테이너 레지스트리**: GitLab CR → ECR 전환 완료 (`.gitlab-ci.yml`, kustomization.yaml, Cosign 키 재발급, Kyverno 정책 갱신)
+- **Dockerfile Alpine**: backend/workers `python:3.11-alpine` 전환 완료
+- **MongoDB**: Atlas Cloud 아님 — K8s StatefulSet 3-replica (tutum-data)로 운영 중.
+  독립 MongoDB VM(192.168.0.231, v7.0.30)은 별도 운영 중이나 앱 연결은 K8s StatefulSet 기준
 
 ---
 
@@ -51,11 +57,11 @@
   └─ Elasticsearch (K8s StatefulSet)        →  EKS StatefulSet (그대로 이식)
 
 마이그레이션 순서:
-Phase A (D+0~3)  : AWS 기반 준비 (계정, ECR, VPC 설계)
-Phase B (D+4~7)  : EKS 클러스터 구성 + 기존 addon 이식
-Phase C (D+8~12) : CI/CD 파이프라인 전환 + 스테이징 검증
-Phase D (D+13~18): 데이터 이전 (MinIO→S3, Elasticsearch 이전)
-Phase E (D+19~24): 트래픽 컷오버 + 온프레미스 철수
+Phase A (D+0~3)  : AWS 기반 준비 (계정, ECR, VPC 설계)          ← ✅ ECR/EKS 생성 완료, SSM 검증 완료
+Phase B (D+4~7)  : EKS 클러스터 구성 + 기존 addon 이식          ← 🔶 진행 중 (ALB/Istio/ArgoCD/NP 완료, KEDA/Kyverno/시크릿 미완)
+Phase C (D+8~12) : CI/CD 파이프라인 전환 + 스테이징 검증        ← 🔶 CI/CD 코드 완료, 파이프라인 실행 미완
+Phase D (D+13~18): 데이터 이전 (MinIO→S3, Elasticsearch 이전)  ← ⬜ 미시작
+Phase E (D+19~24): 트래픽 컷오버 + 온프레미스 철수              ← ⬜ 미시작
 ```
 
 ---
@@ -90,16 +96,21 @@ kubectl get secrets -A --no-headers | grep -v 'kubernetes.io/service-account'
 ### A-2. ECR 리포지토리 생성 (GitLab CR 대체)
 
 ```bash
-# 로컬 (AWS CLI 설정 완료 후)
+# ✅ 이미 완료 (2026-03-06) — 실제 생성된 ECR 레포지토리:
+# 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/frontend
+# 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/backend
+# 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/workers
+
+# 참고: 계획 문서에 tutum-app/* 로 표기되어 있으나 실제 생성은 tutum/* 경로 사용
+# GitLab CR 경로 → ECR 경로 매핑 (실제):
+# registry.gitlab.com/tutum-project/tutum-app/backend/frontend → tutum/frontend
+# registry.gitlab.com/tutum-project/tutum-app/backend          → tutum/backend
+# registry.gitlab.com/tutum-project/tutum-app/backend/workers  → tutum/workers
+
 REGION="ap-northeast-2"
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)  # 903913341620
 
-# 현재 GitLab CR 경로 → ECR 경로 매핑:
-# registry.gitlab.com/tutum-project/tutum-app/backend          → ECR/tutum-app/backend
-# registry.gitlab.com/tutum-project/tutum-app/backend/frontend → ECR/tutum-app/frontend
-# registry.gitlab.com/tutum-project/tutum-app/backend/workers  → ECR/tutum-app/workers
-
-for repo in tutum-app/backend tutum-app/frontend tutum-app/workers; do
+for repo in tutum/frontend tutum/backend tutum/workers; do
   aws ecr create-repository \
     --repository-name "$repo" \
     --region "$REGION" \
@@ -114,31 +125,34 @@ echo "ECR: ${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 
 ### A-3. 기존 이미지를 ECR로 복제 (전환 전 미리 당겨놓기)
 
+> ⬜ **미완료** — Phase C에서 `.gitlab-ci.yml`을 ECR 전환 완료했으나, 파이프라인 실행 전
+> 초기 이미지 적재는 아직 하지 않음. 파이프라인 첫 실행으로 대체 가능.
+
 ```bash
-# GitLab CR에서 최신 이미지를 ECR로 미러링 (CI 전환 전 초기 적재)
-GITLAB_REG="registry.gitlab.com/tutum-project/tutum-app"
-ECR_REG="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+# GitLab CR에서 최신 이미지를 ECR로 미러링 (선택사항: 파이프라인 첫 실행으로 대체 가능)
+GITLAB_REG="registry.gitlab.com/tutum-project/tutum-app/backend"
+ECR_REG="903913341620.dkr.ecr.ap-northeast-2.amazonaws.com"
 
 # GitLab 로그인
 echo "$GITLAB_PAT" | docker login registry.gitlab.com -u sj1202pak --password-stdin
 
 # ECR 로그인
-aws ecr get-login-password --region "$REGION" \
+aws ecr get-login-password --region ap-northeast-2 \
   | docker login --username AWS --password-stdin "$ECR_REG"
 
-# 현재 운영 중인 태그 확인 (cp-1에서)
+# 현재 on-prem 운영 태그 확인 (cp-1에서)
 CURRENT_TAG=$(kubectl get deployment backend -n tutum-app \
   -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d: -f2)
-echo "현재 운영 태그: $CURRENT_TAG"   # 예: stg-accfcfe2
+echo "현재 운영 태그: $CURRENT_TAG"   # 예: stg-8a1321de
 
-# 이미지 재태깅 및 push
+# 이미지 재태깅 및 ECR push (실제 ECR 경로: tutum/*)
 for svc in backend frontend workers; do
   docker pull "${GITLAB_REG}/${svc}:${CURRENT_TAG}" 2>/dev/null || \
   docker pull "${GITLAB_REG}/backend/${svc}:${CURRENT_TAG}"
 
-  docker tag "${GITLAB_REG}/backend/${svc}:${CURRENT_TAG}" \
-             "${ECR_REG}/tutum-app/${svc}:${CURRENT_TAG}"
-  docker push "${ECR_REG}/tutum-app/${svc}:${CURRENT_TAG}"
+  docker tag "${GITLAB_REG}/${svc}:${CURRENT_TAG}" \
+             "${ECR_REG}/tutum/${svc}:${CURRENT_TAG}"
+  docker push "${ECR_REG}/tutum/${svc}:${CURRENT_TAG}"
 done
 ```
 
@@ -199,61 +213,46 @@ EKS VPC (단일):  10.0.0.0/16
 
 ### B-1. EKS 클러스터 생성
 
+> ✅ **이미 완료 (2026-03-06)** — 실제 생성된 클러스터 정보:
+>
+> | 항목 | 실제 값 |
+> |------|---------|
+> | 클러스터명 | `tutum-stg-eks` (스테이징), `tutum-prd-eks` (프로덕션) |
+> | 리전 | ap-northeast-2 |
+> | K8s 버전 | v1.29 |
+> | 노드 타입 | **EKS Auto Mode** (Bottlerocket, managed by Karpenter NodePool) |
+> | VPC CIDR | **10.60.0.0/16** |
+> | Public 서브넷 | 10.60.1.0/24 (ap-northeast-2a), 10.60.2.0/24 (ap-northeast-2b) |
+> | Private 서브넷 | 10.60.11.0/24 (ap-northeast-2a), 10.60.12.0/24 (ap-northeast-2b) |
+> | 인증 모드 | API (aws-auth ConfigMap 없음, access entries 방식) |
+> | OIDC | 활성화 (IRSA 사용) |
+> | 노드 그룹 | `ng-stg-general` (STG) |
+>
+> **주의**: Auto Mode 노드는 **private subnet 전용**으로 NodeClass 패치 완료.
+> public subnet(10.60.1.x, 10.60.2.x)에 배치되면 NAT 없이 IGW → 인터넷 불가.
+> (이미 NodeClass `default` → private subnet만 사용하도록 수정됨)
+
 온프레미스와 동일한 K8s v1.29, 네임스페이스 구조 유지.
 
 ```bash
-cat > eks-cluster.yaml << 'EOF'
-apiVersion: eksctl.io/v1alpha5
-kind: ClusterConfig
-
-metadata:
-  name: tutum-eks
-  region: ap-northeast-2
-  version: "1.29"   # 온프레미스와 동일 버전
-
-vpc:
-  cidr: 10.0.0.0/16
-  nat:
-    gateway: Single   # 비용 절감; HA 필요 시 HighlyAvailable
-
-availabilityZones:
-  - ap-northeast-2a
-  - ap-northeast-2b
-  - ap-northeast-2c
-
-managedNodeGroups:
-  - name: tutum-workers
-    instanceType: m5.large
-    minSize: 2
-    maxSize: 5
-    desiredCapacity: 3
-    availabilityZones:
-      - ap-northeast-2a
-      - ap-northeast-2b
-      - ap-northeast-2c
-    iam:
-      withAddonPolicies:
-        albIngress: true
-        cloudWatch: true
-    tags:
-      Project: tutum
-
-iam:
-  withOIDC: true   # IRSA 활성화 (S3, Bedrock 키리스 인증에 필수)
-
-addons:
-  - name: vpc-cni
-  - name: coredns
-  - name: kube-proxy
-  - name: aws-ebs-csi-driver   # PVC(EBS) 프로비저닝용
-EOF
-
-eksctl create cluster -f eks-cluster.yaml
-# 소요 시간: 약 15~20분
+# EKS Auto Mode는 AWS 콘솔에서 생성 (eksctl 불필요)
+# 또는 eksctl v0.224.0+ 에서 Auto Mode 지원:
 
 # kubeconfig 업데이트
-aws eks update-kubeconfig --region ap-northeast-2 --name tutum-eks
-kubectl get nodes  # 3개 노드 Ready 확인
+aws eks update-kubeconfig --region ap-northeast-2 --name tutum-stg-eks
+kubectl get nodes  # Auto Mode Bottlerocket 노드 Ready 확인
+
+# access entry 추가 (API 인증 모드에서 사용자 추가 방법)
+aws eks create-access-entry \
+  --cluster-name tutum-stg-eks \
+  --principal-arn arn:aws:iam::903913341620:user/sj1202pak \
+  --region ap-northeast-2
+aws eks associate-access-policy \
+  --cluster-name tutum-stg-eks \
+  --principal-arn arn:aws:iam::903913341620:user/sj1202pak \
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
+  --access-scope type=cluster \
+  --region ap-northeast-2
 ```
 
 ---
@@ -290,60 +289,59 @@ kubectl create secret generic app-secrets \
 
 ### B-3. Istio 이식 — mTLS STRICT 그대로 유지
 
-현재 on-prem의 Istio 구성(PeerAuthentication mTLS STRICT, VirtualService)을 EKS에 그대로 이식.
-단, IngressGateway는 MetalLB IP 대신 ALB로 교체.
+> ✅ **이미 완료 (2026-03-06)** — `istioctl install --set profile=minimal -y` 로 EKS에 설치
+> - istiod만 설치 (IngressGateway 제거 — ALB가 대체)
+> - 사이드카 주입 활성화: `tutum-app`, `tutum-data` 네임스페이스
+>
+> 온프레미스 현재 상태:
+> - istiod + **istio-ingressgateway** 둘 다 Running (MetalLB VIP 192.168.0.240 사용 중)
+> - PeerAuthentication mTLS STRICT (tutum-app ns) 적용 완료
+
+현재 on-prem의 Istio 구성(PeerAuthentication mTLS STRICT)을 EKS에 이식.
+IngressGateway는 MetalLB IP 대신 ALB로 교체됨.
 
 ```bash
-# Istio 설치 (EKS 환경 — IngressGateway 비활성화, ALB가 대신함)
-cat > istio-eks.yaml << 'EOF'
-apiVersion: install.istio.io/v1alpha1
-kind: IstioOperator
-spec:
-  components:
-    ingressGateways:
-      - name: istio-ingressgateway
-        enabled: false   # ALB로 대체
-  values:
-    global:
-      proxy:
-        resources:
-          requests:
-            cpu: 100m
-            memory: 128Mi
-EOF
+# ✅ EKS에 이미 설치됨 (minimal profile)
+istioctl install --set profile=minimal -y
 
-istioctl install -f istio-eks.yaml -y
+# 네임스페이스 사이드카 주입 활성화 (✅ 완료)
+kubectl label namespace tutum-app istio-injection=enabled
+kubectl label namespace tutum-data istio-injection=enabled
 
-# 기존 PeerAuthentication (mTLS STRICT) 그대로 적용
+# 기존 PeerAuthentication (mTLS STRICT) 적용
 kubectl apply -f k8s-manifests/base/security/peer-authentication.yaml
-
-# 기존 VirtualService / DestinationRule 그대로 적용
-kubectl apply -f k8s-manifests/base/networking/
 ```
 
-on-prem Istio Gateway (MetalLB 기반) vs EKS 구조 변경:
+on-prem vs EKS 트래픽 구조:
 ```
-[기존]
+[온프레미스 현재]
   Client → Cloudflare Tunnel → 192.168.0.240 (MetalLB)
-         → Istio IngressGateway → VirtualService → Service
+         → Istio IngressGateway → VirtualService → Service → Envoy Sidecar → Pod
 
-[EKS 이후]
+[EKS 이전 후]
   Client → Cloudflare Tunnel → ALB DNS
-         → ALB → tutum-app Service (포트 80/443)
-         → Istio sidecar mesh (mTLS STRICT 유지)
+         → ALB → K8s Service → Envoy Sidecar → Pod (mTLS STRICT 유지)
+         (Istio IngressGateway 불필요 — ALB가 외부 진입점 역할)
 ```
 
 ---
 
 ### B-4. ALB Ingress Controller 설치
 
+> ✅ **이미 완료 (2026-03-06)** — `eks/aws-load-balancer-controller v3.1.0` 설치 완료
+> - 2/2 Running (system nodes, CriticalAddonsOnly toleration 추가)
+> - IRSA: AWSLoadBalancerControllerIAMPolicy 연결 완료
+> - ACM `*.tutum.my` 인증서 발급 신청 완료 (Route53 DNS validation, PENDING_VALIDATION → 자동 ISSUED 대기)
+> - subnet 태그: public(kubernetes.io/role/elb=1), private(kubernetes.io/role/internal-elb=1)
+
 ```bash
+# ✅ 완료됨 — 참고용
 # IRSA 생성 (ALB Controller용)
 eksctl create iamserviceaccount \
-  --cluster=tutum-eks \
+  --cluster=tutum-stg-eks \
   --namespace=kube-system \
   --name=aws-load-balancer-controller \
-  --attach-policy-arn=arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy \
+  --attach-policy-arn=arn:aws:iam::903913341620:policy/AWSLoadBalancerControllerIAMPolicy \
   --approve
 
 # Helm 설치
@@ -392,19 +390,30 @@ EOF
 
 ### B-5. KEDA 이식 — 기존 ScaledObject 그대로 사용
 
+> ⬜ **미완료** — on-prem KEDA는 정상 운영 중, EKS에 아직 미설치
+
+on-prem KEDA 현재 상태 (참고):
+| ScaledObject | 타겟 | min | max | 트리거 |
+|---|---|---|---|---|
+| backend-scaledobject | backend | 2 | 5 | CPU 70% |
+| frontend-scaledobject | frontend | 2 | 4 | CPU |
+| price-consumer-scaledobject | price-consumer | 1 | 5 | Kafka lag |
+| news-consumer-scaledobject | news-consumer | 1 | 4 | Kafka lag |
+| elastic-consumer-scaledobject | elastic-consumer | 0 | 3 | Kafka lag |
+
 ```bash
-# KEDA Helm 설치 (버전 on-prem과 동일하게 맞출 것)
+# KEDA Helm 설치 (on-prem 버전 확인)
+kubectl get deployment keda-operator -n keda \
+  -o jsonpath='{.spec.template.spec.containers[0].image}'
+# 버전 확인 후 동일 버전으로 EKS에 설치
+
 helm repo add kedacore https://kedacore.github.io/charts && helm repo update
-
-# on-prem 버전 확인
-kubectl get deployment keda-operator -n keda -o jsonpath='{.spec.template.spec.containers[0].image}'
-
 helm install keda kedacore/keda -n keda --create-namespace \
   --version 2.x.x   # on-prem 버전과 동일
 
-# 기존 ScaledObject 그대로 적용 (Kafka scaler는 kafka service name 확인 필요)
+# 기존 ScaledObject 그대로 적용
 kubectl apply -f k8s-manifests/base/autoscaling/
-# ScaledObject 내 bootstrapServers: kafka-bootstrap.tutum-data.svc:9092 → 동일하게 동작
+# bootstrapServers: kafka-bootstrap.tutum-data.svc:9092 → EKS에서도 동일 서비스명 사용
 ```
 
 ---
@@ -482,36 +491,44 @@ spec:
 
 ### B-7. ArgoCD 이식 — 기존 앱 정의 재사용
 
-```bash
-# ArgoCD 설치 (on-prem과 동일 방식)
-kubectl create namespace argocd
-helm install argocd argo/argo-cd -n argocd \
-  --set server.service.type=ClusterIP \
-  --set configs.params."server\.insecure"=true
+> ✅ **ArgoCD 설치 완료 (2026-03-06)** — 7/7 Running (EKS private subnet 10.60.11.x)
+> - kubectl apply --server-side (CRD 크기 제한 우회)
+> - ArgoCD 설치 방법: stable manifest kubectl apply (Helm 아님)
+>
+> ⬜ **미완료**: GitLab 리포 연결, staging-app.yaml destination 변경
 
-# GitLab 리포 연결 (기존과 동일)
-argocd repo add https://gitlab.com/tutum-project/tutum-app/k8s-manifests \
+```bash
+# ArgoCD 설치 (stable manifest, kubectl apply)
+kubectl create namespace argocd
+kubectl apply -n argocd --server-side \
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# ArgoCD admin 비밀번호 확인
+kubectl get secret argocd-initial-admin-secret -n argocd \
+  -o jsonpath='{.data.password}' | base64 -d
+
+# GitLab 리포 연결 (미완료)
+argocd login <argocd-server-url> --username admin --password <pw> --insecure
+argocd repo add https://gitlab.com/tutum-project/tutum-app/backend \
   --username sj1202pak --password "$GITLAB_PAT"
 ```
 
-`k8s-manifests/argocd/staging-app.yaml`에서 변경할 부분:
+`k8s-manifests/argocd/staging-app.yaml` — destination 변경 필요:
 ```yaml
-# 변경 전 (on-prem ArgoCD가 바라보던 서버)
+# 변경 전 (on-prem ArgoCD)
 spec:
   destination:
     server: https://192.168.0.220:6443   # cp-1 API server
 
-# 변경 후 (EKS API server)
+# 변경 후 (EKS 내부에서 자기 자신)
 spec:
   destination:
-    server: https://<EKS-API-SERVER-ENDPOINT>  # eksctl로 생성 후 조회
-    # 또는
     server: https://kubernetes.default.svc  # ArgoCD가 EKS 내부에 있을 경우
 ```
 
 EKS API endpoint 조회:
 ```bash
-aws eks describe-cluster --name tutum-eks \
+aws eks describe-cluster --name tutum-stg-eks \
   --query 'cluster.endpoint' --output text
 ```
 
@@ -984,54 +1001,64 @@ aws budgets create-budget \
 
 ## 마이그레이션 체크리스트
 
-### Phase A (기반 준비)
+### Phase A (기반 준비) — 🔶 대부분 완료
 - [ ] 온프레미스 리소스 스냅샷 추출 (`kubectl get all -A -o yaml`)
-- [ ] ECR repo 3개 생성 (backend, frontend, workers)
-- [ ] 기존 운영 이미지 → ECR 미러링 완료
-- [ ] GitLab CI 변수 업데이트 (ECR 크리덴셜)
-- [ ] VPC CIDR 설계 확정
+- [x] ECR repo 3개 생성 (`tutum/backend`, `tutum/frontend`, `tutum/workers`)
+- [ ] 기존 운영 이미지 → ECR 미러링 (선택사항 — 파이프라인 첫 실행으로 대체 가능)
+- [x] GitLab CI 변수: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `ECR_REGISTRY` 등록 완료
+- [ ] GitLab CI 변수: `COSIGN_PRIVATE_KEY` (File), `COSIGN_PUBLIC_KEY` 수동 업데이트 필요 (cp-2 `/tmp/cosign.key`, `/tmp/cosign.pub`)
+- [x] VPC 생성 완료 (10.60.0.0/16, public 10.60.1~2.0/24, private 10.60.11~12.0/24)
+- [x] ACM `*.tutum.my` 인증서 발급 신청 + Route53 DNS validation CNAME 등록 완료
 
-### Phase B (EKS 구성)
-- [ ] EKS 클러스터 생성 (v1.29, 3 node)
-- [ ] 네임스페이스 생성 (tutum-app, tutum-data, tutum-storage)
-- [ ] 시크릿 재생성 (app-secrets, OAuth 키 등)
-- [ ] Istio 설치 + PeerAuthentication(mTLS STRICT) 적용
-- [ ] ALB Ingress Controller 설치
-- [ ] KEDA 설치 + ScaledObject 적용
-- [ ] Kyverno + Cosign 재구성 (ECR URI + 새 키)
-- [ ] ArgoCD 설치 + GitLab 리포 연결
-- [ ] ArgoCD staging-app.yaml destination → EKS API server
-- [ ] NetworkPolicy 이식 (vpc-cni network policy 활성화)
-- [ ] Worker SG outbound 211.46.52.153:15432 허용
-- [ ] MariaDB 연결 E2E 테스트 (kubectl run mariadb-test)
+### Phase B (EKS 구성) — 🔶 진행 중
+- [x] EKS 클러스터 생성 (`tutum-stg-eks` ACTIVE, `tutum-prd-eks` ACTIVE, Auto Mode, K8s v1.29)
+- [x] 네임스페이스 생성 (tutum-app, tutum-data, tutum-storage, monitoring, keda)
+- [ ] **시크릿 재생성** (app-secrets, OAuth 키, gitlab-registry-secret 등) — EKS에 미생성
+- [x] Istio minimal profile 설치 (istiod Running, IngressGateway 없음)
+- [x] 사이드카 주입: tutum-app, tutum-data 네임스페이스 label 완료
+- [x] ALB Ingress Controller 설치 (2/2 Running, eks/aws-load-balancer-controller v3.1.0)
+- [ ] **KEDA 설치 + ScaledObject 적용** (on-prem 정상, EKS 미설치)
+- [ ] **Kyverno 설치 + ECR 정책 적용** (on-prem 적용 완료, EKS 미설치)
+- [ ] **ECR 토큰 갱신 CronJob** (`kyverno` ns, 6시간마다 ECR 토큰 갱신)
+- [x] ArgoCD 설치 (7/7 Running, private subnet 10.60.11.x)
+- [ ] **ArgoCD GitLab 리포 연결** (`argocd repo add`)
+- [ ] **staging-app.yaml destination → `https://kubernetes.default.svc`**
+- [x] NetworkPolicy 이식 (vpc-cni network policy 활성화 + manifest 적용)
+- [x] MariaDB 연결 확인 (SSM send-command → `MARIADB_REACHABLE` ✅)
+- [ ] Worker SG outbound 211.46.52.153:15432 명시적 허용 (현재 기본 SG로 통과 중)
 
-### Phase C (CI/CD 전환)
-- [ ] `.gitlab-ci.yml` ECR push로 전환
-- [ ] Kustomize 이미지 경로 ECR로 수정
-- [ ] 새 이미지 빌드 + ECR push + ArgoCD sync 확인
-- [ ] Kyverno 이미지 서명 검증 통과 확인
-- [ ] 스테이징 E2E (로그인, 시세, 뉴스, AI, OCR, MariaDB)
+### Phase C (CI/CD 전환) — 🔶 코드 완료, 파이프라인 미실행
+- [x] `backend/Dockerfile`, `backend/workers/Dockerfile` → `python:3.11-alpine` 전환
+- [x] `.gitlab-ci.yml` ECR 전환 (build/scan/sign/deploy 전 구간)
+- [x] `k8s-manifests/overlays/staging|production/kustomization.yaml` ECR 이미지 경로
+- [x] Cosign 새 키쌍 생성 (cp-2 `/tmp/cosign.key`, `/tmp/cosign.pub`, 패스워드: tutum123)
+- [x] Kyverno cosign-verify-policy.yaml ECR 경로 + 새 공개키 → on-prem 적용 완료
+- [ ] **GitLab CI COSIGN_PRIVATE_KEY/PUBLIC_KEY 수동 업데이트** → 파이프라인 실행 차단 중
+- [ ] 파이프라인 실행 (build → scan → sign → deploy, ECR 전 구간 동작 확인)
+- [ ] Kyverno 이미지 서명 검증 통과 확인 (EKS 설치 후)
+- [ ] 스테이징 E2E 검증 (로그인, 시세, 뉴스, AI, OCR, MariaDB)
 
-### Phase D (데이터 이전)
-- [ ] S3 버킷 생성 + 암호화 + 퍼블릭 액세스 차단
-- [ ] MinIO → S3 mc mirror 완료 + 파일 수 검증
-- [ ] Backend S3 코드 변경 + IRSA 적용 (키 제거)
-- [ ] Redis: 빈 상태 시작 or RDB 이전 (정책 결정)
-- [ ] Kafka: 빈 상태 시작 + 동일 토픽 생성
-- [ ] Elasticsearch EC2 생성 + S3 스냅샷 복원
-- [ ] ELASTICSEARCH_URL 환경변수 → 새 EC2 IP
-- [ ] 모니터링 EC2 생성 + Docker Compose 기동
-- [ ] Alloy remote_write → 새 EC2 IP
-- [ ] S3 Lifecycle (Glacier 30일) 설정
-- [ ] CloudTrail 활성화
+### Phase D (데이터 이전) — ⬜ 미시작
+- [ ] S3 버킷 생성 (`tutum-prod-storage`) + KMS 암호화 + 퍼블릭 액세스 차단
+- [ ] MinIO → S3 mc mirror 완료 (ocr-images, profile-images 버킷)
+- [ ] Backend MINIO_* env → S3 + IRSA 적용 (키 제거)
+- [ ] Redis: 빈 상태 시작 (캐시 데이터 손실 허용) or RDB 이전
+- [ ] Kafka: 빈 상태 시작 + 동일 토픽 생성 (메시지 재생산 가능)
+- [ ] Elasticsearch: EKS StatefulSet 배포 + S3 스냅샷 복원 (repository-s3 플러그인 필요)
+- [ ] 모니터링 EC2 생성 (EKS VPC private subnet, t3.medium)
+- [ ] Docker Compose LGTM 기동 (Grafana/Loki/Tempo/Mimir)
+- [ ] EKS Alloy DaemonSet remote_write → 모니터링 EC2 내부 IP
+- [ ] S3 Lifecycle 설정 (ocr-images 180일 만료, backups/ Glacier 30일)
+- [ ] CloudTrail 활성화 + S3 저장 (90일 보관)
 
-### Phase E (컷오버)
-- [ ] OAuth 콜백 URL → ALB DNS (Google, Naver)
+### Phase E (컷오버) — ⬜ 미시작
+- [ ] ACM `*.tutum.my` 인증서 ISSUED 확인 후 ALB Ingress 생성
+- [ ] OAuth 콜백 URL → ALB DNS 또는 tutum.my (Google, Naver)
 - [ ] Cloudflare Tunnel origin → ALB DNS
-- [ ] 접속 확인 (tutum.app 전체 기능)
-- [ ] 1주일 병행 운영 이상 없음 확인
+- [ ] tutum.app 전체 기능 접속 확인
+- [ ] 1주일 병행 운영 (EKS Error Rate < 1% 확인 후 온프레미스 철수)
 - [ ] 온프레미스 워크로드 순차 중단
-- [ ] Budget Alert $700 설정
+- [ ] AWS Budget Alert $700 임계값 설정
 - [ ] IAM Access Analyzer 미사용 권한 정리
 - [ ] 운영 문서 최종 갱신
 

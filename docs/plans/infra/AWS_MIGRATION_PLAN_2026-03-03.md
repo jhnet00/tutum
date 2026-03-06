@@ -27,27 +27,33 @@
 > Monitoring EC2만 EKS VPC private subnet에 배치. Elasticsearch는 EKS 내 StatefulSet.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  AWS ap-northeast-2                                             │
-│                                                                  │
-│  ┌── EKS VPC (10.0.0.0/16) ──────────────────────────────────┐ │
-│  │  Public Subnet:  10.0.1.0/24 (ALB, NAT GW)                │ │
-│  │  Private Subnet: 10.0.2.0/24 (EKS worker nodes)           │ │
-│  │  Private Subnet: 10.0.3.0/24 (Redis, Kafka StatefulSet)   │ │
-│  │  Private Subnet: 10.0.4.0/24 (Monitoring EC2, ES EC2)     │ │
-│  │                                                             │ │
-│  │  EKS 내 pod:  GitLab Runner (gitlab-runner ns)             │ │
-│  │               ArgoCD (argocd ns)                           │ │
-│  │  AZ 분산: ap-northeast-2a / 2b / 2c                        │ │
-│  └────────────────────────┬───────────────────────────────────┘ │
-│                           │ NAT GW → 인터넷 (공인 IP 직접 연결) │
-└───────────────────────────┼─────────────────────────────────────┘
-                            │ TCP 15432 (TLS 권장)
-                    ┌───────┴──────────────────────┐
-                    │ 학원 제공 서버 (공인 IP)        │
-                    │ MariaDB 211.46.52.153:15432   │
-                    │ (회원/인증)                    │
-                    └──────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│  AWS ap-northeast-2                                                      │
+│                                                                           │
+│  ┌── EKS VPC (10.60.0.0/16) ───────────────────────────────────────────┐ │
+│  │                                                                      │ │
+│  │  [Public Subnet]  10.60.1.0/24 (ap-northeast-2a) — ALB, NAT GW     │ │
+│  │  [Public Subnet]  10.60.2.0/24 (ap-northeast-2b) — ALB (Multi-AZ)  │ │
+│  │                                                                      │ │
+│  │  [Private Subnet] 10.60.11.0/24 (ap-northeast-2a) — EKS Auto Mode  │ │
+│  │  [Private Subnet] 10.60.12.0/24 (ap-northeast-2b) — EKS Auto Mode  │ │
+│  │                                                                      │ │
+│  │  EKS 내 pod:  GitLab Runner (gitlab-runner ns)                      │ │
+│  │               ArgoCD (argocd ns)                                    │ │
+│  │               ALB Controller (kube-system)                          │ │
+│  │  AZ 분산: ap-northeast-2a / 2b                                      │ │
+│  │  클러스터: tutum-stg-eks (스테이징), tutum-prd-eks (프로덕션)         │ │
+│  │  노드 타입: EKS Auto Mode (Bottlerocket, Karpenter 기반)             │ │
+│  │  인증 모드: API (access entries, aws-auth ConfigMap 없음)            │ │
+│  └──────────────────────────┬───────────────────────────────────────────┘ │
+│                             │ NAT GW → 인터넷                             │
+└─────────────────────────────┼────────────────────────────────────────────┘
+                              │ TCP 15432
+                    ┌─────────┴─────────────────────┐
+                    │ 학원 제공 서버 (공인 IP)          │
+                    │ MariaDB 211.46.52.153:15432    │
+                    │ (회원/인증, VPN 불필요)          │
+                    └───────────────────────────────┘
 ```
 
 > **MariaDB 연결 방식**: 학원 제공 서버는 이미 공인 IP(`211.46.52.153`)로 외부 노출되어 있어
@@ -58,20 +64,24 @@
 
 ### 2-2. MSA 서비스 구성
 
-| 서비스 | 네임스페이스 | 역할 |
-|--------|------------|------|
-| frontend (Next.js) | tutum-app | 씬(Thin) 클라이언트: UI 렌더링, API 프록시 |
-| backend (FastAPI) | tutum-app | REST API, 비즈니스 로직 |
-| price-producer | tutum-app | 시세 수집 Kafka 생산자 |
-| news-producer | tutum-app | 뉴스 수집 Kafka 생산자 |
-| price-consumer | tutum-app | 시세 소비 → Redis 캐시 |
-| news-consumer | tutum-app | 뉴스 소비 → Elasticsearch 인덱싱 |
-| elastic-consumer | tutum-app | 검색 인덱스 처리 |
-| MongoDB | tutum-data | 자산/포트폴리오/AI 결과 |
-| Redis + Sentinel | tutum-data | 캐시, 세션, Rate Limiting |
-| Kafka (KRaft) | tutum-data | 이벤트 스트리밍 |
-| Elasticsearch | tutum-data | 뉴스 검색 |
-| MariaDB | 학원 제공 서버 (공인 IP, 직접 연결) | 회원/인증 |
+| 서비스 | 네임스페이스 | 현재 상태 | 역할 |
+|--------|------------|----------|------|
+| frontend (Next.js) | tutum-app | ✅ Running (2 pod) | UI 렌더링, API 프록시 |
+| backend (FastAPI) | tutum-app | ✅ Running (2~5 pod, KEDA) | REST API, 비즈니스 로직 |
+| price-producer | tutum-app | ✅ Running | 시세 수집 Kafka 생산자 |
+| news-producer | tutum-app | ✅ Running | 뉴스 수집 Kafka 생산자 |
+| price-consumer | tutum-app | ✅ Running (KEDA 1-5) | 시세 소비 → Redis 캐시 |
+| news-consumer | tutum-app | ✅ Running (KEDA 1-4) | 뉴스 소비 → Elasticsearch |
+| elastic-consumer | tutum-app | ✅ Running (KEDA 0-3) | 검색 인덱스 처리 |
+| email-worker | tutum-app | ✅ Running | 이메일 인증 처리 |
+| ocr | tutum-app | ✅ Running | OCR (GCP Vision API) |
+| cloudflared | tutum-app | ✅ Running (2 pod) | Cloudflare Tunnel |
+| MongoDB | tutum-data | ✅ StatefulSet 3-replica (30Gi×3) | 자산/포트폴리오/AI 결과 |
+| Redis | tutum-data | ✅ StatefulSet 3-replica Master+2Replica (5Gi×3) | 캐시, 세션, Rate Limiting |
+| Kafka (KRaft) | tutum-data | ✅ StatefulSet 3-replica, RF=3 (20Gi×3) | 이벤트 스트리밍 |
+| Elasticsearch | tutum-data | ✅ StatefulSet 1-replica (30Gi) | 뉴스 검색 |
+| MinIO | tutum-storage | ✅ StatefulSet 4-pod (20Gi×4) | 오브젝트 스토리지 (→ S3 이전 예정) |
+| MariaDB | 학원 서버 (211.46.52.153:15432) | ✅ 직접 연결 확인 | 회원/인증 |
 
 ### 2-3. 트래픽 흐름
 
@@ -298,19 +308,22 @@ Monitoring EC2 (EKS VPC private subnet, ap-northeast-2c, t3.medium 이상)
 
 ### R5: 비용 900 USD 실현 가능성
 
-| 항목 | 예상 월 비용(USD) |
-|------|-----------------|
-| EKS Control Plane | ~72 |
-| EC2 Worker (m5.large × 3, Spot 혼용) | ~215 |
-| EC2 Monitoring (t3.medium, ap-northeast-2c) | ~30 |
-| ALB | ~20 |
-| EBS (gp3 300GB) | ~24 |
-| NAT Gateway | ~45 |
-| VPN Gateway | ~~36~~ → **0** (MariaDB 공인 IP 직접 연결) |
-| S3 + Glacier + CloudTrail | ~15 |
-| ECR | ~5 |
-| CloudWatch | ~15 |
-| **합계** | **~441** |
+| 항목 | 사양 | 예상 월 비용(USD) |
+|------|------|-----------------|
+| EKS Control Plane (tutum-stg-eks) | - | ~73 |
+| EKS Auto Mode 노드 | Bottlerocket, private subnet | ~150 |
+| EC2 Monitoring (t3.medium) | EKS VPC private subnet | ~30 |
+| ALB | - | ~20 |
+| EBS gp3 (EKS PVC) | - | ~24 |
+| NAT Gateway | - | ~45 |
+| VPN Gateway | ~~36~~ → **0** (MariaDB 공인 IP 직접 연결) | 0 |
+| S3 + Glacier + CloudTrail | - | ~15 |
+| ECR (`tutum/*` 3개 리포) | - | ~5 |
+| CloudWatch | - | ~15 |
+| **합계** | | **~377** |
+
+> 실제 EKS Auto Mode 사용으로 m5.large 고정 비용 대비 절감 가능.
+> tutum-prd-eks 추가 시 EKS Control Plane 비용 ×2 (stg+prd 각각 $73)
 
 > VPN Gateway 불필요(MariaDB 공인 IP 직접 연결)로 기존 대비 -$36 절감.
 > RDS로 MariaDB 이전 시 추가 ~$30-50/월 발생 (현재 계획은 학원 서버 직접 연결 유지).
@@ -375,42 +388,52 @@ Monitoring EC2 (EKS VPC private subnet, ap-northeast-2c, t3.medium 이상)
 
 ## 9. 단계별 실행
 
-### Phase A (D+0 ~ D+3): 기반 준비
-1. ECR repo 생성
-2. GitLab CI 변수 등록 (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `ECR_REGISTRY`)
-3. AWS Organizations + OU 구성 + SCP 초기 정책 적용
-4. EKS VPC CIDR 설계 확정 (10.0.0.0/16, 단일 VPC)
-5. MariaDB 연결 검증: EKS worker SG에 outbound `211.46.52.153:15432` 허용 설정
+### Phase A (D+0 ~ D+3): 기반 준비 — ✅ 대부분 완료
+1. ✅ ECR repo 생성 (`tutum/frontend`, `tutum/backend`, `tutum/workers`)
+2. ✅ GitLab CI 변수 등록 (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `ECR_REGISTRY`)
+3. ✅ VPC 생성 완료 (10.60.0.0/16, public/private 서브넷, NAT GW)
+4. ✅ EKS 클러스터 생성 (`tutum-stg-eks`, `tutum-prd-eks`, Auto Mode, K8s v1.29)
+5. ✅ Session Manager 설정 + MariaDB SSM 연결 검증 (`MARIADB_REACHABLE`)
+6. ✅ ACM `*.tutum.my` 인증서 발급 신청 + Route53 DNS validation 등록
+7. ⬜ AWS Organizations + SCP 초기 정책 (미완)
 
-### Phase B (D+4 ~ D+7): EKS 구성
-1. EKS VPC + 클러스터 생성 (단일 VPC, eksctl)
-2. EKS Managed Node Group 구성 (ap-northeast-2a/b/c 분산)
-3. ALB Ingress Controller + ACM 인증서 연동
-4. ArgoCD on EKS 내부 배포 (argocd ns)
-5. NetworkPolicy 이식 (tutum-app, tutum-data, 네임스페이스별)
-6. Session Manager 설정, EC2 키페어 미사용 확인
-7. **Istio 재설치 (EKS 환경), IngressGateway 제거** (R4)
+### Phase B (D+4 ~ D+7): EKS 구성 — 🔶 진행 중
+1. ✅ 네임스페이스 생성 (tutum-app, tutum-data, tutum-storage, monitoring, keda)
+2. ✅ ALB Ingress Controller v3.1.0 설치 + IRSA (2/2 Running)
+3. ✅ ArgoCD 설치 (stable manifest kubectl apply, 7/7 Running)
+4. ✅ NetworkPolicy 이식 (tutum-app, tutum-data)
+5. ✅ Istio minimal profile 설치 (istiod, IngressGateway 제거) + 사이드카 주입 활성화
+6. ⬜ **app-secrets 등 EKS 시크릿 재생성** (파이프라인 실행 전 필수)
+7. ⬜ **KEDA 설치 + ScaledObject 적용**
+8. ⬜ **Kyverno + ECR CronJob 설치 + 정책 적용**
+9. ⬜ **ArgoCD GitLab 리포 연결 + staging-app.yaml destination 변경**
 
-### Phase C (D+8 ~ D+12): 배포 전환
-1. GitLab CI → ECR push 전환 + Alpine Linux 이미지 전환
-2. Cosign 키 재발급 + Kyverno policy registry 경로 수정 (R3)
-3. k8s-manifests image 경로 ECR 통일
-4. MariaDB 연결 검증 (EKS → 211.46.52.153:15432 직접 연결, 회원/로그인 E2E)
-5. staging E2E 검증
+### Phase C (D+8 ~ D+12): 배포 전환 — 🔶 코드 완료, 파이프라인 미실행
+1. ✅ `backend/workers/Dockerfile` Alpine Linux 전환 (`python:3.11-alpine`)
+2. ✅ `.gitlab-ci.yml` ECR 전환 (build/scan/sign/deploy 전 구간)
+3. ✅ `kustomization.yaml` ECR 이미지 경로 통일 (staging + production)
+4. ✅ Cosign 키 재발급 (cp-2 `/tmp/cosign.key`, `/tmp/cosign.pub`) + Kyverno 정책 on-prem 적용
+5. ⬜ **GitLab CI COSIGN_PRIVATE_KEY/PUBLIC_KEY 수동 업데이트** → 파이프라인 진행 차단
+6. ⬜ 파이프라인 실행 + ECR push + ArgoCD EKS sync 확인
+7. ⬜ 스테이징 E2E 검증 (로그인, 시세, 뉴스, AI, OCR, MariaDB)
 
-### Phase D (D+13 ~ D+18): 데이터/관측
-1. MinIO → S3 복제 구성
-2. S3 lifecycle → Glacier 적용
-3. **Monitoring EC2 구성** (ap-northeast-2c, Docker Compose, LGTM + AI)
-4. Grafana 대시보드 구성 (클러스터 개요 / 파드 분석 / 메트릭+로그+트레이스 / AI 분석)
-5. CloudTrail 활성화 + S3 저장 설정
-6. CloudWatch 알람 + Grafana 알람 정책 정리
+### Phase D (D+13 ~ D+18): 데이터/관측 — ⬜ 미시작
+1. S3 버킷 `tutum-prod-storage` 생성 + KMS 암호화 + 퍼블릭 액세스 차단
+2. MinIO → S3 mc mirror (ocr-images, profile-images)
+3. Backend S3 IRSA 전환 (MINIO_* env 제거)
+4. **Monitoring EC2** (EKS VPC private subnet, t3.medium, Docker Compose LGTM)
+5. EKS Alloy DaemonSet remote_write → Monitoring EC2 내부 IP
+6. Grafana 대시보드 구성 (클러스터 개요 / 파드 분석 / 메트릭+로그+트레이스)
+7. CloudTrail 활성화 + S3 저장 (90일) + Glacier lifecycle
 
-### Phase E (D+19 ~ D+24): 안정화
-1. canary/rollback 리허설
-2. 장애 시나리오 점검 (MariaDB 서버 접근 불가, 노드 장애, Kafka lag 폭증)
-3. SCP/IAM 권한 최소화 최종 검토
-4. 운영 문서 확정
+### Phase E (D+19 ~ D+24): 안정화 — ⬜ 미시작
+1. ACM `*.tutum.my` ISSUED 확인 후 ALB Ingress 생성 (tutum.my 도메인 연결)
+2. OAuth 콜백 URL → ALB DNS or tutum.my (Google, Naver)
+3. Cloudflare Tunnel origin → ALB DNS
+4. canary/rollback 리허설
+5. SCP/IAM 권한 최소화 최종 검토
+6. AWS Budget Alert $700 설정
+7. 운영 문서 확정
 
 ---
 
