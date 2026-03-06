@@ -1017,6 +1017,304 @@ async def get_pipeline_diagnose(
     return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
 
 
+# ─── AI 진단 공통 헬퍼 ─────────────────────────────────────────────────────────
+
+async def _call_bedrock_standard(prompt: str, system_prompt: str, max_tokens: int = 1024) -> dict:
+    """Bedrock Claude 공통 호출 + JSON 파싱."""
+    bedrock = _get_bedrock_client()
+    model_id = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20240620-v1:0")
+    body = json.dumps({
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": max_tokens,
+        "temperature": 0.2,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": prompt}],
+    })
+    loop = asyncio.get_running_loop()
+    response = await loop.run_in_executor(
+        None,
+        lambda: bedrock.invoke_model(
+            modelId=model_id, body=body,
+            contentType="application/json", accept="application/json",
+        ),
+    )
+    raw_body = json.loads(response["body"].read())
+    text = raw_body["content"][0]["text"].strip()
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    return json.loads(text)
+
+
+@router.get("/infra-diagnose")
+async def get_infra_diagnose(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """인프라(노드/파드) 상태를 Bedrock Claude로 AI 진단."""
+    await check_rate_limit(request, "admin_ai", user_id=current_user.id)
+
+    try:
+        core, metrics_api = _get_k8s_clients()
+        nodes_raw = core.list_node(_request_timeout=10).items
+        usage_map: dict = {}
+        try:
+            raw = metrics_api.list_cluster_custom_object(
+                group="metrics.k8s.io", version="v1beta1", plural="nodes"
+            )
+            for item in raw.get("items", []):
+                name = item["metadata"]["name"]
+                cpu_nano = int(item["usage"]["cpu"].rstrip("n"))
+                mem_ki = int(item["usage"]["memory"].rstrip("Ki"))
+                usage_map[name] = {"cpu_nano": cpu_nano, "mem_ki": mem_ki}
+        except Exception:
+            pass
+
+        node_lines = []
+        for node in nodes_raw:
+            name = node.metadata.name
+            alloc = node.status.allocatable or {}
+            cpu_str = alloc.get("cpu", "0")
+            mem_str = alloc.get("memory", "0Ki")
+            cpu_m = int(float(cpu_str)) * 1000 if not cpu_str.endswith("m") else int(cpu_str[:-1])
+            mem_ki = int(mem_str[:-2]) if mem_str.endswith("Ki") else int(mem_str) // 1024
+            cpu_pct = mem_pct = 0
+            if name in usage_map:
+                u = usage_map[name]
+                cpu_pct = round(u["cpu_nano"] / 1_000_000 / cpu_m * 100) if cpu_m else 0
+                mem_pct = round(u["mem_ki"] / mem_ki * 100) if mem_ki else 0
+            node_lines.append(
+                f"  - {name} ({_node_role(node)}): {_node_status(node)}, CPU {cpu_pct}%, MEM {mem_pct}%"
+            )
+
+        TARGET_NS = {"tutum-app", "tutum-data", "monitoring", "keda"}
+        pods_raw = core.list_pod_for_all_namespaces(_request_timeout=10).items
+        pod_lines, problem_pods = [], []
+        for pod in pods_raw:
+            if pod.metadata.namespace not in TARGET_NS:
+                continue
+            phase = pod.status.phase or "Unknown"
+            cs_list = pod.status.container_statuses or []
+            waiting_reason = next(
+                (cs.state.waiting.reason for cs in cs_list if cs.state and cs.state.waiting), None
+            )
+            display_status = waiting_reason or phase
+            restarts = sum(cs.restart_count for cs in cs_list)
+            line = f"  - {pod.metadata.namespace}/{pod.metadata.name}: {display_status}, restarts={restarts}"
+            pod_lines.append(line)
+            if display_status not in ("Running", "Succeeded") or restarts > 5:
+                problem_pods.append(line.strip())
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"인프라 데이터 수집 실패: {e}")
+
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    prompt = (
+        f"인프라 진단 요청 ({now_str})\n\n"
+        f"[노드 상태 ({len(nodes_raw)}개)]\n" + "\n".join(node_lines) + "\n\n"
+        f"[파드 상태 ({len(pod_lines)}개)]\n" + "\n".join(pod_lines) + "\n\n"
+        f"[요약]\n- 전체 파드: {len(pod_lines)}개\n- 문제 파드: {len(problem_pods)}개\n"
+        + ("\n".join(problem_pods) if problem_pods else "  (없음)") +
+        "\n\n위 인프라 데이터를 분석하여 지정된 JSON 형식으로 진단 결과를 반환하세요."
+    )
+
+    try:
+        result = await _call_bedrock_standard(prompt, _DIAGNOSE_SYSTEM_PROMPT)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"AI 분석 실패: {e}")
+
+    return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/data-diagnose")
+async def get_data_diagnose(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """데이터 레이어(ES/Redis/Kafka/MongoDB/Disk) 상태를 AI 진단."""
+    await check_rate_limit(request, "admin_ai", user_id=current_user.id)
+
+    try:
+        dm = await get_data_metrics()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"데이터 메트릭 수집 실패: {e}")
+
+    es = dm["elasticsearch"]
+    redis = dm["redis"]
+    kafka = dm["kafka"]
+    disk = dm["disk"]
+    mongo = dm["mongodb"]
+
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    prompt = (
+        f"데이터 레이어 진단 요청 ({now_str})\n\n"
+        f"[Elasticsearch]\n"
+        f"- 가용: {es['available']}\n"
+        f"- JVM Heap: {es['jvm_heap_used_gb']}GB / {es['jvm_heap_max_gb']}GB ({es['jvm_heap_pct']}%)\n"
+        f"- 인덱싱: {es['indexing_rate']} docs/s, 저장소: {es['store_gb']}GB\n"
+        f"- 검색 QPS: {es['search_qps']}, 지연: {es['search_latency_ms']}ms\n"
+        f"- 스레드 거부: {es['thread_rejected']}\n\n"
+        f"[Redis]\n"
+        f"- 가용: {redis['available']}\n"
+        f"- 메모리: {redis['memory_used_gb']}GB / {redis['memory_max_gb']}GB ({redis['memory_pct']}%)\n"
+        f"- 연결: {redis['clients']}개, 히트율: {redis['hit_rate_pct']}%\n\n"
+        f"[Kafka]\n"
+        f"- 가용: {kafka['available']}\n"
+        f"- Consumer Lag: {kafka['consumer_lag']}, 처리량: {kafka['throughput_msg_per_min']}msg/min\n\n"
+        f"[MongoDB]\n"
+        f"- 가용: {mongo['available']}\n"
+        f"- 연결: {mongo['connections']}개\n"
+        f"- 읽기: {mongo['ops_read_per_sec']}/s, 쓰기: {mongo['ops_write_per_sec']}/s\n\n"
+        f"[Disk]\n"
+        f"- 전체: {disk['total_gb']}GB, 사용: {disk['used_gb']}GB ({disk['used_pct']}%)\n"
+        f"- 읽기: {disk['read_mbps']}MB/s, 쓰기: {disk['write_mbps']}MB/s\n\n"
+        "위 데이터 레이어 상태를 분석하여 지정된 JSON 형식으로 진단 결과를 반환하세요."
+    )
+
+    try:
+        result = await _call_bedrock_standard(prompt, _DIAGNOSE_SYSTEM_PROMPT)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"AI 분석 실패: {e}")
+
+    return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/log-diagnose")
+async def get_log_diagnose(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """최근 1시간 에러 로그 패턴을 AI 분석."""
+    await check_rate_limit(request, "admin_ai", user_id=current_user.id)
+
+    end_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
+    start_ns = end_ns - 3_600_000_000_000
+    error_logs: list[str] = []
+    try:
+        resp = await _HTTP_LOKI.get(
+            f"{LOKI_URL}/loki/api/v1/query_range",
+            params={
+                "query": '{job="loki.source.kubernetes.k8s_logs"} |= "ERROR"',
+                "limit": 50,
+                "start": start_ns,
+                "end": end_ns,
+                "direction": "backward",
+            },
+        )
+        data = resp.json()
+        if data.get("status") == "success":
+            for stream in data.get("data", {}).get("result", []):
+                labels = stream.get("stream", {})
+                ns = labels.get("namespace", "")
+                pod = labels.get("pod", labels.get("instance", ""))
+                for _, msg in stream.get("values", []):
+                    error_logs.append(f"[{ns}/{pod}] {msg[:120]}")
+    except Exception as e:
+        logger.warning("log-diagnose Loki 조회 실패: %s", e)
+
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    log_text = "\n".join(error_logs[:30]) if error_logs else "  (최근 1시간 에러 없음)"
+    prompt = (
+        f"로그 분석 진단 요청 ({now_str})\n\n"
+        f"[최근 1시간 에러 로그 ({len(error_logs)}건)]\n{log_text}\n\n"
+        "위 로그 패턴을 분석하여 반복 에러·이상 패턴을 파악하고, 지정된 JSON 형식으로 진단 결과를 반환하세요."
+    )
+
+    try:
+        result = await _call_bedrock_standard(prompt, _DIAGNOSE_SYSTEM_PROMPT)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"AI 분석 실패: {e}")
+
+    return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/trace-diagnose")
+async def get_trace_diagnose(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """최근 1시간 트레이스 에러·지연을 AI 분석."""
+    await check_rate_limit(request, "admin_ai", user_id=current_user.id)
+
+    end_s = int(datetime.now(timezone.utc).timestamp())
+    start_s = end_s - 3600
+    base_params = {"service.name": "tutum-backend", "start": start_s, "end": end_s}
+
+    error_lines: list[str] = []
+    slow_lines: list[str] = []
+    try:
+        err_resp = await _HTTP_MISC.get(
+            f"{TEMPO_URL}/api/search",
+            params={**base_params, "q": '{span.http.status_code >= 500}', "limit": 10},
+        )
+        if err_resp.status_code == 200:
+            for t in err_resp.json().get("traces", []):
+                error_lines.append(f"  {t.get('rootTraceName','-')} {t.get('durationMs',0)}ms [5xx]")
+    except Exception as e:
+        logger.warning("trace-diagnose error query 실패: %s", e)
+    try:
+        slow_resp = await _HTTP_MISC.get(
+            f"{TEMPO_URL}/api/search",
+            params={**base_params, "limit": 10, "minDuration": "200ms"},
+        )
+        if slow_resp.status_code == 200:
+            for t in slow_resp.json().get("traces", []):
+                slow_lines.append(f"  {t.get('rootTraceName','-')} {t.get('durationMs',0)}ms")
+    except Exception as e:
+        logger.warning("trace-diagnose slow query 실패: %s", e)
+
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    prompt = (
+        f"트레이스 분석 진단 요청 ({now_str})\n\n"
+        f"[5xx 에러 트레이스 ({len(error_lines)}건)]\n"
+        + ("\n".join(error_lines) if error_lines else "  (없음)") + "\n\n"
+        f"[느린 요청 트레이스 >=200ms ({len(slow_lines)}건)]\n"
+        + ("\n".join(slow_lines) if slow_lines else "  (없음)") + "\n\n"
+        "위 트레이스 데이터를 분석하여 에러율·지연 패턴을 파악하고, 지정된 JSON 형식으로 진단 결과를 반환하세요."
+    )
+
+    try:
+        result = await _call_bedrock_standard(prompt, _DIAGNOSE_SYSTEM_PROMPT)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"AI 분석 실패: {e}")
+
+    return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+@router.get("/backup-diagnose")
+async def get_backup_diagnose(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """백업 CronJob 상태를 AI 진단."""
+    await check_rate_limit(request, "admin_ai", user_id=current_user.id)
+
+    try:
+        data = await get_backup_status()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"백업 상태 수집 실패: {e}")
+
+    backups = data.get("backups", [])
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines = [f"백업 상태 진단 요청 ({now_str})\n"]
+    for b in backups:
+        lines.append(
+            f"[{b['name']}] ({b['cronjob']}, ns={b['namespace']})\n"
+            f"  상태: {b['status']}, 스케줄: {b['schedule']}\n"
+            f"  마지막 실행: {b['last_run_at']}, 마지막 성공: {b['last_success_at']}\n"
+            f"  에러: {b.get('last_error') or '없음'}"
+        )
+    prompt = "\n".join(lines) + "\n\n위 백업 상태를 분석하여 지정된 JSON 형식으로 진단 결과를 반환하세요."
+
+    try:
+        result = await _call_bedrock_standard(prompt, _DIAGNOSE_SYSTEM_PROMPT)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"AI 분석 실패: {e}")
+
+    return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
 # ─── 스토리지 (PVC) ────────────────────────────────────────────────────────────
 
 @router.get("/storage")
@@ -1239,6 +1537,22 @@ async def get_data_metrics():
 
     def to_mbps(v): return round(v / 1024 / 1024, 2) if v is not None else None
 
+    # IP → 노드 이름 매핑 (node_uname_info의 nodename 레이블 사용)
+    node_name_map: dict[str, str] = {}
+    try:
+        uname_data = await _mimir_query(
+            "/api/v1/query",
+            params={"query": "node_uname_info", **instant_params},
+        )
+        if uname_data:
+            for r in uname_data.get("data", {}).get("result", []):
+                inst = r["metric"].get("instance", "")
+                nodename = r["metric"].get("nodename", "")
+                if inst and nodename:
+                    node_name_map[inst.rsplit(":", 1)[0]] = nodename
+    except Exception as e:
+        logger.warning("node_uname_info query failed: %s", e)
+
     # Per-node disk usage (instance-level queries)
     disk_nodes: list = []
     try:
@@ -1260,13 +1574,15 @@ async def get_data_metrics():
                 avail = avail_by_inst.get(inst, 0)
                 used = total - avail
                 hostname = inst.rsplit(":", 1)[0]
+                node_name = node_name_map.get(hostname, hostname)
                 disk_nodes.append({
                     "hostname": hostname,
+                    "node_name": node_name,
                     "total_gb": round(total / 1024**3, 1),
                     "used_gb": round(used / 1024**3, 1),
                     "used_pct": round(used / total * 100, 1) if total > 0 else 0,
                 })
-            disk_nodes.sort(key=lambda x: x["hostname"])
+            disk_nodes.sort(key=lambda x: x["node_name"])
     except Exception as e:
         logger.warning("Per-node disk query failed: %s", e)
 

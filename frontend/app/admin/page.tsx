@@ -45,7 +45,7 @@ type DataMetrics = {
   redis:         { memory_used_gb: number|null; memory_max_gb: number|null; memory_pct: number|null; clients: number|null; hit_rate_pct: number|null; available: boolean };
   kafka:         { consumer_lag: number|null; throughput_msg_per_min: number|null; available: boolean };
   elasticsearch: { indexing_rate: number|null; jvm_heap_used_gb: number|null; jvm_heap_max_gb: number|null; jvm_heap_pct: number|null; search_qps: number|null; search_latency_ms: number|null; index_latency_ms: number|null; thread_rejected: number|null; store_gb: number|null; available: boolean };
-  disk:          { read_mbps: number|null; write_mbps: number|null; total_gb: number|null; avail_gb: number|null; used_gb: number|null; used_pct: number|null; available: boolean; nodes: {hostname: string; total_gb: number; used_gb: number; used_pct: number}[] };
+  disk:          { read_mbps: number|null; write_mbps: number|null; total_gb: number|null; avail_gb: number|null; used_gb: number|null; used_pct: number|null; available: boolean; nodes: {hostname: string; node_name: string; total_gb: number; used_gb: number; used_pct: number}[] };
   mongodb:       { connections: number|null; active_readers: number|null; active_writers: number|null; queued_readers: number|null; queued_writers: number|null; ops_read_per_sec: number|null; ops_write_per_sec: number|null; available: boolean };
 };
 type BackupItem = { name: string; cronjob: string; namespace: string; schedule: string|null; last_run_at: string|null; last_success_at: string|null; status: string; last_error: string|null };
@@ -216,6 +216,44 @@ function SevColors(sev: "OK" | "WARN" | "CRITICAL") {
     : { bg: "bg-emerald-500/10", border: "border-emerald-500/20", text: "text-emerald-400", dot: "bg-emerald-400" };
 }
 
+function DiagPanel({ diag, loading }: { diag: Diagnosis | null; loading: boolean }) {
+  if (loading) return <Card><Skel h="h-32" /></Card>;
+  if (!diag) return <Card className="text-center py-8 text-white/20 text-sm">AI 분석 버튼을 눌러주세요</Card>;
+  const c = SevColors(diag.severity);
+  return (
+    <Card className={`${c.bg} ${c.border}`}>
+      <div className="flex items-center gap-2 mb-3">
+        <span className={`w-2 h-2 rounded-full ${c.dot}`} />
+        <span className={`text-sm font-semibold ${c.text}`}>{diag.severity}</span>
+      </div>
+      <p className="text-white/80 text-sm mb-4">{diag.summary}</p>
+      {diag.issues.length > 0 && (
+        <div className="space-y-2 mb-4">
+          {diag.issues.map((iss, i) => (
+            <div key={i} className="bg-black/20 rounded-lg p-2">
+              <p className={`text-xs font-semibold ${iss.level === "ERROR" ? "text-red-400" : "text-amber-400"}`}>{iss.title}</p>
+              <p className="text-xs text-white/50 mt-0.5">{iss.detail}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {diag.recommendations.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs text-white/30 mb-1">권장 조치</p>
+          {diag.recommendations.map((r, i) => (
+            <div key={i} className="flex items-start gap-2 text-xs">
+              <span className={`mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                r.priority === "HIGH" ? "bg-red-500/20 text-red-400" : r.priority === "MEDIUM" ? "bg-amber-500/20 text-amber-400" : "bg-slate-500/20 text-slate-400"
+              }`}>{r.priority}</span>
+              <span className="text-white/60">{r.action}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 // ─── Clock (isolated to avoid full dashboard re-render every second) ──────────
 
 function Clock() {
@@ -230,7 +268,7 @@ function Clock() {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function AdminDashboard() {
-  type Tab = "overview" | "infra" | "pipeline" | "logs" | "traces" | "ai";
+  type Tab = "overview" | "infra" | "pipeline" | "data" | "backup" | "logs" | "traces";
   const [activeTab, setActiveTab] = useState<Tab>("overview");
 
   // Cluster state
@@ -262,6 +300,7 @@ export default function AdminDashboard() {
   const [loadingLogs,    setLoadingLogs]    = useState(true);
   const [loadingDiag,    setLoadingDiag]    = useState(false);
   const [loadingPDiag,   setLoadingPDiag]   = useState(false);
+  const [tabDiag,        setTabDiag]        = useState<Record<string, { result: Diagnosis | null; loading: boolean }>>({});
 
   // Pods tab filter
   const [nsFilter,  setNsFilter]  = useState("all");
@@ -289,6 +328,21 @@ export default function AdminDashboard() {
   const showError = (msg: string) => {
     setFetchError(msg);
     setTimeout(() => setFetchError(""), 4000);
+  };
+
+  const runTabDiag = async (tabId: string, endpoint: string) => {
+    setTabDiag(p => ({ ...p, [tabId]: { result: p[tabId]?.result ?? null, loading: true } }));
+    try {
+      const r = await fetch(`${API_BASE}/api/v1/admin/${endpoint}`);
+      if (r.ok) {
+        const d = await r.json();
+        setTabDiag(p => ({ ...p, [tabId]: { result: d.diagnosis, loading: false } }));
+      } else {
+        setTabDiag(p => ({ ...p, [tabId]: { result: p[tabId]?.result ?? null, loading: false } }));
+      }
+    } catch {
+      setTabDiag(p => ({ ...p, [tabId]: { result: p[tabId]?.result ?? null, loading: false } }));
+    }
   };
 
   const fetchNodes = useCallback(async () => {
@@ -458,9 +512,10 @@ export default function AdminDashboard() {
     { id: "overview",  label: "Overview",    icon: "◈" },
     { id: "infra",     label: "Infra",       icon: "⬡" },
     { id: "pipeline",  label: "Pipeline",    icon: "⇄" },
+    { id: "data",      label: "데이터",       icon: "◫" },
+    { id: "backup",    label: "백업",         icon: "▣" },
     { id: "logs",      label: "Logs",        icon: "≡" },
     { id: "traces",    label: "Traces",      icon: "∿" },
-    { id: "ai",        label: "AI 분석",     icon: "✦" },
   ];
 
   // ─── Render ────────────────────────────────────────────────────────────────
@@ -664,6 +719,24 @@ export default function AdminDashboard() {
                 </Card>
               ))}
             </div>
+
+            {/* AI 분석 */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <SectionTitle>AI 분석<Info tip={"Claude AI가 노드·파드·메트릭을 종합 분석\nSeverity: OK / WARN / CRITICAL\n이상 징후 감지 + 우선순위별 조치 권고사항 제공\n진단 실행 버튼 클릭 시 실시간 분석 (약 5~10초 소요)"} /></SectionTitle>
+                <button onClick={async () => {
+                  setLoadingDiag(true);
+                  try {
+                    const r = await fetch(`${API_BASE}/api/v1/admin/diagnose`);
+                    if (r.ok) { const d = await r.json(); setDiagnosis(d.diagnosis); }
+                  } catch {} finally { setLoadingDiag(false); }
+                }} disabled={loadingDiag}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-400/30 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 transition disabled:opacity-50">
+                  {loadingDiag ? "분석 중…" : "✦ AI 분석"}
+                </button>
+              </div>
+              <DiagPanel diag={diagnosis} loading={loadingDiag} />
+            </div>
           </div>
         )}
 
@@ -857,6 +930,18 @@ export default function AdminDashboard() {
                 </div>
               )}
             </Card>
+
+            {/* AI 분석 */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <SectionTitle>AI 분석<Info tip={"Claude AI가 노드·파드 상태를 종합 분석\nCPU/메모리·재시작·CrashLoop 등 이슈 탐지\n진단 실행 버튼 클릭 시 실시간 분석 (약 5~10초 소요)"} /></SectionTitle>
+                <button onClick={() => runTabDiag("infra", "infra-diagnose")} disabled={tabDiag["infra"]?.loading}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-400/30 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 transition disabled:opacity-50">
+                  {tabDiag["infra"]?.loading ? "분석 중…" : "✦ AI 분석"}
+                </button>
+              </div>
+              <DiagPanel diag={tabDiag["infra"]?.result ?? null} loading={tabDiag["infra"]?.loading ?? false} />
+            </div>
           </div>
         )}
 
@@ -942,18 +1027,165 @@ export default function AdminDashboard() {
               </div>
             ))}
 
-            {/* Data layer metrics */}
+            {/* 데이터 스토어 · 백업 요약 (상세: 데이터 / 백업 탭) */}
             <div>
-              <SectionTitle>데이터 레이어<Info tip={"MongoDB: 뉴스·자산·사용자 원본 데이터 저장\nElasticsearch: 뉴스 전문 검색 인덱스 (JVM Heap > 80% 시 성능 저하)\nRedis: API 캐시·세션 저장 (커넥션 수 급증 → 커넥션 풀 부족 의심)"} /></SectionTitle>
+              <SectionTitle>데이터 스토어 현황 <span className="normal-case tracking-normal text-white/20 font-normal">— 상세: 데이터 탭 · 백업 탭</span></SectionTitle>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* MongoDB */}
                 <Card>
-                  <p className="text-xs text-white/40 mb-3">🗄 MongoDB<Info tip={"뉴스·자산·사용자 원본 데이터 저장소\n전체 뉴스: clouddx.news 컬렉션 문서 수\n최근 1h 추가: published_at 기준 (파이프라인 지연 확인)\nI/O ops/sec 및 커넥션은 MongoDB I/O 카드 참고"} /></p>
-                  {loadingPipeline ? <Skel h="h-16" /> : (
+                  <p className="text-xs text-white/40 mb-2">🗄 MongoDB</p>
+                  {loadingPipeline ? <Skel h="h-8" /> : (
                     <div className="space-y-1">
                       <div className="flex justify-between text-sm">
                         <span className="text-white/50">전체 뉴스</span>
-                        <span className="font-mono font-bold" style={{ color: C.emerald }}>
+                        <span className="font-mono font-bold" style={{ color: C.emerald }}>{pipeline?.mongodb.available ? (pipeline.mongodb.news_total ?? "N/A").toLocaleString() : "N/A"}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">최근 1h 추가</span>
+                        <span className="font-mono" style={{ color: C.blue }}>{pipeline?.mongodb.available ? `+${pipeline.mongodb.news_last_1h}` : "N/A"}</span>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+                <Card>
+                  <p className="text-xs text-white/40 mb-2">🔍 Elasticsearch</p>
+                  {loadingPipeline ? <Skel h="h-8" /> : (
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">인덱스 문서</span>
+                        <span className="font-mono font-bold" style={{ color: C.violet }}>{pipeline?.elasticsearch.available ? (pipeline.elasticsearch.news_docs ?? "N/A").toLocaleString() : "N/A"}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">동기화율</span>
+                        <span className="font-mono" style={{ color: C.cyan }}>
+                          {pipeline?.elasticsearch.available && pipeline?.mongodb.available && pipeline.mongodb.news_total > 0
+                            ? `${Math.round(pipeline.elasticsearch.news_docs / pipeline.mongodb.news_total * 100)}%`
+                            : "N/A"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+                <Card>
+                  <p className="text-xs text-white/40 mb-2">📨 Kafka</p>
+                  {loadingDataM ? <Skel h="h-8" /> : !dataMetrics?.kafka.available ? (
+                    <p className="text-xs text-white/20">메트릭 없음</p>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">Consumer Lag</span>
+                        <span className="font-mono font-bold" style={{ color: (dataMetrics.kafka.consumer_lag ?? 0) > 100 ? C.amber : C.emerald }}>{dataMetrics.kafka.consumer_lag ?? "N/A"}</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">처리량/분</span>
+                        <span className="font-mono" style={{ color: C.blue }}><Val v={dataMetrics.kafka.throughput_msg_per_min} unit="" decimals={0} /></span>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+                <Card>
+                  <p className="text-xs text-white/40 mb-2">💾 백업 요약</p>
+                  {loadingBackup ? <Skel h="h-8" /> : !backupStatus ? (
+                    <p className="text-xs text-white/20">조회 실패</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {backupStatus.map(b => {
+                        const sc = b.status === "OK" ? C.emerald : b.status === "ERROR" ? C.red : b.status === "RUNNING" ? C.blue : C.amber;
+                        return (
+                          <div key={b.name} className="flex items-center justify-between text-xs">
+                            <span className="text-white/40 truncate">{b.name.replace("-backup", "")}</span>
+                            <span className="font-bold font-mono" style={{ color: sc }}>{b.status}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Card>
+              </div>
+            </div>
+
+            {/* AI 분석 */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <SectionTitle>파이프라인 AI 분석<Info tip={"워커 상태 + MongoDB·ES·Redis·Kafka 지표를 종합 분석\n데이터 흐름 이상 원인 및 해결 방안 제시\n진단 실행 버튼 클릭 시 실시간 분석 (약 5~10초 소요)"} /></SectionTitle>
+                <button onClick={async () => {
+                  setLoadingPDiag(true);
+                  try {
+                    const r = await fetch(`${API_BASE}/api/v1/admin/pipeline-diagnose`);
+                    if (r.ok) { const d = await r.json(); setPipelineDiag(d.diagnosis); }
+                  } catch {} finally { setLoadingPDiag(false); }
+                }} disabled={loadingPDiag}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-violet-400/30 bg-violet-400/10 text-violet-400 hover:bg-violet-400/20 transition disabled:opacity-50">
+                  {loadingPDiag ? "분석 중…" : "✦ AI 분석"}
+                </button>
+              </div>
+              {!pipelineDiag && !loadingPDiag && (
+                <Card className="text-center py-8 text-white/20 text-sm">AI 분석 버튼을 눌러주세요</Card>
+              )}
+              {loadingPDiag && <Card><Skel h="h-32" /></Card>}
+              {pipelineDiag && !loadingPDiag && (() => {
+                const c = SevColors(pipelineDiag.overall);
+                return (
+                  <div className="space-y-3">
+                    <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${c.bg} ${c.border}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
+                      <span className={`text-xs font-semibold ${c.text}`}>전체: {pipelineDiag.overall}</span>
+                    </div>
+                    {(pipelineDiag.components || []).map(comp => {
+                      const cc = comp.status === "ERROR" ? SevColors("CRITICAL") : comp.status === "WARN" ? SevColors("WARN") : SevColors("OK");
+                      const meta = WORKER_META[comp.name];
+                      return (
+                        <Card key={comp.name} className={`${cc.bg} ${cc.border}`}>
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <span>{meta?.icon ?? "⚙"}</span>
+                              <span className="text-sm font-semibold">{comp.label || comp.name}</span>
+                            </div>
+                            <StatusBadge status={comp.status} />
+                          </div>
+                          <p className="text-xs text-white/60 mb-2">{comp.summary}</p>
+                          {comp.issues.length > 0 && (
+                            <div className="space-y-1">
+                              {comp.issues.map((iss, i) => (
+                                <p key={i} className="text-xs text-amber-400">⚠ {iss.title}: {iss.detail}</p>
+                              ))}
+                            </div>
+                          )}
+                          {comp.actions.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {comp.actions.map((a, i) => (
+                                <p key={i} className="text-xs text-white/40">→ {a.action}</p>
+                              ))}
+                            </div>
+                          )}
+                        </Card>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════════════════════════════════
+            TAB: 데이터
+        ══════════════════════════════════════════════════════════════════ */}
+        {activeTab === "data" && (
+          <div className="space-y-6">
+
+            {/* 데이터 스토어 카드 */}
+            <div>
+              <SectionTitle>데이터 스토어</SectionTitle>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+                {/* MongoDB */}
+                <Card>
+                  <p className="text-xs text-white/40 mb-3">🗄 MongoDB<Info tip={"뉴스·자산·사용자 원본 데이터 저장소\n전체 뉴스: clouddx.news 컬렉션 문서 수\n최근 1h 추가: published_at 기준 (파이프라인 지연 확인)\n읽기/쓰기 ops/sec: serverStatus 델타값"} /></p>
+                  <div className="space-y-2">
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">전체 뉴스</span>
+                        <span className="font-mono font-bold text-lg" style={{ color: C.emerald }}>
                           {pipeline?.mongodb.available ? (pipeline.mongodb.news_total ?? "N/A").toLocaleString() : "N/A"}
                         </span>
                       </div>
@@ -964,256 +1196,286 @@ export default function AdminDashboard() {
                         </span>
                       </div>
                     </div>
-                  )}
+                    {dataMetrics?.mongodb.available && (
+                      <div className="pt-2 border-t border-white/[0.06] space-y-1">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-white/50">커넥션</span>
+                          <span className="font-mono font-bold" style={{ color: (dataMetrics.mongodb.connections ?? 0) > 100 ? C.amber : C.emerald }}>
+                            {dataMetrics.mongodb.connections ?? "N/A"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-white/50">읽기/쓰기 ops/s</span>
+                          <span className="font-mono text-xs" style={{ color: C.cyan }}>
+                            {dataMetrics.mongodb.ops_read_per_sec != null
+                              ? `${dataMetrics.mongodb.ops_read_per_sec.toFixed(1)} / ${(dataMetrics.mongodb.ops_write_per_sec ?? 0).toFixed(1)}`
+                              : <span className="text-white/20">-</span>}
+                          </span>
+                        </div>
+                        {((dataMetrics.mongodb.queued_readers ?? 0) + (dataMetrics.mongodb.queued_writers ?? 0)) > 0 && (
+                          <div className="flex justify-between text-sm">
+                            <span className="text-white/50">대기 (R/W)</span>
+                            <span className="font-mono font-bold" style={{ color: C.amber }}>
+                              {dataMetrics.mongodb.queued_readers ?? 0} / {dataMetrics.mongodb.queued_writers ?? 0}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </Card>
 
                 {/* Elasticsearch */}
                 <Card>
-                  <p className="text-xs text-white/40 mb-3">🔍 Elasticsearch<Info tip={"뉴스 전문 검색 인덱스 (news 인덱스)\nJVM Heap > 80% → GC 압박·성능 저하\n스토리지: 실제 인덱스 저장 용량 (node_exporter 디스크와 별개)\n검색 지연 > 100ms → 쿼리 튜닝 또는 샤드 재조정 필요\nRejected: write thread pool 과부하 → 인덱싱 유실 위험"} /></p>
-                  {loadingPipeline ? <Skel h="h-16" /> : (
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">인덱스 문서</span>
-                        <span className="font-mono font-bold" style={{ color: C.violet }}>
-                          {pipeline?.elasticsearch.available ? (pipeline.elasticsearch.news_docs ?? "N/A").toLocaleString() : "N/A"}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">동기화율</span>
-                        <span className="font-mono" style={{ color: C.cyan }}>
-                          {pipeline?.elasticsearch.available && pipeline?.mongodb.available && pipeline.mongodb.news_total > 0
-                            ? `${Math.round(pipeline.elasticsearch.news_docs / pipeline.mongodb.news_total * 100)}%`
-                            : "N/A"}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">JVM Heap</span>
-                        <span className="font-mono" style={{ color: (dataMetrics?.elasticsearch.jvm_heap_pct ?? 0) > 80 ? C.red : C.emerald }}>
-                          {dataMetrics?.elasticsearch.jvm_heap_pct != null
-                            ? <Val v={dataMetrics.elasticsearch.jvm_heap_pct} unit="%" decimals={0} />
-                            : dataMetrics?.elasticsearch.jvm_heap_used_gb != null
-                              ? <Val v={dataMetrics.elasticsearch.jvm_heap_used_gb} unit="GB" decimals={1} />
-                              : <span className="text-white/20">exporter 미배포</span>}
-                        </span>
-                      </div>
-                      {dataMetrics?.elasticsearch.search_qps != null && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-white/50">검색 QPS</span>
-                          <span className="font-mono" style={{ color: C.violet }}>
-                            <Val v={dataMetrics.elasticsearch.search_qps} unit="" decimals={2} />
-                          </span>
-                        </div>
-                      )}
-                      {dataMetrics?.elasticsearch.search_latency_ms != null && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-white/50">검색 지연</span>
-                          <span className="font-mono" style={{ color: dataMetrics.elasticsearch.search_latency_ms > 100 ? C.amber : C.emerald }}>
-                            <Val v={dataMetrics.elasticsearch.search_latency_ms} unit=" ms" decimals={1} />
-                          </span>
-                        </div>
-                      )}
-                      {dataMetrics?.elasticsearch.store_gb != null && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-white/50">스토리지</span>
-                          <span className="font-mono" style={{ color: C.cyan }}>
-                            <Val v={dataMetrics.elasticsearch.store_gb} unit=" GB" decimals={1} />
-                          </span>
-                        </div>
-                      )}
-                      {(dataMetrics?.elasticsearch.thread_rejected ?? 0) > 0 && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-white/50">Rejected</span>
-                          <span className="font-mono font-bold" style={{ color: C.red }}>
-                            {dataMetrics!.elasticsearch.thread_rejected}건
-                          </span>
-                        </div>
-                      )}
+                  <p className="text-xs text-white/40 mb-3">🔍 Elasticsearch<Info tip={"뉴스 전문 검색 인덱스 (news 인덱스)\nJVM Heap > 80% → GC 압박·성능 저하\n스토리지: 실제 인덱스 저장 용량\n검색 지연 > 100ms → 쿼리 튜닝 필요\nRejected: write thread pool 과부하"} /></p>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-white/50">인덱스 문서</span>
+                      <span className="font-mono font-bold text-lg" style={{ color: C.violet }}>
+                        {pipeline?.elasticsearch.available ? (pipeline.elasticsearch.news_docs ?? "N/A").toLocaleString() : "N/A"}
+                      </span>
                     </div>
-                  )}
+                    <div className="flex justify-between text-sm">
+                      <span className="text-white/50">동기화율</span>
+                      <span className="font-mono" style={{ color: C.cyan }}>
+                        {pipeline?.elasticsearch.available && pipeline?.mongodb.available && pipeline.mongodb.news_total > 0
+                          ? `${Math.round(pipeline.elasticsearch.news_docs / pipeline.mongodb.news_total * 100)}%`
+                          : "N/A"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-white/50">JVM Heap</span>
+                      <span className="font-mono" style={{ color: (dataMetrics?.elasticsearch.jvm_heap_pct ?? 0) > 80 ? C.red : C.emerald }}>
+                        {dataMetrics?.elasticsearch.jvm_heap_pct != null
+                          ? <>{dataMetrics.elasticsearch.jvm_heap_pct.toFixed(0)}%{dataMetrics.elasticsearch.jvm_heap_used_gb != null && <span className="text-white/30 text-xs ml-1">({dataMetrics.elasticsearch.jvm_heap_used_gb.toFixed(1)} / {dataMetrics.elasticsearch.jvm_heap_max_gb?.toFixed(1)} GB)</span>}</>
+                          : <span className="text-white/20">exporter 미배포</span>}
+                      </span>
+                    </div>
+                    {dataMetrics?.elasticsearch.store_gb != null && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">인덱스 용량</span>
+                        <span className="font-mono" style={{ color: C.cyan }}><Val v={dataMetrics.elasticsearch.store_gb} unit=" GB" decimals={1} /></span>
+                      </div>
+                    )}
+                    {dataMetrics?.elasticsearch.search_qps != null && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">검색 QPS</span>
+                        <span className="font-mono" style={{ color: C.violet }}><Val v={dataMetrics.elasticsearch.search_qps} unit="" decimals={2} /></span>
+                      </div>
+                    )}
+                    {dataMetrics?.elasticsearch.search_latency_ms != null && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">검색 지연</span>
+                        <span className="font-mono" style={{ color: dataMetrics.elasticsearch.search_latency_ms > 100 ? C.amber : C.emerald }}><Val v={dataMetrics.elasticsearch.search_latency_ms} unit=" ms" decimals={1} /></span>
+                      </div>
+                    )}
+                    {(dataMetrics?.elasticsearch.thread_rejected ?? 0) > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-white/50">Rejected</span>
+                        <span className="font-mono font-bold" style={{ color: C.red }}>{dataMetrics!.elasticsearch.thread_rejected}건</span>
+                      </div>
+                    )}
+                  </div>
                 </Card>
 
-                {/* Redis (from data-metrics) */}
-                <Card>
-                  <p className="text-xs text-white/40 mb-3">⚡ Redis<Info tip={"API 캐시·세션·OAuth 상태 저장소\nHit Rate < 80% → 캐시 미스 급증, DB 부하 증가\n커넥션 수 급증 → 커넥션 풀 부족 의심\n메모리 풀 시 eviction 발생 → 캐시 데이터 소실"} /></p>
-                  {loadingDataM ? <Skel h="h-16" /> : !dataMetrics?.redis.available ? (
-                    <p className="text-xs text-white/20">메트릭 없음</p>
-                  ) : (
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">커넥션</span>
-                        <span className="font-mono font-bold" style={{ color: (dataMetrics.redis.clients ?? 0) > 50 ? C.amber : C.emerald }}>
-                          {dataMetrics.redis.clients ?? "N/A"}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">Hit Rate</span>
-                        <span className="font-mono font-bold" style={{ color: C.emerald }}>
-                          <Val v={dataMetrics.redis.hit_rate_pct} unit="%" decimals={1} />
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">메모리</span>
-                        <span className="font-mono" style={{ color: C.blue }}>
-                          {dataMetrics.redis.memory_pct != null
-                            ? <Val v={dataMetrics.redis.memory_pct} unit="%" decimals={0} />
-                            : dataMetrics.redis.memory_used_gb != null
-                              ? <Val v={dataMetrics.redis.memory_used_gb} unit="GB" decimals={2} />
-                              : <span className="text-white/20">N/A</span>}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </Card>
-
-                {/* Kafka (from data-metrics) */}
-                <Card>
-                  <p className="text-xs text-white/40 mb-3">📨 Kafka<Info tip={"뉴스·시세 파이프라인 메시지 브로커\nConsumer Lag: 미처리 메시지 수 (lag > 500 → WARN)\n처리량/분: 모든 파티션 오프셋 증가율 합산\nlag 고착 + 처리량 0 → consumer 장애 (파이프라인 탭 확인)"} /></p>
-                  {loadingDataM ? <Skel h="h-16" /> : !dataMetrics?.kafka.available ? (
-                    <p className="text-xs text-white/20">메트릭 없음</p>
-                  ) : (
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">Consumer Lag</span>
-                        <span className="font-mono font-bold" style={{ color: (dataMetrics.kafka.consumer_lag ?? 0) > 100 ? C.amber : C.emerald }}>
-                          {dataMetrics.kafka.consumer_lag ?? "N/A"}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">처리량/분</span>
-                        <span className="font-mono" style={{ color: C.blue }}>
-                          <Val v={dataMetrics.kafka.throughput_msg_per_min} unit="" decimals={0} />
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </Card>
-
-                {/* Disk I/O + 용량 (node_exporter via Mimir) */}
-                <Card>
-                  <p className="text-xs text-white/40 mb-3">
-                    💾 Disk
-                    <Info tip={"클러스터 전체 노드 디스크 (node_exporter via Mimir)\n용량: 노드별 / (루트) 마운트포인트 기준\n사용률 70% WARN / 85% CRITICAL\nI/O: 모든 노드 합산 읽기/쓰기 처리량"} />
-                  </p>
-                  {loadingDataM ? <Skel h="h-24" /> : !dataMetrics?.disk?.available ? (
-                    <p className="text-xs text-white/20">node_exporter 미배포</p>
-                  ) : (
-                    <div className="space-y-1">
-                      {dataMetrics.disk.used_pct != null && (
-                        <>
-                          <div className="flex justify-between text-sm">
-                            <span className="text-white/50">사용률</span>
-                            <span className="font-mono font-bold" style={{ color: (dataMetrics.disk.used_pct ?? 0) >= 85 ? C.red : (dataMetrics.disk.used_pct ?? 0) >= 70 ? C.amber : C.emerald }}>
-                              <Val v={dataMetrics.disk.used_pct} unit="%" decimals={1} />
-                            </span>
-                          </div>
-                          <div className="flex justify-between text-sm">
-                            <span className="text-white/50">사용/전체</span>
-                            <span className="font-mono text-xs" style={{ color: C.blue }}>
-                              {dataMetrics.disk.used_gb?.toFixed(0)}G / {dataMetrics.disk.total_gb?.toFixed(0)}G
-                            </span>
-                          </div>
-                          <div className="w-full h-1 rounded-full bg-white/10 mt-1 mb-1">
-                            <div className="h-1 rounded-full transition-all" style={{ width: `${Math.min(dataMetrics.disk.used_pct ?? 0, 100)}%`, background: (dataMetrics.disk.used_pct ?? 0) >= 85 ? C.red : (dataMetrics.disk.used_pct ?? 0) >= 70 ? C.amber : C.emerald }} />
-                          </div>
-                        </>
-                      )}
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">읽기/쓰기</span>
-                        <span className="font-mono text-xs" style={{ color: C.cyan }}>
-                          {dataMetrics.disk.read_mbps != null && dataMetrics.disk.write_mbps != null
-                            ? `${dataMetrics.disk.read_mbps.toFixed(1)} / ${dataMetrics.disk.write_mbps.toFixed(1)} MB/s`
-                            : "N/A"}
-                        </span>
-                      </div>
-                      {dataMetrics.disk.nodes && dataMetrics.disk.nodes.length > 0 && (
-                        <div className="mt-2 pt-2 border-t border-white/10 space-y-1">
-                          {dataMetrics.disk.nodes.map(n => (
-                            <div key={n.hostname} className="flex items-center gap-2 text-xs">
-                              <span className="text-white/40 w-24 truncate shrink-0">{n.hostname}</span>
-                              <div className="flex-1 h-1 rounded-full bg-white/10">
-                                <div className="h-1 rounded-full" style={{ width: `${Math.min(n.used_pct, 100)}%`, background: n.used_pct >= 85 ? C.red : n.used_pct >= 70 ? C.amber : C.emerald }} />
-                              </div>
-                              <span className="font-mono text-white/60 w-10 text-right">{n.used_pct}%</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </Card>
-
-                {/* MongoDB I/O (serverStatus 직접 조회) */}
-                <Card>
-                  <p className="text-xs text-white/40 mb-3">
-                    🗄️ MongoDB I/O
-                    <Info tip={"MongoDB serverStatus 직접 조회 (30s 인터벌)\nops/sec: 이전 호출 대비 opcounters 델타값\n읽기: query + getmore 연산\n쓰기: insert + update + delete 연산\n대기: globalLock.currentQueue (급증 시 성능 저하)\n첫 호출 시 ops/sec는 N/A (델타 계산 불가)"} />
-                  </p>
-                  {loadingDataM ? <Skel h="h-16" /> : !dataMetrics?.mongodb?.available ? (
-                    <p className="text-xs text-white/20">메트릭 없음</p>
-                  ) : (
-                    <div className="space-y-1">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">커넥션</span>
-                        <span className="font-mono font-bold" style={{ color: (dataMetrics.mongodb.connections ?? 0) > 100 ? C.amber : C.emerald }}>
-                          {dataMetrics.mongodb.connections ?? "N/A"}
-                        </span>
-                      </div>
-                      <div className="flex justify-between text-sm">
-                        <span className="text-white/50">읽기/쓰기 ops/s</span>
-                        <span className="font-mono text-xs" style={{ color: C.cyan }}>
-                          {dataMetrics.mongodb.ops_read_per_sec != null
-                            ? `${dataMetrics.mongodb.ops_read_per_sec.toFixed(1)} / ${(dataMetrics.mongodb.ops_write_per_sec ?? 0).toFixed(1)}`
-                            : <span className="text-white/20">-</span>}
-                        </span>
-                      </div>
-                      {((dataMetrics.mongodb.queued_readers ?? 0) + (dataMetrics.mongodb.queued_writers ?? 0)) > 0 && (
+                {/* Redis + Kafka */}
+                <div className="space-y-4">
+                  <Card>
+                    <p className="text-xs text-white/40 mb-3">⚡ Redis<Info tip={"API 캐시·세션·OAuth 상태 저장소\nHit Rate < 80% → 캐시 미스 급증\n커넥션 급증 → 풀 부족 의심\n메모리 풀 시 eviction → 캐시 소실"} /></p>
+                    {loadingDataM ? <Skel h="h-12" /> : !dataMetrics?.redis.available ? (
+                      <p className="text-xs text-white/20">메트릭 없음</p>
+                    ) : (
+                      <div className="space-y-1">
                         <div className="flex justify-between text-sm">
-                          <span className="text-white/50">대기 (R/W)</span>
-                          <span className="font-mono font-bold" style={{ color: C.amber }}>
-                            {dataMetrics.mongodb.queued_readers ?? 0} / {dataMetrics.mongodb.queued_writers ?? 0}
+                          <span className="text-white/50">커넥션</span>
+                          <span className="font-mono font-bold" style={{ color: (dataMetrics.redis.clients ?? 0) > 50 ? C.amber : C.emerald }}>{dataMetrics.redis.clients ?? "N/A"}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-white/50">Hit Rate</span>
+                          <span className="font-mono" style={{ color: (dataMetrics.redis.hit_rate_pct ?? 0) < 80 ? C.amber : C.emerald }}><Val v={dataMetrics.redis.hit_rate_pct} unit="%" decimals={1} /></span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-white/50">메모리</span>
+                          <span className="font-mono text-xs" style={{ color: C.blue }}>
+                            {dataMetrics.redis.memory_used_gb != null && dataMetrics.redis.memory_max_gb != null
+                              ? `${dataMetrics.redis.memory_used_gb.toFixed(2)} / ${dataMetrics.redis.memory_max_gb.toFixed(1)} GB`
+                              : dataMetrics.redis.memory_pct != null
+                                ? <Val v={dataMetrics.redis.memory_pct} unit="%" decimals={0} />
+                                : <span className="text-white/20">N/A</span>}
                           </span>
                         </div>
-                      )}
-                    </div>
-                  )}
-                </Card>
+                      </div>
+                    )}
+                  </Card>
+                  <Card>
+                    <p className="text-xs text-white/40 mb-3">📨 Kafka<Info tip={"뉴스·시세 파이프라인 메시지 브로커\nConsumer Lag > 500 → WARN\n처리량/분: 파티션 오프셋 증가율 합산\nlag 고착 + 처리량 0 → consumer 장애"} /></p>
+                    {loadingDataM ? <Skel h="h-12" /> : !dataMetrics?.kafka.available ? (
+                      <p className="text-xs text-white/20">메트릭 없음</p>
+                    ) : (
+                      <div className="space-y-1">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-white/50">Consumer Lag</span>
+                          <span className="font-mono font-bold text-lg" style={{ color: (dataMetrics.kafka.consumer_lag ?? 0) > 500 ? C.red : (dataMetrics.kafka.consumer_lag ?? 0) > 100 ? C.amber : C.emerald }}>
+                            {dataMetrics.kafka.consumer_lag ?? "N/A"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-white/50">처리량/분</span>
+                          <span className="font-mono" style={{ color: C.blue }}><Val v={dataMetrics.kafka.throughput_msg_per_min} unit=" msg" decimals={0} /></span>
+                        </div>
+                      </div>
+                    )}
+                  </Card>
+                </div>
               </div>
             </div>
 
-            {/* Backup Health */}
+            {/* 노드별 디스크 사용량 */}
             <div>
-              <SectionTitle>백업 상태<Info tip={"CronJob 마지막 실행/성공 시각 및 상태\nOK: 마지막 Job 성공\nNO_RUN: 아직 실행된 적 없음\nERROR: 마지막 Job 실패\nRUNNING: 현재 실행 중"} /></SectionTitle>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {loadingBackup ? <Skel h="h-16" /> : !backupStatus ? (
-                  <p className="text-xs text-white/20">백업 상태 조회 실패 (RBAC 권한 확인)</p>
-                ) : backupStatus.map(b => {
-                  const statusColor = b.status === "OK" ? C.emerald : b.status === "ERROR" ? C.red : b.status === "RUNNING" ? C.blue : C.amber;
-                  const fmtTime = (s: string|null) => s ? new Date(s).toLocaleString("ko-KR", { month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" }) : "-";
-                  return (
-                    <Card key={b.name}>
-                      <div className="flex items-center justify-between mb-2">
-                        <p className="text-xs text-white/40">💾 {b.name}</p>
-                        <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={{ color: statusColor, background: `${statusColor}22` }}>
-                          {b.status}
-                        </span>
+              <SectionTitle>디스크 사용량 — 노드별 상세</SectionTitle>
+              {loadingDataM ? <Skel h="h-48" /> : !dataMetrics?.disk?.available ? (
+                <Card><p className="text-xs text-white/20">node_exporter 미배포 — 메트릭 없음</p></Card>
+              ) : (
+                <div className="space-y-4">
+                  {/* 요약 스탯 */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <Card className="text-center">
+                      <p className="text-xs text-white/40 mb-1">전체 사용률</p>
+                      <p className="text-2xl font-mono font-bold" style={{ color: (dataMetrics.disk.used_pct ?? 0) >= 85 ? C.red : (dataMetrics.disk.used_pct ?? 0) >= 70 ? C.amber : C.emerald }}>
+                        {dataMetrics.disk.used_pct?.toFixed(1) ?? "N/A"}<span className="text-sm text-white/40">%</span>
+                      </p>
+                    </Card>
+                    <Card className="text-center">
+                      <p className="text-xs text-white/40 mb-1">사용 / 전체</p>
+                      <p className="text-sm font-mono font-bold" style={{ color: C.blue }}>
+                        {dataMetrics.disk.used_gb?.toFixed(0) ?? "-"} <span className="text-white/30 font-normal">/ {dataMetrics.disk.total_gb?.toFixed(0) ?? "-"} GB</span>
+                      </p>
+                    </Card>
+                    <Card className="text-center">
+                      <p className="text-xs text-white/40 mb-1">읽기 I/O</p>
+                      <p className="text-sm font-mono font-bold" style={{ color: C.cyan }}>{dataMetrics.disk.read_mbps?.toFixed(1) ?? "-"} <span className="text-white/40 text-xs font-normal">MB/s</span></p>
+                    </Card>
+                    <Card className="text-center">
+                      <p className="text-xs text-white/40 mb-1">쓰기 I/O</p>
+                      <p className="text-sm font-mono font-bold" style={{ color: C.cyan }}>{dataMetrics.disk.write_mbps?.toFixed(1) ?? "-"} <span className="text-white/40 text-xs font-normal">MB/s</span></p>
+                    </Card>
+                  </div>
+
+                  {/* 노드별 바 */}
+                  {dataMetrics.disk.nodes.length > 0 && (
+                    <Card>
+                      <div className="space-y-4">
+                        {dataMetrics.disk.nodes.map(n => {
+                          const barColor = n.used_pct >= 85 ? C.red : n.used_pct >= 70 ? C.amber : C.emerald;
+                          return (
+                            <div key={n.hostname}>
+                              <div className="flex items-center justify-between mb-1.5">
+                                <span className="font-mono text-sm font-semibold text-white/80">{n.node_name || n.hostname}</span>
+                                <div className="flex items-center gap-4 text-xs">
+                                  <span className="text-white/40">{n.used_gb.toFixed(1)} / {n.total_gb.toFixed(1)} GB</span>
+                                  <span className="font-mono font-bold w-14 text-right" style={{ color: barColor }}>{n.used_pct.toFixed(1)}%</span>
+                                </div>
+                              </div>
+                              <div className="w-full h-2.5 rounded-full bg-white/10">
+                                <div className="h-2.5 rounded-full transition-all duration-500" style={{ width: `${Math.min(n.used_pct, 100)}%`, background: barColor }} />
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-xs">
-                          <span className="text-white/40">스케줄</span>
-                          <span className="font-mono text-white/60">{b.schedule ?? "-"}</span>
-                        </div>
-                        <div className="flex justify-between text-xs">
-                          <span className="text-white/40">마지막 성공</span>
-                          <span className="font-mono" style={{ color: b.last_success_at ? C.emerald : C.amber }}>{fmtTime(b.last_success_at)}</span>
-                        </div>
-                        {b.last_error && (
-                          <p className="text-xs mt-1 px-2 py-1 rounded bg-red-500/10 text-red-400 truncate" title={b.last_error}>{b.last_error}</p>
-                        )}
+                      <div className="mt-4 pt-3 border-t border-white/[0.06] flex gap-5 text-xs text-white/30">
+                        <span>■ <span style={{ color: C.emerald }}>정상</span> &lt;70%</span>
+                        <span>■ <span style={{ color: C.amber }}>주의</span> 70–85%</span>
+                        <span>■ <span style={{ color: C.red }}>위험</span> &gt;85%</span>
                       </div>
                     </Card>
-                  );
-                })}
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* AI 분석 */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <SectionTitle>AI 분석<Info tip={"Claude AI가 ES·Redis·Kafka·MongoDB·Disk 지표를 종합 분석\n저장소 이상·용량 부족·성능 저하 탐지\n진단 실행 버튼 클릭 시 실시간 분석 (약 5~10초 소요)"} /></SectionTitle>
+                <button onClick={() => runTabDiag("data", "data-diagnose")} disabled={tabDiag["data"]?.loading}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-400/30 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 transition disabled:opacity-50">
+                  {tabDiag["data"]?.loading ? "분석 중…" : "✦ AI 분석"}
+                </button>
               </div>
+              <DiagPanel diag={tabDiag["data"]?.result ?? null} loading={tabDiag["data"]?.loading ?? false} />
+            </div>
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════════════════════════════════
+            TAB: 백업
+        ══════════════════════════════════════════════════════════════════ */}
+        {activeTab === "backup" && (
+          <div className="space-y-6">
+            <div>
+              <SectionTitle>백업 상태<Info tip={"CronJob 마지막 실행/성공 시각 및 상태\nOK: 마지막 Job 성공\nNO_RUN: 아직 실행된 적 없음\nERROR: 마지막 Job 실패\nRUNNING: 현재 실행 중"} /></SectionTitle>
+              {loadingBackup ? (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4"><Skel h="h-48" /><Skel h="h-48" /><Skel h="h-48" /></div>
+              ) : !backupStatus ? (
+                <Card><p className="text-xs text-white/20">백업 상태 조회 실패 (RBAC 권한 확인)</p></Card>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {backupStatus.map(b => {
+                    const statusColor = b.status === "OK" ? C.emerald : b.status === "ERROR" ? C.red : b.status === "RUNNING" ? C.blue : C.amber;
+                    const fmtTime = (s: string|null) => s
+                      ? new Date(s).toLocaleString("ko-KR", { month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" })
+                      : "-";
+                    const icons: Record<string, string> = { "mongodb-backup": "🗄", "elasticsearch-backup": "🔍", "etcd-backup": "🔒" };
+                    return (
+                      <Card key={b.name}>
+                        <div className="flex items-center justify-between mb-4">
+                          <p className="text-sm font-medium text-white/70">{icons[b.name] ?? "💾"} {b.name}</p>
+                          <span className="text-sm font-bold px-3 py-1 rounded-full" style={{ color: statusColor, background: `${statusColor}22` }}>
+                            {b.status}
+                          </span>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-xs">
+                            <span className="text-white/40">네임스페이스</span>
+                            <span className="font-mono text-white/50">{b.namespace}</span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-white/40">스케줄</span>
+                            <span className="font-mono text-white/60">{b.schedule ?? "-"}</span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-white/40">마지막 실행</span>
+                            <span className="font-mono text-white/50">{fmtTime(b.last_run_at)}</span>
+                          </div>
+                          <div className="flex justify-between text-xs">
+                            <span className="text-white/40">마지막 성공</span>
+                            <span className="font-mono" style={{ color: b.last_success_at ? C.emerald : C.amber }}>{fmtTime(b.last_success_at)}</span>
+                          </div>
+                          {b.last_error && (
+                            <div className="mt-2 p-2.5 rounded-lg bg-red-500/10 border border-red-500/20">
+                              <p className="text-xs text-white/40 mb-1">오류 메시지</p>
+                              <p className="text-xs text-red-400 break-words leading-relaxed">{b.last_error}</p>
+                            </div>
+                          )}
+                        </div>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* AI 분석 */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <SectionTitle>AI 분석<Info tip={"Claude AI가 백업 CronJob 실행 결과를 분석\n실패 원인·재발 방지 조치·일정 검토 등\n진단 실행 버튼 클릭 시 실시간 분석 (약 5~10초 소요)"} /></SectionTitle>
+                <button onClick={() => runTabDiag("backup", "backup-diagnose")} disabled={tabDiag["backup"]?.loading}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-400/30 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 transition disabled:opacity-50">
+                  {tabDiag["backup"]?.loading ? "분석 중…" : "✦ AI 분석"}
+                </button>
+              </div>
+              <DiagPanel diag={tabDiag["backup"]?.result ?? null} loading={tabDiag["backup"]?.loading ?? false} />
             </div>
           </div>
         )}
@@ -1297,6 +1559,18 @@ export default function AdminDashboard() {
                 {filteredLogs.length}개 · 10초 자동갱신
               </div>
             </Card>
+
+            {/* AI 분석 */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <SectionTitle>AI 분석<Info tip={"Claude AI가 최근 1시간 에러 로그를 분석\n반복 에러 패턴·이상 징후 탐지 및 원인 분석\n진단 실행 버튼 클릭 시 실시간 분석 (약 5~10초 소요)"} /></SectionTitle>
+                <button onClick={() => runTabDiag("logs", "log-diagnose")} disabled={tabDiag["logs"]?.loading}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-400/30 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 transition disabled:opacity-50">
+                  {tabDiag["logs"]?.loading ? "분석 중…" : "✦ AI 분석"}
+                </button>
+              </div>
+              <DiagPanel diag={tabDiag["logs"]?.result ?? null} loading={tabDiag["logs"]?.loading ?? false} />
+            </div>
           </div>
         )}
 
@@ -1410,141 +1684,21 @@ export default function AdminDashboard() {
                   </Card>
                 </>
               )}
+
+              {/* AI 분석 */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <SectionTitle>AI 분석<Info tip={"Claude AI가 최근 1시간 에러 트레이스·지연 패턴을 분석\n5xx 에러 원인·느린 엔드포인트·병목 지점 탐지\n진단 실행 버튼 클릭 시 실시간 분석 (약 5~10초 소요)"} /></SectionTitle>
+                  <button onClick={() => runTabDiag("traces", "trace-diagnose")} disabled={tabDiag["traces"]?.loading}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-400/30 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 transition disabled:opacity-50">
+                    {tabDiag["traces"]?.loading ? "분석 중…" : "✦ AI 분석"}
+                  </button>
+                </div>
+                <DiagPanel diag={tabDiag["traces"]?.result ?? null} loading={tabDiag["traces"]?.loading ?? false} />
+              </div>
             </div>
           );
         })()}
-
-        {/* ══════════════════════════════════════════════════════════════════
-            TAB: AI
-        ══════════════════════════════════════════════════════════════════ */}
-        {activeTab === "ai" && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-              {/* Cluster diagnosis */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <SectionTitle>클러스터 AI 진단<Info tip={"Claude AI가 노드·파드·메트릭을 종합 분석\nSeverity: OK / WARN / CRITICAL\n이상 징후 감지 + 우선순위별 조치 권고사항 제공\n진단 실행 버튼 클릭 시 실시간 분석 (약 5~10초 소요)"} /></SectionTitle>
-                  <button onClick={async () => {
-                    setLoadingDiag(true);
-                    try {
-                      const r = await fetch(`${API_BASE}/api/v1/admin/diagnose`);
-                      if (r.ok) { const d = await r.json(); setDiagnosis(d.diagnosis); }
-                    } catch {} finally { setLoadingDiag(false); }
-                  }} disabled={loadingDiag}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-400/30 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 transition disabled:opacity-50">
-                    {loadingDiag ? "분석 중…" : "✦ 진단 실행"}
-                  </button>
-                </div>
-
-                {!diagnosis && !loadingDiag && (
-                  <Card className="text-center py-10 text-white/20 text-sm">진단 실행 버튼을 눌러주세요</Card>
-                )}
-                {loadingDiag && <Card><Skel h="h-40" /></Card>}
-                {diagnosis && !loadingDiag && (() => {
-                  const c = SevColors(diagnosis.severity);
-                  return (
-                    <Card className={`${c.bg} ${c.border}`}>
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className={`w-2 h-2 rounded-full ${c.dot}`} />
-                        <span className={`text-sm font-semibold ${c.text}`}>{diagnosis.severity}</span>
-                      </div>
-                      <p className="text-white/80 text-sm mb-4">{diagnosis.summary}</p>
-                      {diagnosis.issues.length > 0 && (
-                        <div className="space-y-2 mb-4">
-                          {diagnosis.issues.map((iss, i) => (
-                            <div key={i} className="bg-black/20 rounded-lg p-2">
-                              <p className={`text-xs font-semibold ${iss.level === "ERROR" ? "text-red-400" : "text-amber-400"}`}>{iss.title}</p>
-                              <p className="text-xs text-white/50 mt-0.5">{iss.detail}</p>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {diagnosis.recommendations.length > 0 && (
-                        <div className="space-y-1">
-                          <p className="text-xs text-white/30 mb-1">권장 조치</p>
-                          {diagnosis.recommendations.map((r, i) => (
-                            <div key={i} className="flex items-start gap-2 text-xs">
-                              <span className={`mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
-                                r.priority === "HIGH" ? "bg-red-500/20 text-red-400" : r.priority === "MEDIUM" ? "bg-amber-500/20 text-amber-400" : "bg-slate-500/20 text-slate-400"
-                              }`}>{r.priority}</span>
-                              <span className="text-white/60">{r.action}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </Card>
-                  );
-                })()}
-              </div>
-
-              {/* Pipeline diagnosis */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <SectionTitle>파이프라인 AI 진단<Info tip={"워커 상태 + MongoDB·ES·Redis 지표를 종합 분석\n데이터 흐름 이상 원인 및 해결 방안 제시\nKafka lag 급증·consumer 중단·DB 미응답 등 감지\n진단 실행 버튼 클릭 시 실시간 분석 (약 5~10초 소요)"} /></SectionTitle>
-                  <button onClick={async () => {
-                    setLoadingPDiag(true);
-                    try {
-                      const r = await fetch(`${API_BASE}/api/v1/admin/pipeline-diagnose`);
-                      if (r.ok) { const d = await r.json(); setPipelineDiag(d.diagnosis); }
-                    } catch {} finally { setLoadingPDiag(false); }
-                  }} disabled={loadingPDiag}
-                  className="px-3 py-1.5 rounded-lg text-xs font-medium border border-violet-400/30 bg-violet-400/10 text-violet-400 hover:bg-violet-400/20 transition disabled:opacity-50">
-                    {loadingPDiag ? "분석 중…" : "✦ 진단 실행"}
-                  </button>
-                </div>
-
-                {!pipelineDiag && !loadingPDiag && (
-                  <Card className="text-center py-10 text-white/20 text-sm">진단 실행 버튼을 눌러주세요</Card>
-                )}
-                {loadingPDiag && <Card><Skel h="h-60" /></Card>}
-                {pipelineDiag && !loadingPDiag && (() => {
-                  const c = SevColors(pipelineDiag.overall);
-                  return (
-                    <div className="space-y-3">
-                      <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${c.bg} ${c.border}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
-                        <span className={`text-xs font-semibold ${c.text}`}>전체: {pipelineDiag.overall}</span>
-                      </div>
-                      {(pipelineDiag.components || []).map(comp => {
-                        const cc = comp.status === "ERROR"
-                          ? SevColors("CRITICAL")
-                          : comp.status === "WARN" ? SevColors("WARN") : SevColors("OK");
-                        const meta = WORKER_META[comp.name];
-                        return (
-                          <Card key={comp.name} className={`${cc.bg} ${cc.border}`}>
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-2">
-                                <span>{meta?.icon ?? "⚙"}</span>
-                                <span className="text-sm font-semibold">{comp.label || comp.name}</span>
-                              </div>
-                              <StatusBadge status={comp.status} />
-                            </div>
-                            <p className="text-xs text-white/60 mb-2">{comp.summary}</p>
-                            {comp.issues.length > 0 && (
-                              <div className="space-y-1">
-                                {comp.issues.map((iss, i) => (
-                                  <p key={i} className="text-xs text-amber-400">⚠ {iss.title}: {iss.detail}</p>
-                                ))}
-                              </div>
-                            )}
-                            {comp.actions.length > 0 && (
-                              <div className="mt-2 space-y-1">
-                                {comp.actions.map((a, i) => (
-                                  <p key={i} className="text-xs text-white/40">→ {a.action}</p>
-                                ))}
-                              </div>
-                            )}
-                          </Card>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-          </div>
-        )}
 
       </main>
     </div>
