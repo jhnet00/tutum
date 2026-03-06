@@ -341,6 +341,7 @@ export default function AdminDashboard() {
   const [logPod,    setLogPod]    = useState("");
   const logRef = useRef<HTMLDivElement>(null);
   const [lastUpdated, setLastUpdated] = useState("");
+  const [metricsUpdatedAt, setMetricsUpdatedAt] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState("");
 
@@ -400,7 +401,7 @@ export default function AdminDashboard() {
       if (r.ok) setMetrics(await r.json());
       else showError("메트릭 조회 실패");
     } catch (e) { console.error("fetchMetrics", e); }
-    finally { setLoadingMetrics(false); }
+    finally { setLoadingMetrics(false); setMetricsUpdatedAt(new Date().toLocaleTimeString("ko-KR")); }
   }, []);
 
   const fetchStorage = useCallback(async () => {
@@ -674,6 +675,11 @@ export default function AdminDashboard() {
                 </Card>
               ))}
             </div>
+
+            {/* KPI timestamp */}
+            {metricsUpdatedAt && (
+              <p className="text-xs text-white/30 text-right -mt-4">기준 {metricsUpdatedAt} · 30초 자동갱신</p>
+            )}
 
             {/* RPS + Latency combined line chart */}
             <Card>
