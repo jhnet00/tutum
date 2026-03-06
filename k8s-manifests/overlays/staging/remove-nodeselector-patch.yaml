@@ -100,3 +100,6 @@ spec:
   template:
     spec:
       nodeSelector: null
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
