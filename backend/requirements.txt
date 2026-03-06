@@ -44,3 +44,4 @@ kubernetes>=29.0.0              # K8s in-cluster client (Admin API용)
 opentelemetry-sdk>=1.20.0
 opentelemetry-exporter-otlp-proto-grpc>=1.20.0
 opentelemetry-instrumentation-fastapi>=0.41b0
+
