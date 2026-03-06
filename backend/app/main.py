@@ -1,4 +1,5 @@
 ﻿"""FastAPI application entrypoint."""
+# noqa: build trigger
 
 import asyncio
 import logging
