@@ -24,7 +24,7 @@ spec:
         - name: gitlab-registry-secret
       containers:
         - name: backfill
-          image: registry.gitlab.com/tutum-project/tutum-app/backend/workers:latest
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/workers:latest
           imagePullPolicy: Always
           command: ["python", "-u", "backfill_es.py"]
           env:

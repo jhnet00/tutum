@@ -23,7 +23,7 @@ spec:
         workload: app
       containers:
         - name: frontend
-          image: registry.gitlab.com/tutum-project/tutum-app/backend/frontend:latest
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/frontend:latest
           ports:
             - containerPort: 3000
               name: http

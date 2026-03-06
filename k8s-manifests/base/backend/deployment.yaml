@@ -37,7 +37,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
       containers:
         - name: backend
-          image: registry.gitlab.com/tutum-project/tutum-app/backend:latest
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/backend:latest
           ports:
             - containerPort: 8000
               name: http

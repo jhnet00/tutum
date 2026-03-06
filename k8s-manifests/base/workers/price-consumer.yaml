@@ -23,7 +23,7 @@ spec:
         - name: gitlab-registry-secret
       containers:
         - name: price-consumer
-          image: registry.gitlab.com/tutum-project/tutum-app/backend/workers:latest
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/workers:latest
           command: ["python", "-u", "price_consumer.py"]
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
