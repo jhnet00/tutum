@@ -30,6 +30,8 @@ env/
 
 # Credentials
 docs/MariaDB.md
+*_accessKeys.csv
+*_accessKeys*.csv
 
 # Claude/Agentic info
 .claude/
