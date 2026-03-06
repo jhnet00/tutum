@@ -1,0 +1,102 @@
+# EKS Auto Mode용 nodeSelector 제거 패치
+# on-prem 노드 레이블(workload=app/data/consumer)이 EKS에 없으므로 제거
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: price-producer
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: price-consumer
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: news-producer
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: news-consumer
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elastic-consumer
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: email-worker
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ocr
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector: {}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: tutum-data
+spec:
+  template:
+    spec:
+      nodeSelector: {}
