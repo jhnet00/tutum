@@ -196,16 +196,78 @@ IAM 최소 권한 정책 (CI/CD용 — ECR push 전용):
 
 ### A-5. VPC 설계 확정
 
+> ✅ **이미 완료** — VPC, 서브넷, IGW, 라우트 테이블 생성 완료
+
 ```
-EKS VPC (단일):  10.0.0.0/16
-  - Public Subnet  10.0.1.0/24  (ALB, NAT GW)
-  - Private Subnet 10.0.2.0/24  (EKS worker nodes)
-  - Private Subnet 10.0.3.0/24  (Redis, Kafka StatefulSet)
-  - Private Subnet 10.0.4.0/24  (Monitoring EC2, ES EC2)
-  - EKS 내 pod: GitLab Runner (gitlab-runner ns), ArgoCD (argocd ns)
+EKS VPC (단일):  10.60.0.0/16
+  - Public Subnet A  10.60.1.0/24 (ap-northeast-2a) — ALB, NAT GW
+  - Public Subnet B  10.60.2.0/24 (ap-northeast-2b) — ALB (Multi-AZ)
+  - Private Subnet A 10.60.11.0/24 (ap-northeast-2a) — EKS Auto Mode 노드, Monitoring EC2
+  - Private Subnet B 10.60.12.0/24 (ap-northeast-2b) — EKS Auto Mode 노드
+  - EKS 내 pod: GitLab Runner (gitlab-runner ns), ArgoCD (argocd ns), ALB Controller (kube-system)
 온프레미스: 192.168.0.0/24 (참고용, 직접 연결 없음)
 외부:       211.46.52.153/32 (학원 MariaDB, NAT GW 경유 outbound)
+
+[라우팅]
+  Public Subnet RT:  0.0.0.0/0 → Internet Gateway
+  Private Subnet RT: 0.0.0.0/0 → NAT Gateway (10.60.1.x에 배치)
 ```
+
+---
+
+### A-6. NAT Gateway 생성 + Route Table 설정
+
+> ✅ **VPC 생성 시 함께 완료** — 아래 CLI로 현황 확인 후 없으면 생성
+
+```bash
+VPC_ID=$(aws ec2 describe-vpcs \
+  --filters "Name=cidr-block,Values=10.60.0.0/16" \
+  --query 'Vpcs[0].VpcId' --output text)
+
+# 현재 NAT GW 상태 확인
+aws ec2 describe-nat-gateways \
+  --filter "Name=vpc-id,Values=$VPC_ID" \
+  --query 'NatGateways[*].{ID:NatGatewayId,State:State,Subnet:SubnetId}' \
+  --output table
+
+# NAT GW가 없는 경우: EIP 할당 + NAT GW 생성 (Public Subnet A)
+PUBLIC_SUBNET_A=$(aws ec2 describe-subnets \
+  --filters "Name=vpc-id,Values=$VPC_ID" "Name=cidr-block,Values=10.60.1.0/24" \
+  --query 'Subnets[0].SubnetId' --output text)
+
+EIP_ALLOC=$(aws ec2 allocate-address --domain vpc \
+  --query 'AllocationId' --output text)
+
+NAT_GW_ID=$(aws ec2 create-nat-gateway \
+  --subnet-id "$PUBLIC_SUBNET_A" \
+  --allocation-id "$EIP_ALLOC" \
+  --tag-specifications 'ResourceType=natgateway,Tags=[{Key=Name,Value=tutum-nat-gw}]' \
+  --query 'NatGateway.NatGatewayId' --output text)
+
+# NAT GW 활성화 대기 (~60초)
+aws ec2 wait nat-gateway-available --nat-gateway-ids "$NAT_GW_ID"
+
+# Private Subnet Route Table에 기본 경로(0.0.0.0/0) → NAT GW 추가
+PRIVATE_SUBNET_A=$(aws ec2 describe-subnets \
+  --filters "Name=vpc-id,Values=$VPC_ID" "Name=cidr-block,Values=10.60.11.0/24" \
+  --query 'Subnets[0].SubnetId' --output text)
+
+PRIVATE_RT=$(aws ec2 describe-route-tables \
+  --filters "Name=vpc-id,Values=$VPC_ID" \
+            "Name=association.subnet-id,Values=$PRIVATE_SUBNET_A" \
+  --query 'RouteTables[0].RouteTableId' --output text)
+
+aws ec2 create-route \
+  --route-table-id "$PRIVATE_RT" \
+  --destination-cidr-block 0.0.0.0/0 \
+  --nat-gateway-id "$NAT_GW_ID"
+
+# 검증: EKS 노드(private subnet)에서 인터넷 outbound 가능한지 확인
+# kubectl run test-net --image=busybox --rm -it --restart=Never -- wget -qO- https://google.com
+```
+
+> **NAT GW 비용 절감**: B-10 VPC Endpoints(ECR DKR, Secrets Manager) 적용 시
+> ECR pull 트래픽이 NAT GW 우회 → NAT GW 비용 ~$15/월 절감 가능
 
 ---
 
@@ -443,7 +505,7 @@ cosign generate-key-pair
 verifyImages:
   - imageReferences:
       # 변경 전: "registry.gitlab.com/tutum-project/tutum-app/*"
-      - "${ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/tutum-app/*"
+      - "${ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/*"
     attestors:
       - entries:
           - keys:
@@ -733,39 +795,128 @@ aws events put-rule \
 
 ---
 
-### B-13. AWS Secrets Manager (K8s Secret 대체)
+### B-13. AWS Secrets Manager (K8s Secret 대체) + KMS CMK 암호화
 
 > ⬜ **미완료** — app-secrets, OAuth 키 등을 AWS 관리형 시크릿으로 전환
-> EKS IRSA + External Secrets Operator 또는 Secrets Store CSI Driver 사용
+> **순서**: KMS CMK 생성 → Secrets Manager 등록(CMK 지정) → External Secrets Operator → IRSA(kms:Decrypt 포함)
+>
+> Secrets Manager는 기본적으로 AWS 관리형 키(aws/secretsmanager)로 암호화되지만,
+> **CMK(Customer Managed Key)** 를 지정하면 키 회전·감사 로그 제어권을 직접 가진다.
+> CMK로 암호화된 시크릿을 읽으려면 IRSA에 `kms:Decrypt` 권한이 반드시 있어야 한다.
 
 ```bash
-# on-prem 시크릿 내용 추출 (cp-1에서)
+# 1. KMS CMK 생성 (Secrets Manager 전용)
+KMS_KEY_ARN=$(aws kms create-key \
+  --description "tutum Secrets Manager CMK" \
+  --key-usage ENCRYPT_DECRYPT \
+  --region ap-northeast-2 \
+  --query 'KeyMetadata.Arn' --output text)
+
+aws kms create-alias \
+  --alias-name alias/tutum-secrets-key \
+  --target-key-id "$KMS_KEY_ARN" \
+  --region ap-northeast-2
+
+echo "KMS CMK ARN: $KMS_KEY_ARN"
+
+# 2. on-prem 시크릿 내용 추출 (cp-1에서)
 kubectl get secret app-secrets -n tutum-app -o jsonpath='{.data}' | python3 -c "
 import json, sys, base64
 data = json.load(sys.stdin)
 for k, v in data.items():
     print(f'{k}={base64.b64decode(v).decode()}')
-"
+" > /tmp/app-secrets.env
 
-# AWS Secrets Manager에 등록
+# 3. AWS Secrets Manager에 등록 — KMS CMK로 암호화
 aws secretsmanager create-secret \
   --name tutum/app-secrets \
   --region ap-northeast-2 \
-  --secret-string file://app-secrets.env
+  --kms-key-id alias/tutum-secrets-key \
+  --secret-string file:///tmp/app-secrets.env
 
-# External Secrets Operator 설치
+# OAuth 키 등 개별 시크릿 (필요 시 분리)
+# aws secretsmanager create-secret --name tutum/oauth \
+#   --kms-key-id alias/tutum-secrets-key --secret-string '{"GOOGLE_CLIENT_ID":"..."}'
+
+# 4. External Secrets Operator 설치
 helm repo add external-secrets https://charts.external-secrets.io
 helm install external-secrets external-secrets/external-secrets \
   -n external-secrets --create-namespace
 
-# IRSA: backend SA에 secretsmanager:GetSecretValue 권한 부여
+# 5. IRSA 최소 권한 정책 (secretsmanager + kms:Decrypt)
+cat > /tmp/secrets-irsa-policy.json << 'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SecretsManagerAccess",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+      ],
+      "Resource": "arn:aws:secretsmanager:ap-northeast-2:903913341620:secret:tutum/*"
+    },
+    {
+      "Sid": "KMSDecrypt",
+      "Effect": "Allow",
+      "Action": ["kms:Decrypt", "kms:DescribeKey"],
+      "Resource": "$KMS_KEY_ARN"
+    }
+  ]
+}
+EOF
+
+POLICY_ARN=$(aws iam create-policy \
+  --policy-name tutum-secrets-irsa \
+  --policy-document file:///tmp/secrets-irsa-policy.json \
+  --query 'Policy.Arn' --output text)
+
 eksctl create iamserviceaccount \
   --name backend \
   --namespace tutum-app \
   --cluster tutum-stg-eks \
-  --attach-policy-arn arn:aws:iam::aws:policy/SecretsManagerReadWrite \
-  --approve
+  --attach-policy-arn "$POLICY_ARN" \
+  --approve --override-existing-serviceaccounts
+
+# 6. ExternalSecret 리소스 적용 (K8s Secret 자동 동기화)
+cat <<EOF | kubectl apply -f -
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: aws-secrets-store
+  namespace: tutum-app
+spec:
+  provider:
+    aws:
+      service: SecretsManager
+      region: ap-northeast-2
+      auth:
+        jwt:
+          serviceAccountRef:
+            name: backend
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: app-secrets
+  namespace: tutum-app
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: aws-secrets-store
+    kind: SecretStore
+  target:
+    name: app-secrets
+    creationPolicy: Owner
+  dataFrom:
+    - extract:
+        key: tutum/app-secrets
+EOF
 ```
+
+> **흐름 요약**: EKS Pod → IRSA(kms:Decrypt + secretsmanager:GetSecretValue) → Secrets Manager(VPC Endpoint 경유) → KMS CMK 복호화 → 시크릿 반환
+> External Secrets Operator가 주기적으로 동기화하여 K8s Secret으로 노출
 
 ---
 
@@ -792,6 +943,89 @@ kubectl run mariadb-test --image=mariadb:10.11 --rm -it --restart=Never -n tutum
 
 ---
 
+### B-15. EKS Security Group 구성 (Cluster SG · Node SG · Monitoring SG)
+
+> EKS Auto Mode는 클러스터 생성 시 2종류의 SG를 자동 생성한다.
+>
+> | SG | 역할 | 커스텀 규칙 필요 여부 |
+> |----|------|----------------------|
+> | **Cluster SG** | Control Plane ↔ Node API 통신 (AWS 자동 관리) | 최소 (기본 규칙 유지) |
+> | **Node SG** (Auto Mode = Cluster SG 공유) | Worker 노드 추가 트래픽 | MariaDB outbound(B-14), Monitoring push 허용 |
+> | **Monitoring EC2 SG** | EC2 접근 제어 | EKS VPC 내 수신, SSM outbound |
+
+```bash
+# Cluster SG 확인 (EKS Control Plane 자동 생성)
+CLUSTER_SG=$(aws eks describe-cluster \
+  --name tutum-stg-eks \
+  --region ap-northeast-2 \
+  --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' \
+  --output text)
+echo "Cluster SG: $CLUSTER_SG"
+
+# Node SG 조회 (Auto Mode에서는 Cluster SG와 동일할 수 있음)
+NODE_SG=$(aws ec2 describe-security-groups \
+  --filters "Name=tag:aws:eks:cluster-name,Values=tutum-stg-eks" \
+  --query 'SecurityGroups[0].GroupId' --output text)
+echo "Node SG: $NODE_SG"
+
+# ------------------------------------------------------------------
+# 1. EKS Node → Monitoring EC2 아웃바운드 (Alloy OTLP/Loki/Tempo push)
+#    Monitoring EC2가 EKS VPC private subnet에 있을 경우 SG 규칙 추가
+# ------------------------------------------------------------------
+aws ec2 authorize-security-group-egress \
+  --group-id "$CLUSTER_SG" \
+  --ip-permissions '[
+    {"IpProtocol":"tcp","FromPort":3100,"ToPort":3100,"IpRanges":[{"CidrIp":"10.60.0.0/16","Description":"Loki"}]},
+    {"IpProtocol":"tcp","FromPort":4317,"ToPort":4318,"IpRanges":[{"CidrIp":"10.60.0.0/16","Description":"Tempo OTLP"}]},
+    {"IpProtocol":"tcp","FromPort":9009,"ToPort":9009,"IpRanges":[{"CidrIp":"10.60.0.0/16","Description":"Mimir"}]}
+  ]'
+
+# ------------------------------------------------------------------
+# 2. Monitoring EC2 SG 생성 (EC2 배치 후 적용)
+# ------------------------------------------------------------------
+MONITORING_SG=$(aws ec2 create-security-group \
+  --group-name tutum-monitoring-sg \
+  --description "Monitoring EC2 (Grafana/Loki/Tempo/Mimir)" \
+  --vpc-id "$VPC_ID" \
+  --query 'GroupId' --output text)
+
+# Grafana UI: 팀원 PC에서만 접근 (또는 Cloudflare Tunnel 사용 시 불필요)
+# aws ec2 authorize-security-group-ingress --group-id "$MONITORING_SG" \
+#   --protocol tcp --port 3000 --cidr <TEAM_CIDR>
+
+# EKS 노드 → Monitoring EC2 inbound 허용 (Alloy가 push하는 포트)
+aws ec2 authorize-security-group-ingress \
+  --group-id "$MONITORING_SG" \
+  --ip-permissions '[
+    {"IpProtocol":"tcp","FromPort":3100,"ToPort":3100,"UserIdGroupPairs":[{"GroupId":"'"$CLUSTER_SG"'","Description":"Loki from EKS"}]},
+    {"IpProtocol":"tcp","FromPort":4317,"ToPort":4318,"UserIdGroupPairs":[{"GroupId":"'"$CLUSTER_SG"'","Description":"Tempo OTLP from EKS"}]},
+    {"IpProtocol":"tcp","FromPort":9009,"ToPort":9009,"UserIdGroupPairs":[{"GroupId":"'"$CLUSTER_SG"'","Description":"Mimir from EKS"}]}
+  ]'
+
+# SSM Agent outbound (Session Manager 사용 시 — EC2 → SSM 엔드포인트)
+aws ec2 authorize-security-group-egress \
+  --group-id "$MONITORING_SG" \
+  --ip-permissions '[
+    {"IpProtocol":"tcp","FromPort":443,"ToPort":443,"IpRanges":[{"CidrIp":"0.0.0.0/0","Description":"SSM/HTTPS outbound"}]}
+  ]'
+
+# ------------------------------------------------------------------
+# 3. 현재 Cluster SG inbound 규칙 확인 (ALB → 노드 포트 자동 추가 여부)
+# ------------------------------------------------------------------
+aws ec2 describe-security-group-rules \
+  --filters "Name=group-id,Values=$CLUSTER_SG" \
+  --query 'SecurityGroupRules[?IsEgress==`false`].{Port:FromPort,Source:CidrIpv4,SrcSG:ReferencedGroupInfo.GroupId,Desc:Description}' \
+  --output table
+```
+
+> **Internal LB(내부 로드밸런서)가 불필요한 이유**:
+> - 서비스 간 내부 통신은 **Istio Envoy Sidecar(mTLS)** 가 담당 → Internal ALB 중간 계층 불필요
+> - Monitoring EC2는 EKS VPC private subnet에 배치 → SG 규칙으로 직접 통신
+> - subnet 태그 `kubernetes.io/role/internal-elb=1` 은 향후 내부 서비스용 NLB 배치를 위한 예약 태그
+>   (현재는 사용하지 않음)
+
+---
+
 ## Phase C (D+8 ~ D+12): CI/CD 파이프라인 전환
 
 ### C-1. .gitlab-ci.yml — GitLab CR → ECR 전환
@@ -809,9 +1043,9 @@ before_script:
 # 변경 후 (ECR)
 variables:
   ECR_REGISTRY: "${AWS_ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com"
-  BACKEND_IMAGE:  "${ECR_REGISTRY}/tutum-app/backend"
-  FRONTEND_IMAGE: "${ECR_REGISTRY}/tutum-app/frontend"
-  WORKERS_IMAGE:  "${ECR_REGISTRY}/tutum-app/workers"
+  BACKEND_IMAGE:  "${ECR_REGISTRY}/tutum/backend"
+  FRONTEND_IMAGE: "${ECR_REGISTRY}/tutum/frontend"
+  WORKERS_IMAGE:  "${ECR_REGISTRY}/tutum/workers"
 
 .ecr_login: &ecr_login
   before_script:
@@ -844,11 +1078,11 @@ images:
   # 변경 전
   # - name: registry.gitlab.com/tutum-project/tutum-app/backend
   # 변경 후
-  - name: ${ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/tutum-app/backend
+  - name: ${ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/backend
     newTag: stg-${CI_COMMIT_SHORT_SHA}
-  - name: ${ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/tutum-app/frontend
+  - name: ${ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/frontend
     newTag: stg-${CI_COMMIT_SHORT_SHA}
-  - name: ${ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/tutum-app/workers
+  - name: ${ACCOUNT_ID}.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/workers
     newTag: stg-${CI_COMMIT_SHORT_SHA}
 ```
 
@@ -1064,22 +1298,118 @@ curl -X POST "${ES}/_snapshot/s3_migration/onprem_final/_restore"
 ### D-5. 모니터링 이전 — LGTM Docker Compose
 
 ```bash
-# 현재 monitoring VM (192.168.0.230)의 docker-compose.yml 복사
+# ──────────────────────────────────────────────
+# 1. on-prem monitoring VM에서 설정 파일 백업
+# ──────────────────────────────────────────────
 scp clouddx@192.168.0.230:/opt/monitoring/docker-compose.yml ./monitoring-backup.yml
 
-# EKS VPC private subnet에 모니터링 EC2 생성 (t3.medium)
-# docker-compose.yml에서 변경할 사항:
-# 1. Alloy remote_write endpoint 주소 → EC2 내부 IP (자기 자신)
-# 2. 외부 접근 SG 규칙: 3000(Grafana), 9009(Mimir) 포트
+# Grafana 대시보드 백업 (JSON Export)
+curl -s http://192.168.0.230:3000/api/search?type=dash-db \
+  -u admin:tutum2026! | jq -r '.[].uid' | while read uid; do
+  curl -s "http://192.168.0.230:3000/api/dashboards/uid/$uid" \
+    -u admin:tutum2026! > "./grafana-dashboards/${uid}.json"
+done
 
-# EKS Alloy DaemonSet 설정 업데이트
+# ──────────────────────────────────────────────
+# 2. EKS VPC private subnet에 모니터링 EC2 생성
+# ──────────────────────────────────────────────
+# AMI: Ubuntu 22.04 LTS (ap-northeast-2: ami-042e76978adeb8c48)
+# SG: B-15에서 생성한 tutum-monitoring-sg 사용
+
+MONITORING_SG=$(aws ec2 describe-security-groups \
+  --filters "Name=group-name,Values=tutum-monitoring-sg" \
+  --query 'SecurityGroups[0].GroupId' --output text)
+
+PRIVATE_SUBNET_A=$(aws ec2 describe-subnets \
+  --filters "Name=cidr-block,Values=10.60.11.0/24" \
+  --query 'Subnets[0].SubnetId' --output text)
+
+# SSM 사용을 위한 IAM Instance Profile 필요 (EC2 → SSM Session Manager)
+aws iam create-instance-profile --instance-profile-name tutum-monitoring-profile 2>/dev/null || true
+aws iam add-role-to-instance-profile \
+  --instance-profile-name tutum-monitoring-profile \
+  --role-name AmazonSSMManagedInstanceCore 2>/dev/null || true
+
+MONITORING_EC2=$(aws ec2 run-instances \
+  --image-id ami-042e76978adeb8c48 \
+  --instance-type t3.medium \
+  --subnet-id "$PRIVATE_SUBNET_A" \
+  --security-group-ids "$MONITORING_SG" \
+  --iam-instance-profile Name=tutum-monitoring-profile \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=tutum-monitoring}]' \
+  --query 'Instances[0].InstanceId' --output text)
+
+echo "Monitoring EC2: $MONITORING_EC2"
+aws ec2 wait instance-running --instance-ids "$MONITORING_EC2"
+
+# 내부 IP 확인 (10.60.11.x)
+MONITORING_IP=$(aws ec2 describe-instances \
+  --instance-ids "$MONITORING_EC2" \
+  --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)
+echo "Monitoring Private IP: $MONITORING_IP"
+
+# ──────────────────────────────────────────────
+# 3. EC2에 Docker + Docker Compose 설치 (SSM으로)
+# ──────────────────────────────────────────────
+aws ssm send-command \
+  --instance-ids "$MONITORING_EC2" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=[
+    "apt-get update -y",
+    "apt-get install -y docker.io docker-compose-v2",
+    "systemctl enable --now docker",
+    "mkdir -p /opt/monitoring"
+  ]' \
+  --region ap-northeast-2 \
+  --query 'Command.CommandId' --output text
+
+# ──────────────────────────────────────────────
+# 4. docker-compose.yml 전송 + 기동 (SSM File Transfer or S3 경유)
+# ──────────────────────────────────────────────
+# S3에 설정 파일 업로드 후 EC2에서 다운로드 (SCP 불가 — SSH 없음)
+aws s3 cp ./monitoring-backup.yml s3://tutum-prod-storage/monitoring/docker-compose.yml
+
+aws ssm send-command \
+  --instance-ids "$MONITORING_EC2" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=[
+    "aws s3 cp s3://tutum-prod-storage/monitoring/docker-compose.yml /opt/monitoring/docker-compose.yml",
+    "cd /opt/monitoring && docker compose up -d"
+  ]' \
+  --region ap-northeast-2
+
+# ──────────────────────────────────────────────
+# 5. Grafana 대시보드 복원
+# ──────────────────────────────────────────────
+# EC2 기동 후 포트포워딩으로 접근 (SSM Session Manager 터널링)
+aws ssm start-session \
+  --target "$MONITORING_EC2" \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters "portNumber=3000,localPortNumber=3000"
+# → localhost:3000 접근 후 대시보드 JSON Import
+
+# ──────────────────────────────────────────────
+# 6. EKS Alloy DaemonSet remote_write 주소 변경
+# ──────────────────────────────────────────────
 # k8s-manifests/base/monitoring/alloy-config.yaml
 # 기존: url = "http://192.168.0.230:9009/api/v1/push"
-# 변경: url = "http://10.0.4.x:9009/api/v1/push"  ← EKS VPC private subnet EC2 내부 IP
+# 변경: url = "http://10.60.11.x:9009/api/v1/push"  ← EKS VPC private subnet EC2 내부 IP (10.60.11.0/24)
+# (실제 MONITORING_IP 값으로 교체)
+sed -i "s|http://192.168.0.230|http://${MONITORING_IP}|g" \
+  k8s-manifests/base/monitoring/alloy-config.yaml
 
 kubectl apply -f k8s-manifests/base/monitoring/alloy-config.yaml
 kubectl rollout restart daemonset alloy -n monitoring
+
+# 확인: Alloy pod 재시작 후 Mimir에 메트릭 수신되는지 검증
+sleep 30
+kubectl logs -l app.kubernetes.io/name=alloy -n monitoring --tail=20 | grep -i "remote_write\|error"
 ```
+
+> **주의사항**:
+> - Monitoring EC2는 SSH(22) 비허용 — SSM Session Manager로만 접근
+> - Grafana 포트(3000)는 인터넷에 노출하지 않음 → SSM 포트포워딩으로 접근
+> - InfluxDB(k6 테스트용)도 동일 EC2에서 docker-compose로 기동
 
 ---
 
@@ -1228,6 +1558,7 @@ aws budgets create-budget \
 - [x] GitLab CI 변수: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `ECR_REGISTRY` 등록 완료
 - [ ] GitLab CI 변수: `COSIGN_PRIVATE_KEY` (File), `COSIGN_PUBLIC_KEY` 수동 업데이트 필요 (cp-2 `/tmp/cosign.key`, `/tmp/cosign.pub`)
 - [x] VPC 생성 완료 (10.60.0.0/16, public 10.60.1~2.0/24, private 10.60.11~12.0/24)
+- [x] NAT Gateway 생성 (public subnet 10.60.1.0/24) + private subnet route table 설정 완료
 - [x] ACM `*.tutum.my` 인증서 발급 신청 + Route53 DNS validation CNAME 등록 완료
 
 ### Phase B (EKS 구성) — 🔶 진행 중
@@ -1249,6 +1580,7 @@ aws budgets create-budget \
 - [ ] **ArgoCD GitLab 리포 연결** (`argocd repo add`)
 - [ ] **staging-app.yaml destination → `https://kubernetes.default.svc`**
 - [ ] Worker SG outbound 211.46.52.153:15432 명시적 허용 (현재 기본 SG로 통과 중)
+- [ ] **Cluster SG + Monitoring EC2 SG 생성** (B-15): EKS → Monitoring(Loki/Tempo/Mimir) outbound 허용
 
 **미완료 — 보안 강화 (B-9 ~ B-13)**
 - [ ] **NACL 생성** — public subnet (10.60.1/2.0/24): 80/443 inbound only

@@ -190,10 +190,17 @@ aws ec2 create-vpc-endpoint \
 - **IRSA (IAM Roles for Service Accounts)**: Pod별 최소 권한 IAM Role (S3, Bedrock, Textract 등)
 - **Session Manager**: ✅ EC2 SSH 키페어 없음. 포트 22 비허용. AWS SSM으로 쉘 접근. (완료)
 - **AWS Secrets Manager**: K8s `app-secrets` 를 Secrets Manager에서 관리
-  - EKS Pod → IRSA → Secrets Manager (VPC Endpoint 경유)
-  - `External Secrets Operator` 또는 CSI Driver로 K8s Secret 자동 동기화
-- **AWS KMS**: EBS 볼륨(PVC) + S3 버킷 암호화. CMK(Customer Managed Key) 사용
-  - ECR 이미지 암호화 (AES256 → KMS CMK로 업그레이드 가능)
+  - EKS Pod → IRSA → Secrets Manager (VPC Endpoint 경유) → KMS CMK 복호화 → 시크릿 반환
+  - `External Secrets Operator`로 K8s Secret 자동 동기화 (refreshInterval: 1h)
+  - **Secrets Manager 암호화 키**: KMS CMK(`alias/tutum-secrets-key`) 지정 → AWS 관리형 키 대신 CMK 사용
+    → IRSA에 `secretsmanager:GetSecretValue` + **`kms:Decrypt`** 두 권한 모두 필요
+- **AWS KMS**: EBS 볼륨(PVC) + S3 버킷 + Secrets Manager 암호화. CMK(Customer Managed Key) 사용
+  - `alias/tutum-secrets-key`: Secrets Manager 전용 CMK
+  - EBS PVC 암호화: EKS StorageClass에 `encrypted: true` + kmsKeyId 지정
+  - S3 버킷 SSE-KMS: `put-bucket-encryption --sse-algorithm aws:kms`
+- **AWS Certificate Manager (ACM)**: `*.tutum.my` 와일드카드 인증서
+  - ✅ 발급 신청 완료 (Route53 DNS validation CNAME 등록 완료)
+  - ⬜ ISSUED 후 ALB Ingress에 `alb.ingress.kubernetes.io/certificate-arn` annotation 추가
 - **ECR 이미지 스캔**: 푸시 시 자동 스캔 활성화 (✅ repo 생성 시 설정됨)
 
 ### 3-6. 위협 탐지 / 감사
@@ -206,7 +213,23 @@ aws ec2 create-vpc-endpoint \
   - OU 단위로 계정 분리 (dev / staging / prod OU)
   - SCP: 특정 리전(ap-northeast-2) 외 리소스 생성 차단, 루트 계정 콘솔 로그인 차단
 
-### 3-7. 이미지 보안 (공급망 보안)
+### 3-7. Security Groups / 내부 트래픽 설계
+
+> EKS Auto Mode는 클러스터 생성 시 Cluster SG를 자동 생성한다. 용도에 따라 SG를 분리한다.
+
+| SG | 생성 주체 | 역할 | 커스텀 규칙 |
+|----|----------|------|------------|
+| Cluster SG | EKS 자동 | Control Plane ↔ Node 통신 | EKS → Monitoring EC2 outbound 추가 |
+| Monitoring EC2 SG | 수동 생성 | Grafana/Loki/Mimir/Tempo EC2 접근 | EKS 노드에서 push 포트 inbound 허용 |
+| MariaDB SG (outbound) | 수동 추가 | EKS 노드 → 211.46.52.153:15432 | B-14 참고 |
+
+**Internal Load Balancer(내부 ALB/NLB)가 불필요한 이유**:
+- 서비스 간 내부 통신은 **Istio Envoy Sidecar(mTLS)** 가 담당 → 별도 Internal LB 계층 불필요
+- EKS 노드 → Monitoring EC2 통신은 SG 규칙 + private subnet 직접 경로로 처리
+- `kubernetes.io/role/internal-elb=1` subnet 태그는 향후 필요 시 내부 NLB 배치를 위한 예약 태그
+- **트래픽 흐름**: 인터넷 → ALB(External, public subnet) → Istio Envoy → Pod (내부 LB 없음)
+
+### 3-8. 이미지 보안 (공급망 보안)
 
 - **Alpine Linux 기반**: `python:3.11-alpine`, `node:20-alpine` — ✅ 완료
   → 이미지 크기 대폭 감소 (예: `python:3.11` ~900MB → `python:3.11-alpine` ~50MB)
