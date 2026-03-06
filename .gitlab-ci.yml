@@ -543,6 +543,7 @@ sign:frontend:
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
+    - job: build:frontend        # build가 skip되면 sign도 skip (필수 의존)
     - job: security:frontend
       optional: true
   rules:
@@ -561,6 +562,7 @@ sign:backend:
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
+    - job: build:backend         # build가 skip되면 sign도 skip (필수 의존)
     - job: security:backend
       optional: true
   rules:
@@ -580,6 +582,7 @@ sign:workers:
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
+    - job: build:workers         # build가 skip되면 sign도 skip (필수 의존)
     - job: security:workers
       optional: true
   rules:
