@@ -94,7 +94,8 @@ spec:
                   memory: 256Mi
           containers:
             # ── Step 2: gzip 압축 + MinIO 업로드 ─────────────────────────
-            # alpine: gzip/wget 내장, mc는 apk로 설치
+            # alpine: gzip/wget 내장, mc는 wget으로 직접 다운로드
+            # (apk add mc = Midnight Commander 텍스트 에디터, MinIO 클라이언트 아님)
             - name: etcd-backup
               image: alpine:3.19
               command:
@@ -106,7 +107,8 @@ spec:
                   SNAPSHOT="/shared/etcd-snapshot-${DATE}.db"
 
                   echo "[$(date)] mc 설치"
-                  apk add --no-cache mc --quiet
+                  wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O /usr/local/bin/mc
+                  chmod +x /usr/local/bin/mc
 
                   echo "[$(date)] gzip 압축: ${SNAPSHOT}"
                   gzip "${SNAPSHOT}"

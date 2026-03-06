@@ -5,12 +5,10 @@
 #
 # ES 위치: K8s StatefulSet (tutum-data/elasticsearch), 서비스명 elasticsearch:9200
 #
-# 사전 조건 (1회만):
-#   repository-s3 플러그인이 ES 이미지에 포함되어야 함.
-#   현재 공식 이미지(docker.elastic.co/elasticsearch:8.17.0)에는 미포함.
-#   방법 A: elasticsearch.yaml initContainer로 플러그인 설치 후 재시작
-#   방법 B: 커스텀 Dockerfile로 플러그인 포함 이미지 빌드 후 ECR/GitLab CR에 push
-#   → 현재는 방법 A(initContainer)를 elasticsearch.yaml에 추가하는 것을 권장
+# 사전 조건:
+#   ES 8.x: repository-s3는 내장 모듈 (플러그인 설치 불필요)
+#   MinIO 자격증명은 elasticsearch.yaml의 setup-keystore initContainer가
+#   ES keystore(s3.client.default.access_key/secret_key)에 주입 → 인라인 credentials 불필요
 #
 # MinIO 스냅샷 저장 경로: tutum-backups/elasticsearch/
 
@@ -56,6 +54,8 @@ spec:
 
                   if [ "$REPO_EXISTS" != "200" ]; then
                     echo "[$(date)] 스냅샷 저장소 등록: ${REPO_NAME}"
+                    # access_key/secret_key는 ES keystore에서 로드 (elasticsearch.yaml initContainer 참조)
+                    # ES 8.x: 인라인 credentials 불허 ("Setting [access_key] is insecure" 오류)
                     curl -sf -X PUT "${ES_URL}/_snapshot/${REPO_NAME}" \
                       -H 'Content-Type: application/json' \
                       -d "{
@@ -65,9 +65,7 @@ spec:
                           \"protocol\": \"http\",
                           \"bucket\": \"tutum-backups\",
                           \"base_path\": \"elasticsearch\",
-                          \"path_style_access\": true,
-                          \"access_key\": \"${MINIO_ROOT_USER}\",
-                          \"secret_key\": \"${MINIO_ROOT_PASSWORD}\"
+                          \"path_style_access\": true
                         }
                       }"
                     echo "[$(date)] 저장소 등록 완료"
@@ -117,16 +115,6 @@ spec:
                   value: "elasticsearch.tutum-data.svc.cluster.local"
                 - name: ELASTICSEARCH_PORT
                   value: "9200"
-                - name: MINIO_ROOT_USER
-                  valueFrom:
-                    secretKeyRef:
-                      name: minio-secret
-                      key: MINIO_ROOT_USER
-                - name: MINIO_ROOT_PASSWORD
-                  valueFrom:
-                    secretKeyRef:
-                      name: minio-secret
-                      key: MINIO_ROOT_PASSWORD
               resources:
                 requests:
                   cpu: 50m
