@@ -22,6 +22,16 @@ spec:
       template:
         spec:
           restartPolicy: OnFailure
+          initContainers:
+            - name: get-mc
+              image: minio/mc:latest
+              command: ['sh', '-c', 'cp /usr/bin/mc /shared/mc && chmod +x /shared/mc']
+              volumeMounts:
+                - name: shared-bin
+                  mountPath: /shared
+          volumes:
+            - name: shared-bin
+              emptyDir: {}
           containers:
             - name: mongodb-backup
               image: mongo:7.0
@@ -43,27 +53,22 @@ spec:
 
                   echo "[$(date)] mongodump 완료"
 
-                  # mc 설치 및 MinIO 업로드
-                  # mongo:7.0(ubuntu:jammy 기반)에 curl 미포함 → wget 사용
-                  apt-get install -y --no-install-recommends wget -qq 2>/dev/null || true
-                  wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O /usr/local/bin/mc
-                  chmod +x /usr/local/bin/mc
-
-                  mc alias set minio \
+                  MC=/shared/mc
+                  $MC alias set minio \
                     http://minio.tutum-storage.svc.cluster.local:9000 \
                     "${MINIO_ROOT_USER}" \
                     "${MINIO_ROOT_PASSWORD}"
 
                   # 버킷 생성 (없으면)
-                  mc mb --ignore-existing minio/tutum-backups
+                  $MC mb --ignore-existing minio/tutum-backups
 
                   # 업로드
-                  mc cp --recursive "${BACKUP_DIR}" "minio/tutum-backups/mongodb/${DATE}/"
+                  $MC cp --recursive "${BACKUP_DIR}" "minio/tutum-backups/mongodb/${DATE}/"
 
                   echo "[$(date)] MinIO 업로드 완료: tutum-backups/mongodb/${DATE}/"
 
                   # 30일 이전 백업 정리
-                  mc rm --recursive --force --older-than 720h \
+                  $MC rm --recursive --force --older-than 720h \
                     "minio/tutum-backups/mongodb/" 2>/dev/null || true
 
                   echo "[$(date)] MongoDB 백업 완료"
@@ -78,6 +83,9 @@ spec:
                     secretKeyRef:
                       name: minio-secret
                       key: MINIO_ROOT_PASSWORD
+              volumeMounts:
+                - name: shared-bin
+                  mountPath: /shared
               resources:
                 requests:
                   cpu: 100m
