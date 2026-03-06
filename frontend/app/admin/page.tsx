@@ -175,20 +175,34 @@ function Val({ v, unit = "", decimals = 1 }: { v: number | null | undefined; uni
   return <>{v.toFixed(decimals)}{unit && <span className="text-white/40 text-sm ml-0.5">{unit}</span>}</>;
 }
 
-// Sparkline using recharts (minimal, no axes)
-function Sparkline({ data, color, height = 32 }: { data: number[]; color: string; height?: number }) {
+// Sparkline using recharts (minimal, no axes) — hover tooltip 포함
+function Sparkline({ data, color, height = 48, unit = "", decimals = 1 }: { data: number[]; color: string; height?: number; unit?: string; decimals?: number }) {
   if (!data || data.length === 0) return <div style={{ height }} className="bg-white/5 rounded" />;
-  const pts = data.map((v, i) => ({ i, v }));
+  const len = data.length;
+  const pts = data.map((v, i) => ({ t: i === len - 1 ? "현재" : `-${(len - i - 1) * 5}m`, v }));
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <AreaChart data={pts} margin={{ top: 2, right: 0, left: 0, bottom: 2 }}>
+      <AreaChart data={pts} margin={{ top: 4, right: 0, left: 0, bottom: 2 }}>
         <defs>
           <linearGradient id={`sg-${color.replace("#", "")}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%"  stopColor={color} stopOpacity={0.3} />
+            <stop offset="5%"  stopColor={color} stopOpacity={0.35} />
             <stop offset="95%" stopColor={color} stopOpacity={0} />
           </linearGradient>
         </defs>
-        <Area type="monotone" dataKey="v" stroke={color} strokeWidth={1.5}
+        <Tooltip
+          cursor={{ stroke: color, strokeWidth: 1, strokeOpacity: 0.4 }}
+          content={({ active, payload }) => {
+            if (!active || !payload?.length) return null;
+            const pt = payload[0];
+            return (
+              <div className="bg-[#0d1224] border border-white/10 rounded-lg px-2.5 py-1.5 text-xs shadow-xl pointer-events-none">
+                <p className="text-white/40 mb-0.5">{pt.payload.t}</p>
+                <p className="font-mono font-bold" style={{ color }}>{Number(pt.value).toFixed(decimals)}{unit}</p>
+              </div>
+            );
+          }}
+        />
+        <Area type="monotone" dataKey="v" stroke={color} strokeWidth={1.8}
               fill={`url(#sg-${color.replace("#", "")})`} dot={false} isAnimationActive={false} />
       </AreaChart>
     </ResponsiveContainer>
@@ -609,7 +623,7 @@ export default function AdminDashboard() {
                       <p className="text-2xl font-bold font-mono mb-2" style={{ color: kpi.color }}>
                         <Val v={kpi.val} unit={kpi.unit} decimals={kpi.decimals} />
                       </p>
-                      <Sparkline data={kpi.data ?? []} color={kpi.color} />
+                      <Sparkline data={kpi.data ?? []} color={kpi.color} unit={kpi.unit} decimals={kpi.decimals} />
                     </>
                   )}
                 </Card>
