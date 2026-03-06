@@ -11,7 +11,7 @@ FROM python:3.11-alpine
 WORKDIR /app
 
 # 시스템 의존성 설치
-RUN apk add --no-cache gcc musl-dev python3-dev libffi-dev
+RUN apk add --no-cache gcc musl-dev python3-dev libffi-dev zlib-dev
 
 # Python 의존성 설치
 COPY requirements.txt .

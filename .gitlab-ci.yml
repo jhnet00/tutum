@@ -577,11 +577,13 @@ security:workers:
 sign:frontend:
   stage: sign
   tags: [k8s]
-  image: bitnami/cosign:latest
+  image: alpine:3.20
   variables:
     COSIGN_YES: "true"
   before_script:
-    - apt-get update -qq && apt-get install -y -qq awscli
+    - apk add --no-cache aws-cli curl
+    - curl -sLo /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
+    - chmod +x /usr/local/bin/cosign
     - TOKEN=$(aws ecr get-login-password --region ${AWS_DEFAULT_REGION})
     - mkdir -p ~/.docker
     - printf '{"auths":{"%s":{"auth":"%s"}}}' "${ECR_REGISTRY}" "$(printf 'AWS:%s' "$TOKEN" | base64 -w 0)" > ~/.docker/config.json
@@ -600,11 +602,13 @@ sign:frontend:
 sign:backend:
   stage: sign
   tags: [k8s]
-  image: bitnami/cosign:latest
+  image: alpine:3.20
   variables:
     COSIGN_YES: "true"
   before_script:
-    - apt-get update -qq && apt-get install -y -qq awscli
+    - apk add --no-cache aws-cli curl
+    - curl -sLo /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
+    - chmod +x /usr/local/bin/cosign
     - TOKEN=$(aws ecr get-login-password --region ${AWS_DEFAULT_REGION})
     - mkdir -p ~/.docker
     - printf '{"auths":{"%s":{"auth":"%s"}}}' "${ECR_REGISTRY}" "$(printf 'AWS:%s' "$TOKEN" | base64 -w 0)" > ~/.docker/config.json
@@ -624,11 +628,13 @@ sign:backend:
 sign:workers:
   stage: sign
   tags: [k8s]
-  image: bitnami/cosign:latest
+  image: alpine:3.20
   variables:
     COSIGN_YES: "true"
   before_script:
-    - apt-get update -qq && apt-get install -y -qq awscli
+    - apk add --no-cache aws-cli curl
+    - curl -sLo /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
+    - chmod +x /usr/local/bin/cosign
     - TOKEN=$(aws ecr get-login-password --region ${AWS_DEFAULT_REGION})
     - mkdir -p ~/.docker
     - printf '{"auths":{"%s":{"auth":"%s"}}}' "${ECR_REGISTRY}" "$(printf 'AWS:%s' "$TOKEN" | base64 -w 0)" > ~/.docker/config.json
