@@ -115,3 +115,10 @@ spec:
       nodeSelector: null
       securityContext:
         fsGroup: 1000
+      initContainers:
+        - name: remove-lost-found
+          image: busybox:1.35
+          command: ["sh", "-c", "rm -rf /var/lib/kafka/data/lost+found && echo 'Cleaned up lost+found'"]
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
