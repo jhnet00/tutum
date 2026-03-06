@@ -580,9 +580,11 @@ sign:frontend:
   image: bitnami/cosign:latest
   variables:
     COSIGN_YES: "true"
-    AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
-    AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
-    AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION}"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq awscli
+    - TOKEN=$(aws ecr get-login-password --region ${AWS_DEFAULT_REGION})
+    - mkdir -p ~/.docker
+    - printf '{"auths":{"%s":{"auth":"%s"}}}' "${ECR_REGISTRY}" "$(printf 'AWS:%s' "$TOKEN" | base64 -w 0)" > ~/.docker/config.json
   script:
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
@@ -601,9 +603,11 @@ sign:backend:
   image: bitnami/cosign:latest
   variables:
     COSIGN_YES: "true"
-    AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
-    AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
-    AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION}"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq awscli
+    - TOKEN=$(aws ecr get-login-password --region ${AWS_DEFAULT_REGION})
+    - mkdir -p ~/.docker
+    - printf '{"auths":{"%s":{"auth":"%s"}}}' "${ECR_REGISTRY}" "$(printf 'AWS:%s' "$TOKEN" | base64 -w 0)" > ~/.docker/config.json
   script:
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
@@ -623,9 +627,11 @@ sign:workers:
   image: bitnami/cosign:latest
   variables:
     COSIGN_YES: "true"
-    AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
-    AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
-    AWS_DEFAULT_REGION: "${AWS_DEFAULT_REGION}"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq awscli
+    - TOKEN=$(aws ecr get-login-password --region ${AWS_DEFAULT_REGION})
+    - mkdir -p ~/.docker
+    - printf '{"auths":{"%s":{"auth":"%s"}}}' "${ECR_REGISTRY}" "$(printf 'AWS:%s' "$TOKEN" | base64 -w 0)" > ~/.docker/config.json
   script:
     - cosign sign --key env://COSIGN_PRIVATE_KEY ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
