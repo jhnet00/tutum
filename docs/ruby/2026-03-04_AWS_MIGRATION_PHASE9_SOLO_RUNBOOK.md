@@ -202,7 +202,7 @@ aws ssm start-session --target <INSTANCE_ID> --region ap-northeast-2
 
 기준(문서 합의안):
 - EKS VPC: `10.60.0.0/16`
-- CI/CD VPC: `10.1.0.0/16`
+- CI/CD VPC: `10.61.0.0/16`
 - On-prem: `192.168.0.0/24`
 
 체크 항목:
