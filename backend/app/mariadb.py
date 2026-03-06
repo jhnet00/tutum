@@ -113,6 +113,8 @@ async def connect_to_mariadb():
             echo=False,
             pool_size=settings.MARIADB_POOL_SIZE,
             max_overflow=settings.MARIADB_MAX_OVERFLOW,
+            pool_pre_ping=True,
+            pool_recycle=3600,
         )
         async_session_factory = async_sessionmaker(
             engine, class_=AsyncSession, expire_on_commit=False
