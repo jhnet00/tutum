@@ -1,0 +1,39 @@
+# GitLab Runner — EKS (tutum-stg-eks)
+# runnerToken은 Helm install 시 --set runnerToken=<token> 으로 주입
+# chart: gitlab/gitlab-runner v0.86.0
+# ECR 미러 이미지 사용 (registry.gitlab.com EKS private subnet에서 접근 불가)
+
+gitlabUrl: "https://gitlab.com/"
+runnerToken: ""
+
+concurrent: 10
+checkInterval: 3
+logLevel: "info"
+
+image:
+  registry: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com
+  image: gitlab-org/gitlab-runner
+  tag: alpine-v18.9.0
+
+runners:
+  config: |
+    [[runners]]
+      executor = "kubernetes"
+      tags = "k8s"
+      [runners.kubernetes]
+        namespace = "gitlab-runner"
+        image = "ubuntu:22.04"
+        privileged = true
+        pull_policy = ["if-not-present", "always"]
+        helper_image = "903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/gitlab-org/gitlab-runner-helper:x86_64-v18.9.0"
+        [[runners.kubernetes.volumes.empty_dir]]
+          name = "docker-certs"
+          mount_path = "/certs/client"
+          medium = "Memory"
+
+rbac:
+  create: true
+
+# private subnet 노드에만 스케줄 (NAT GW 통해 gitlab.com 접근 가능)
+nodeSelector:
+  eks.amazonaws.com/nodeclass: private-only
