@@ -27,7 +27,6 @@ from .mariadb import (
 from .routers import (
     admin,
     assets,
-    auth,
     chat,
     market,
     news,
@@ -163,7 +162,6 @@ async def root():
     }
 
 
-app.include_router(auth.router, prefix=f"{settings.API_V1_PREFIX}/auth", tags=["auth"])
 app.include_router(
     assets.router, prefix=f"{settings.API_V1_PREFIX}/assets", tags=["assets"]
 )
