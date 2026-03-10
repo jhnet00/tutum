@@ -1415,6 +1415,171 @@ kubectl logs -l app.kubernetes.io/name=alloy -n monitoring --tail=20 | grep -i "
 
 ---
 
+### D-5. MariaDB → RDS 이전
+
+**배경**: 회원 정보(로그인/회원가입)가 학원 서버(211.46.52.153:15432)에 있음. 학원 서버 의존성 제거 목적.
+
+**목표 구성**:
+```
+EKS Backend → RDS MariaDB (10.60.11.x, private subnet, db.t3.micro)
+```
+
+```bash
+# 1. DB Subnet Group 생성 (private 서브넷 2개)
+aws rds create-db-subnet-group \
+  --db-subnet-group-name tutum-rds-subnet-group \
+  --db-subnet-group-description "Tutum RDS private subnets" \
+  --subnet-ids subnet-09e82b994d4378ed4 subnet-012b272e47d6e6a07
+
+# 2. RDS Security Group 생성 (EKS Cluster SG → 3306 inbound)
+# EKS Cluster SG ID 확인 후 inbound 3306 허용
+
+# 3. RDS MariaDB 생성
+aws rds create-db-instance \
+  --db-instance-identifier tutum-mariadb \
+  --db-instance-class db.t3.micro \
+  --engine mariadb \
+  --engine-version 10.11 \
+  --master-username tutum_admin \
+  --master-user-password <password> \
+  --db-name team3 \
+  --db-subnet-group-name tutum-rds-subnet-group \
+  --vpc-security-group-ids <rds-sg-id> \
+  --no-publicly-accessible \
+  --storage-type gp3 \
+  --allocated-storage 20 \
+  --backup-retention-period 7
+
+# 4. 학원 DB 덤프 (로컬에서 실행)
+mysqldump -h 211.46.52.153 -P 15432 -u team3 -pGkrtod1@ team3 > team3_dump.sql
+
+# 5. RDS로 복원 (EKS Pod 활용)
+kubectl run mysql-client --image=mariadb:10.11 --rm -it --restart=Never -n tutum-app \
+  -- mysql -h <rds-endpoint> -u tutum_admin -p<password> team3 < team3_dump.sql
+
+# 6. Backend 환경변수 변경
+# MARIADB_URL: jdbc:mariadb://211.46.52.153:15432/team3 → jdbc:mariadb://<rds-endpoint>:3306/team3
+```
+
+**체크리스트**:
+- [ ] RDS Subnet Group 생성
+- [ ] RDS Security Group 생성 (EKS → 3306)
+- [ ] RDS MariaDB (db.t3.micro) 생성
+- [ ] 학원 DB 덤프 + RDS 복원
+- [ ] backend-secret MARIADB_URL 업데이트
+- [ ] 연결 테스트 (로그인/회원가입 E2E)
+
+---
+
+### D-6. SonarQube 배포 (코드 품질 분석)
+
+**배치**: EC2 (private subnet, t3.medium 권장) 또는 EKS Pod
+**접근**: kubectl port-forward 또는 ALB Ingress (IP 제한)
+
+```bash
+# EC2 배포 시 docker-compose
+# /opt/sonarqube/docker-compose.yml
+version: '3'
+services:
+  sonarqube:
+    image: sonarqube:community
+    ports:
+      - "9000:9000"
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://db:5432/sonar
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: sonar
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_logs:/opt/sonarqube/logs
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonar
+      POSTGRES_DB: sonar
+    volumes:
+      - postgresql_data:/var/lib/postgresql/data
+volumes:
+  sonarqube_data:
+  sonarqube_logs:
+  postgresql_data:
+```
+
+**GitLab CI 연동** (`.gitlab-ci.yml`에 추가):
+```yaml
+sonarqube:
+  stage: test
+  image: sonarsource/sonar-scanner-cli:latest
+  script:
+    - sonar-scanner
+      -Dsonar.projectKey=tutum-backend
+      -Dsonar.host.url=$SONAR_URL
+      -Dsonar.login=$SONAR_TOKEN
+  only:
+    - develop
+    - main
+```
+
+**체크리스트**:
+- [ ] SonarQube EC2 생성 또는 기존 모니터링 EC2 활용 (메모리 여유 확인)
+- [ ] docker-compose로 SonarQube + PostgreSQL 기동
+- [ ] GitLab CI `SONAR_URL`, `SONAR_TOKEN` 변수 등록
+- [ ] `.gitlab-ci.yml` sonarqube stage 추가
+- [ ] 첫 분석 실행 + 결과 확인
+
+---
+
+### D-7. Kiali 설치 (Istio 서비스 메시 시각화)
+
+**배치**: EKS `istio-system` 네임스페이스
+**연동**: Mimir(메트릭), Tempo(트레이싱)
+
+```bash
+# Kiali Operator 설치
+helm repo add kiali https://kiali.org/helm-charts
+helm repo update
+
+helm install kiali-operator kiali/kiali-operator \
+  --namespace kiali-operator \
+  --create-namespace
+
+# Kiali CR 생성
+cat <<EOF | kubectl apply -f -
+apiVersion: kiali.io/v1alpha1
+kind: Kiali
+metadata:
+  name: kiali
+  namespace: istio-system
+spec:
+  auth:
+    strategy: anonymous
+  external_services:
+    prometheus:
+      url: http://10.60.11.95:9009/prometheus
+    tracing:
+      enabled: true
+      in_cluster_url: ""
+      url: http://10.60.11.95:16686
+      use_grpc: false
+    grafana:
+      enabled: true
+      in_cluster_url: ""
+      url: http://10.60.11.95:3000
+EOF
+
+# 접근 (로컬)
+kubectl port-forward svc/kiali 20001:20001 -n istio-system
+# → http://localhost:20001
+```
+
+**체크리스트**:
+- [ ] Kiali Operator Helm 설치
+- [ ] Kiali CR 생성 (Mimir/Tempo/Grafana 연동)
+- [ ] 서비스 메시 그래프 확인 (tutum-app 트래픽 흐름)
+
+---
+
 ## Phase E (D+19 ~ D+24): 트래픽 컷오버 + 온프레미스 철수
 
 ### E-1. DNS 컷오버 — 가비아 네임서버 → Route53 (핵심 컷오버 단계)
@@ -1622,18 +1787,21 @@ aws budgets create-budget \
 - [ ] Kyverno 이미지 서명 검증 통과 확인 (EKS 설치 후)
 - [ ] 스테이징 E2E 검증 (로그인, 시세, 뉴스, AI, OCR, MariaDB)
 
-### Phase D (데이터 이전) — ⬜ 미시작
+### Phase D (데이터 이전) — 🔶 진행 중
 - [ ] S3 버킷 생성 (`tutum-prod-storage`) + KMS 암호화 + 퍼블릭 액세스 차단
 - [ ] MinIO → S3 mc mirror 완료 (ocr-images, profile-images 버킷)
 - [ ] Backend MINIO_* env → S3 + IRSA 적용 (키 제거)
 - [ ] Redis: 빈 상태 시작 (캐시 데이터 손실 허용) or RDB 이전
 - [ ] Kafka: 빈 상태 시작 + 동일 토픽 생성 (메시지 재생산 가능)
 - [ ] Elasticsearch: EKS StatefulSet 배포 + S3 스냅샷 복원 (repository-s3 플러그인 필요)
-- [ ] 모니터링 EC2 생성 (EKS VPC private subnet, t3.medium)
-- [ ] Docker Compose LGTM 기동 (Grafana/Loki/Tempo/Mimir)
-- [ ] EKS Alloy DaemonSet remote_write → 모니터링 EC2 내부 IP
+- [x] 모니터링 EC2 생성 (EKS VPC private subnet, t3.medium) ← 완료 (10.60.11.95)
+- [x] Docker Compose LGTM 기동 (Grafana/Loki/Tempo/Mimir) ← 완료
+- [x] EKS Alloy DaemonSet remote_write → 모니터링 EC2 내부 IP ← 완료
 - [ ] S3 Lifecycle 설정 (ocr-images 180일 만료, backups/ Glacier 30일)
 - [ ] CloudTrail 활성화 + S3 저장 (90일 보관)
+- [ ] **[신규] MariaDB → RDS 이전** (D-5: 회원정보 학원 서버 의존성 제거)
+- [ ] **[신규] SonarQube 배포** (D-6: CI/CD 코드 품질 게이트)
+- [ ] **[신규] Kiali 설치** (D-7: Istio 서비스 메시 시각화, InfluxDB 대체=Mimir 사용)
 
 ### Phase E (컷오버) — ⬜ 미시작
 - [ ] ACM `*.tutum.my` 인증서 ISSUED 확인 후 ALB Ingress 생성
