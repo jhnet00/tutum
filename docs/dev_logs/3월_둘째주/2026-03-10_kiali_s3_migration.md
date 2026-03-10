@@ -1,17 +1,27 @@
-# 2026-03-10 D-7 Kiali + D-4 MinIO → S3 작업
+# 개발 로그 작업 요약 (2026-03-10)
 
-- 작업자: Kyungyoon Kim
-- 작업 시간: 2026-03-10 (세션 연속)
+## 1. 작업 요약
+
+- 작업 일시: 2026-03-10
+- 작업자: 김경윤
+- 브랜치: develop
+- 작업 목적:
+  - **D-4** MinIO → AWS S3 이전: EKS 환경에서 파일 저장소를 MinIO(레거시)에서 AWS S3(IRSA 방식)로 교체
+  - **D-7** Kiali 설치: Istio 서비스 메시 시각화 도구 배포 및 외부 접근 구성
 
 ---
 
-## 1. D-4 MinIO → S3 이전
+## 2. 상세 변경 사항
 
-### 배경
+### D-4 MinIO → AWS S3 이전
 
-EKS 클러스터는 신규 구성이라 MinIO에 데이터 없음 → 데이터 마이그레이션 생략, 코드/설정만 교체.
+#### 인프라
 
-### 인프라 작업
+| 항목 | 변경 내용 |
+|------|-----------|
+| S3 버킷 | `tutum-prod-storage` 생성 (ap-northeast-2, private) |
+| IAM 정책 | `tutum-backend-s3-policy` 생성 (`s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` on `tutum-prod-storage/*`) |
+| IRSA | 기존 `tutum-backend-secrets-role`에 `tutum-backend-s3-policy` 연결 (backend-sa 재사용) |
 
 ```bash
 # S3 버킷 생성
@@ -19,27 +29,22 @@ aws s3api create-bucket --bucket tutum-prod-storage \
   --region ap-northeast-2 \
   --create-bucket-configuration LocationConstraint=ap-northeast-2
 
-# IAM 정책 생성 및 기존 IRSA 역할에 연결
-aws iam create-policy --policy-name tutum-backend-s3-policy \
-  --policy-document '{ ... S3 tutum-prod-storage/* 접근 권한 ... }'
-
-# backend-sa는 이미 tutum-backend-secrets-role을 사용 중
-# 기존 역할에 직접 정책 연결
+# 정책 연결
 aws iam attach-role-policy \
   --role-name tutum-backend-secrets-role \
   --policy-arn arn:aws:iam::903913341620:policy/tutum-backend-s3-policy
 ```
 
-### 코드 변경
+#### 코드 변경
 
-**backend/app/config.py**: `S3_BUCKET_NAME: str = ""` 필드 추가 (비어 있으면 MinIO 사용)
+- **`backend/app/config.py`**: `S3_BUCKET_NAME: str = ""` 필드 추가
+  - 값이 비어 있으면 MinIO fallback, 값이 있으면 S3 모드로 동작
+- **`backend/app/services/storage.py`**: 전면 재작성
+  - `_USE_S3 = bool(settings.S3_BUCKET_NAME)` 스위치로 백엔드 선택
+  - S3 모드: boto3 + IRSA, 단일 버킷 `tutum-prod-storage`, prefix `ocr-images/` / `profile-images/`로 구분
+  - MinIO fallback: 기존 코드 유지 (하위 호환)
 
-**backend/app/services/storage.py**: 전체 재작성
-- `_USE_S3 = bool(settings.S3_BUCKET_NAME)` 스위치
-- S3 사용 시: boto3 + IRSA (단일 버킷 `tutum-prod-storage`, prefix로 ocr-images/profile-images/ 구분)
-- MinIO fallback: 기존 코드 유지
-
-### 환경변수 패치
+#### K8s 환경변수 패치
 
 ```bash
 kubectl patch secret backend-secret -n tutum-app --type=json -p='[
@@ -49,35 +54,31 @@ kubectl patch secret backend-secret -n tutum-app --type=json -p='[
 kubectl rollout restart deployment/backend -n tutum-app
 ```
 
-### 결과
-
-- S3 버킷: `tutum-prod-storage` (ap-northeast-2) ✅
-- IRSA: `tutum-backend-secrets-role` + `tutum-backend-s3-policy` ✅
-- Backend: S3 모드로 정상 기동 ✅
-
 ---
 
-## 2. D-7 Kiali 설치
+### D-7 Kiali 설치
 
-### 설치 방법
+#### ECR 이미지 미러링 (quay.io 접근 불가)
 
-Kiali Operator Helm chart → quay.io 이미지 ECR 미러링 패턴.
+EKS private subnet 노드는 quay.io에 직접 접근 불가 → monitoring EC2(10.60.11.95)에서 SSM으로 pull → ECR push.
 
-#### ECR 미러링 (quay.io 접근 불가)
-
-EKS private subnet 노드는 quay.io 접근 불가 → monitoring EC2(10.60.11.95) SSM 경유 ECR 미러링.
+| 이미지 | ECR 경로 |
+|--------|----------|
+| `quay.io/kiali/kiali-operator:v2.23.0` | `903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/kiali/kiali-operator:v2.23.0` |
+| `quay.io/kiali/kiali:v2.23.0` | `903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/kiali/kiali:v2.23.0` |
 
 ```bash
-# kiali-operator 미러링 (이전 세션)
-aws ecr create-repository --repository-name kiali/kiali-operator
-# SSM으로 monitoring EC2에서 pull → tag → push to ECR
-
-# kiali 미러링
-aws ecr create-repository --repository-name kiali/kiali
-# SSM으로 monitoring EC2에서 pull → push
+# 예시: kiali 미러링 (monitoring EC2 SSM 경유)
+aws ssm send-command --instance-ids i-0a8cab5d5ce1cac60 \
+  --parameters 'commands=[
+    "aws ecr get-login-password --region ap-northeast-2 | docker login ...",
+    "docker pull quay.io/kiali/kiali:v2.23.0",
+    "docker tag quay.io/kiali/kiali:v2.23.0 903913341620.dkr.ecr.../kiali/kiali:v2.23.0",
+    "docker push 903913341620.dkr.ecr.../kiali/kiali:v2.23.0"
+  ]'
 ```
 
-#### Kiali Operator 설치
+#### Kiali Operator 설치 (Helm)
 
 ```bash
 helm install kiali-operator kiali/kiali-operator \
@@ -86,14 +87,10 @@ helm install kiali-operator kiali/kiali-operator \
   --set image.tag=v2.23.0
 ```
 
-#### Kiali CR 적용
+#### Kiali CR
 
 ```yaml
-apiVersion: kiali.io/v1alpha1
-kind: Kiali
-metadata:
-  name: kiali
-  namespace: istio-system
+# k8s 오브젝트: kiali.io/v1alpha1 Kiali
 spec:
   auth:
     strategy: anonymous
@@ -114,60 +111,76 @@ spec:
   istio_namespace: istio-system
 ```
 
-Kiali pod `ImagePullBackOff` → kiali/kiali 이미지도 ECR 미러링 → `kubectl set image` 패치 → Running.
+#### ALB Ingress + Route53
 
-#### ALB Ingress (kiali.tutum.my)
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: kiali-ingress
-  namespace: istio-system
-  annotations:
-    alb.ingress.kubernetes.io/group.name: tutum-stg
-    alb.ingress.kubernetes.io/scheme: internet-facing
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:...:certificate/cc8731ed-...
-    alb.ingress.kubernetes.io/healthcheck-path: /kiali/
-spec:
-  ingressClassName: alb
-  rules:
-  - host: kiali.tutum.my
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: kiali
-            port:
-              number: 20001
-```
-
-**트러블슈팅**: ALB controller에 `SetRulePriorities` 권한 누락 → inline policy 추가.
-Kiali ALB 룰은 성공적으로 생성됨 (priority 재정렬만 실패, 기능에는 영향 없음).
-
-Route53: `kiali.tutum.my` A alias → ALB DNS.
-
-### 결과
-
-- `https://kiali.tutum.my/kiali/` → 200 OK ✅
-- auth.strategy: anonymous (별도 인증 불필요)
-- Grafana/Prometheus/Tempo 연동 설정 완료
+- **Ingress** `kiali-ingress` (namespace: istio-system): ALB group `tutum-stg`, host `kiali.tutum.my` → `kiali:20001`
+- **Route53**: `kiali.tutum.my` A alias → `k8s-tutumstg-522ae53287-1398442796.ap-northeast-2.elb.amazonaws.com`
 
 ---
 
-## 3. 현재 인프라 상태
+## 3. 작업 중 발생 이슈 및 대응
 
-| 항목 | 상태 |
-|------|------|
-| MinIO → S3 이전 | ✅ D-4 완료 |
-| Kiali | ✅ D-7 완료 (`kiali.tutum.my`) |
-| Terraform IaC | ⬜ D-8 미구현 |
-| SonarQube | ⬜ D-6 미구현 |
+### 이슈 1: Kiali operator `ImagePullBackOff`
 
-## 4. 다음 작업
+- **원인**: `quay.io/kiali/kiali-operator:v2.23.0` — private subnet에서 quay.io 타임아웃
+- **대응**: monitoring EC2(인터넷 접근 가능) SSM 경유로 ECR에 미러링 → `kubectl set image`로 ECR 이미지 사용
 
-1. **Terraform D-8**: S3 backend + 모듈 작성 + import 실행
-2. **SonarQube D-6**: monitoring EC2 docker-compose 추가
-3. **Kiali 연동 개선**: Prometheus 401 오류 확인 (Mimir auth 이슈 가능)
+### 이슈 2: Kiali pod `ImagePullBackOff`
+
+- **원인**: Kiali CR 적용 시 operator가 `quay.io/kiali/kiali:v2.23.0` 이미지로 pod 생성 → 동일 문제
+- **대응**: `kiali/kiali` 이미지도 ECR 미러링 → `kubectl set image deployment/kiali` 패치
+
+### 이슈 3: ALB controller `SetRulePriorities` 403
+
+- **원인**: `AWSLoadBalancerControllerIAMPolicy`에 `elasticloadbalancing:SetRulePriorities` 권한 누락
+- **대응**: inline policy `ALBSetRulePriorities` 추가 → Kiali ALB 룰 생성 성공
+
+### 이슈 4: ALB controller 재시작 실패
+
+- **원인**: `kubectl rollout restart` 시 새 pod가 ARM64 노드에 스케줄 → AMD64 ECR 미러 이미지와 아키텍처 불일치 → `exec format error`
+- **대응**: `kubectl rollout undo` 로 기존 pod 유지 (IAM 정책은 STS 세션 만료 후 자동 적용)
+
+### 이슈 5: IRSA 새 서비스어카운트 문제 (D-4)
+
+- **원인**: 신규 `backend` SA를 생성했으나 기존 deployment는 `backend-sa` 사용 중
+- **대응**: 신규 SA 삭제, 기존 `tutum-backend-secrets-role`에 S3 정책 직접 연결
+
+---
+
+## 4. 결과
+
+### 검증 항목 및 결과
+
+| 검증 항목 | 명령/엔드포인트 | 결과 |
+|-----------|----------------|------|
+| Kiali UI 접근 | `curl -o /dev/null -w "%{http_code}" https://kiali.tutum.my/kiali/` | 200 OK ✅ |
+| Kiali pod 상태 | `kubectl get pod -n istio-system -l app=kiali` | Running 1/1 ✅ |
+| Kiali 로그 정상 | `Server endpoint will start at [:20001/kiali]` | 정상 기동 ✅ |
+| S3 bucket 존재 | `aws s3 ls s3://tutum-prod-storage` | 조회 성공 ✅ |
+| backend 재기동 | `kubectl rollout status deployment/backend -n tutum-app` | SUCCESS ✅ |
+
+---
+
+## 5. 커밋 로그
+
+```bash
+git log --oneline --after="2026-03-09"
+```
+
+```
+07a3a83 Merge branch 'develop' of gitlab.com:tutum-project/.../backend into develop
+b2f3d73 docs: add dev log for D-4 MinIO→S3 and D-7 Kiali installation
+2b60b15 feat(storage): migrate to AWS S3 with IRSA, keep MinIO fallback
+077083c fix(lint): fix remaining E221 alignment spaces in price_producer
+96925eb fix(lint): fix E221 alignment spaces and E305 blank lines
+```
+
+---
+
+## 6. 후속 작업/리스크
+
+- **D-8 Terraform IaC**: 기존 수동 생성 AWS 인프라를 Terraform으로 import (S3 backend + 모듈 작성)
+- **D-6 SonarQube**: monitoring EC2 docker-compose에 추가 또는 EKS Pod 배포
+- **Kiali Prometheus 401**: Mimir(9009/prometheus) 인증 이슈 가능 → 로그 모니터링 필요
+- **ALB controller 이미지 정책**: ARM64/AMD64 혼합 클러스터 대응을 위해 multi-arch ECR 이미지 또는 nodeSelector 추가 검토
+- **Kiali 접근 제어**: 현재 `anonymous` auth → 내부 사용 한정이나 IP 화이트리스트 또는 basic auth 추가 검토
