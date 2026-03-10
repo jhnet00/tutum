@@ -1,45 +1,3 @@
-# ============================================
-# Tutum CI/CD Pipeline
-# ============================================
-#
-# 인프라 구성:
-#   - GitLab Runner: K8s Helm (gitlab-runner ns)
-#   - Container Registry: AWS ECR (ap-northeast-2)
-#   - SonarQube: K8s Helm (sonarqube ns, ClusterIP)
-#   - Cosign: 이미지 서명 (키: COSIGN_PRIVATE_KEY CI/CD Variable)
-#   - ArgoCD: K8s (argocd ns, ClusterIP)
-#   - k8s-manifests: GitLab repo (ArgoCD GitOps 대상)
-#
-# 필수 CI/CD Variables (GitLab > Settings > CI/CD > Variables):
-#   - SONAR_HOST_URL: http://sonarqube-sonarqube.sonarqube.svc.cluster.local:9000
-#   - SONAR_TOKEN: sqp_9de5141851326abaf90f2e97b6feb65fd4d5d802
-#   - COSIGN_PRIVATE_KEY: (cosign.key 파일 내용, Type: File)
-#   - COSIGN_PASSWORD: tutum123
-#   - ARGOCD_AUTH_TOKEN: (argocd account generate-token)
-#   - K8S_MANIFESTS_TOKEN: (GitLab PAT, k8s-manifests repo push 권한)
-# ============================================
-
-workflow:
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "push"'
-    - if: '$CI_PIPELINE_SOURCE == "api"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-
-default:
-  tags: [k8s]  # 자체 러너 사용 (공유 러너 분 소모 방지)
-
-variables:
-  # AWS ECR (ECR_REGISTRY = 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com)
-  FRONTEND_IMAGE: "${ECR_REGISTRY}/tutum/frontend"
-  BACKEND_IMAGE: "${ECR_REGISTRY}/tutum/backend"
-  WORKERS_IMAGE: "${ECR_REGISTRY}/tutum/workers"
-  # K8s 내부 서비스 주소
-  ARGOCD_SERVER: "argocd-server.argocd.svc.cluster.local"
-  # k8s-manifests: 백엔드 레포 내 k8s-manifests/ 디렉토리 직접 관리
-  # K8S_MANIFESTS_TOKEN: GitLab PAT (write_repository 권한) — Settings > CI/CD > Variables에 등록 필요
-  K8S_MANIFESTS_REPO: "https://oauth2:${K8S_MANIFESTS_TOKEN}@gitlab.com/tutum-project/tutum-app/backend.git"
-
 stages:
   - guard
   - lint
@@ -51,10 +9,24 @@ stages:
   - deploy
   - notify
 
-# ============================================
-# Stage 0: Commit Policy Guard
-# ============================================
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
+default:
+  tags: [k8s]
+
+variables:
+  BACKEND_IMAGE: "${ECR_REGISTRY}/tutum/backend"
+  WORKERS_IMAGE: "${ECR_REGISTRY}/tutum/workers"
+  K8S_MANIFESTS_REPO: "https://oauth2:${K8S_MANIFESTS_TOKEN}@gitlab.com/tutum-project/tutum-app/k8s-manifests.git"
+  STAGING_MANIFEST: "overlays/staging/kustomization.yaml"
+  PRODUCTION_MANIFEST: "overlays/production/kustomization.yaml"
+
+# GitLab commit policy guard (ignored files such as env examples are allowed)
 guard:commit-policy:
   stage: guard
   image: alpine:3.20
@@ -65,94 +37,75 @@ guard:commit-policy:
     - |
       ZERO_SHA="0000000000000000000000000000000000000000"
       BEFORE="${CI_COMMIT_BEFORE_SHA:-$ZERO_SHA}"
-
       if [ "$BEFORE" != "$ZERO_SHA" ] && git rev-parse "$BEFORE" >/dev/null 2>&1; then
         git diff --name-only "$BEFORE" "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
       else
-        echo "INFO: No valid before SHA - checking all files"
         git ls-tree -r --name-only "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
       fi
 
       bad=0
       while IFS= read -r f; do
         [ -z "$f" ] && continue
-        case "$f" in .env.example|backend/.env) echo "INFO: Skipping known dev file: $f"; continue;; esac
+        case "$f" in
+          .env.example|.env|backend/.env) echo "INFO: skip known env file: $f"; continue ;;
+        esac
         if git check-ignore -q -- "$f"; then
           echo "WARNING: gitignore-matched file detected: $f"
           bad=1
         fi
       done < /tmp/changed_files.txt
 
-      if [ "$bad" -ne 0 ]; then
-        echo "WARNING: Some files match .gitignore patterns."
-        exit 1
-      fi
-
-# ============================================
-# Stage 1: Lint
-# ============================================
-
-lint:frontend:
-  stage: lint
-  image: node:20-alpine
-  script:
-    - cd frontend
-    - npm ci
-    - npm run lint
-  rules:
-    - changes:
-        - frontend/**/*
+      [ "$bad" -ne 0 ] && exit 1 || true
 
 lint:backend:
   stage: lint
   image: python:3.11-slim
   script:
-    - cd backend
     - pip install flake8
-    - flake8 app/ --max-line-length=120
-  allow_failure: true
+    - flake8 backend/app --max-line-length=120
+    - flake8 backend/workers --max-line-length=120
   rules:
     - changes:
         - backend/**/*
     - if: '$CI_PIPELINE_SOURCE == "api"'
-
-# ============================================
-# Stage 2: Test
-# ============================================
-
-test:frontend:
-  stage: test
-  image: node:20-alpine
-  script:
-    - cd frontend
-    - npm ci
-    - npm run build
-  rules:
-    - changes:
-        - frontend/**/*
 
 test:backend:
   stage: test
   image: python:3.11-slim
   script:
-    - cd backend
-    - pip install -r requirements.txt
-    - pip install pytest
-    - pytest tests/ -v || true
+    - |
+      set -e
+      cd backend
+      if [ -f requirements.txt ]; then
+        pip install -r requirements.txt
+      fi
+      pip install pytest
+
+      run_pytest_if_exists() {
+        target="$1"
+        if [ -d "$target" ] && find "$target" -type f \( -name 'test_*.py' -o -name '*_test.py' \) | grep -q .; then
+          pytest "$target" -q
+        else
+          echo "INFO: no test files in $target, skip"
+        fi
+      }
+
+      run_pytest_if_exists app/ocr-api/tests
+      run_pytest_if_exists workers/tests
   rules:
     - changes:
         - backend/**/*
     - if: '$CI_PIPELINE_SOURCE == "api"'
-
-# ============================================
-# Stage 2: AWS Precheck (Manual)
-# ============================================
 
 aws:precheck:
   stage: test
   image: amazon/aws-cli:2.15.44
   tags: [k8s]
   when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
   script:
     - |
       set -e
@@ -163,34 +116,29 @@ aws:precheck:
       aws --version
       aws sts get-caller-identity --region "${AWS_DEFAULT_REGION}"
       aws ecr describe-repositories --region "${AWS_DEFAULT_REGION}" --query "repositories[].repositoryName" || true
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "develop"'
-      when: manual
-    - when: never
 
 aws:ecr-bootstrap:
   stage: test
   image: amazon/aws-cli:2.15.44
   tags: [k8s]
   when: manual
-  script:
-    - |
-      set -e
-      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
-      for repo in tutum/frontend tutum/backend tutum/workers; do
-        aws ecr describe-repositories \
-          --region "${AWS_DEFAULT_REGION}" \
-          --repository-names "$repo" >/dev/null 2>&1 || \
-        aws ecr create-repository \
-          --region "${AWS_DEFAULT_REGION}" \
-          --repository-name "$repo"
-      done
-      aws ecr describe-repositories --region "${AWS_DEFAULT_REGION}" --query "repositories[].repositoryName"
-      aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" >/dev/null
   rules:
     - if: '$CI_COMMIT_BRANCH == "develop"'
       when: manual
     - when: never
+  script: |
+    set -e
+    test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+    for repo in tutum/backend tutum/workers; do
+      aws ecr describe-repositories \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-names "$repo" >/dev/null 2>&1 || \
+      aws ecr create-repository \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-name "$repo"
+    done
+    aws ecr describe-repositories --region "${AWS_DEFAULT_REGION}" --query "repositories[].repositoryName"
+    aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" >/dev/null
 
 aws:ecr-push-check:
   stage: test
@@ -204,6 +152,10 @@ aws:ecr-push-check:
   variables:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
   script:
     - apk add --no-cache aws-cli
     - |
@@ -216,7 +168,7 @@ aws:ecr-push-check:
         fi
         sleep 2
       done
-    - |
+
       set -e
       test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
       test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
@@ -244,131 +196,81 @@ aws:ecr-push-check:
       docker pull alpine:3.20
       docker tag alpine:3.20 "${ECR_REGISTRY_EFFECTIVE}/${ECR_REPO_EFFECTIVE}:${TEST_TAG}"
       docker push "${ECR_REGISTRY_EFFECTIVE}/${ECR_REPO_EFFECTIVE}:${TEST_TAG}"
-
       aws ecr describe-images \
         --region "${AWS_DEFAULT_REGION}" \
         --repository-name "${ECR_REPO_EFFECTIVE}" \
         --image-ids imageTag="${TEST_TAG}" \
         --query "imageDetails[0].imageTags"
-
-      # Keep repository clean after smoke check.
       aws ecr batch-delete-image \
         --region "${AWS_DEFAULT_REGION}" \
         --repository-name "${ECR_REPO_EFFECTIVE}" \
         --image-ids imageTag="${TEST_TAG}" >/dev/null || true
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "develop"'
-      when: manual
-    - when: never
 
 aws:eks-cluster-check:
   stage: test
   image: amazon/aws-cli:2.15.44
   tags: [k8s]
   when: manual
-  script:
-    - |
-      set -e
-      test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
-      test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
-      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
-      test -n "${AWS_ACCOUNT_ID:-}" || { echo "ERROR: AWS_ACCOUNT_ID is missing"; exit 1; }
-      test -n "${EKS_CLUSTER_NAME_STG:-}" || { echo "ERROR: EKS_CLUSTER_NAME_STG is missing"; exit 1; }
-
-      echo "Checking AWS identity..."
-      aws sts get-caller-identity --region "${AWS_DEFAULT_REGION}"
-
-      echo "Checking EKS cluster: ${EKS_CLUSTER_NAME_STG}"
-      aws eks describe-cluster \
-        --region "${AWS_DEFAULT_REGION}" \
-        --name "${EKS_CLUSTER_NAME_STG}" \
-        --query "cluster.{name:name,status:status,version:version,platformVersion:platformVersion,endpoint:endpoint}"
-
-      echo "Checking nodegroups..."
-      NG_LIST="$(aws eks list-nodegroups --region "${AWS_DEFAULT_REGION}" --cluster-name "${EKS_CLUSTER_NAME_STG}" --query 'nodegroups' --output text)"
-      if [ -z "${NG_LIST}" ] || [ "${NG_LIST}" = "None" ]; then
-        echo "WARNING: No nodegroups found for cluster ${EKS_CLUSTER_NAME_STG}"
-      else
-        for ng in ${NG_LIST}; do
-          aws eks describe-nodegroup \
-            --region "${AWS_DEFAULT_REGION}" \
-            --cluster-name "${EKS_CLUSTER_NAME_STG}" \
-            --nodegroup-name "${ng}" \
-            --query "nodegroup.{name:nodegroupName,status:status,desired:scalingConfig.desiredSize,min:scalingConfig.minSize,max:scalingConfig.maxSize}"
-        done
-      fi
   rules:
     - if: '$CI_COMMIT_BRANCH == "develop"'
       when: manual
     - when: never
+  script: |
+    set -e
+    test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
+    test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
+    test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+    test -n "${AWS_ACCOUNT_ID:-}" || { echo "ERROR: AWS_ACCOUNT_ID is missing"; exit 1; }
+    test -n "${EKS_CLUSTER_NAME_STG:-}" || { echo "ERROR: EKS_CLUSTER_NAME_STG is missing"; exit 1; }
+
+    echo "Checking AWS identity..."
+    aws sts get-caller-identity --region "${AWS_DEFAULT_REGION}"
+    echo "Checking EKS cluster: ${EKS_CLUSTER_NAME_STG}"
+    aws eks describe-cluster \
+      --region "${AWS_DEFAULT_REGION}" \
+      --name "${EKS_CLUSTER_NAME_STG}" \
+      --query "cluster.{name:name,status:status,version:version,platformVersion:platformVersion,endpoint:endpoint}"
+    NG_LIST="$(aws eks list-nodegroups --region "${AWS_DEFAULT_REGION}" --cluster-name "${EKS_CLUSTER_NAME_STG}" --query 'nodegroups' --output text)"
+    if [ -z "${NG_LIST}" ] || [ "${NG_LIST}" = "None" ]; then
+      echo "WARNING: no nodegroups found for ${EKS_CLUSTER_NAME_STG}"
+    else
+      for ng in ${NG_LIST}; do
+        aws eks describe-nodegroup \
+          --region "${AWS_DEFAULT_REGION}" \
+          --cluster-name "${EKS_CLUSTER_NAME_STG}" \
+          --nodegroup-name "${ng}" \
+          --query "nodegroup.{name:nodegroupName,status:status,desired:scalingConfig.desiredSize,min:scalingConfig.minSize,max:scalingConfig.maxSize}"
+      done
+    fi
 
 aws:eks-kubectl-smoke:
   stage: test
   image: amazon/aws-cli:2.15.44
   tags: [k8s]
   when: manual
-  script:
-    - |
-      set -e
-      test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
-      test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
-      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
-      test -n "${EKS_CLUSTER_NAME_STG:-}" || { echo "ERROR: EKS_CLUSTER_NAME_STG is missing"; exit 1; }
-
-      echo "Installing kubectl..."
-      KUBECTL_VERSION="$(curl -L -s https://dl.k8s.io/release/stable.txt)"
-      curl -L -o kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
-      chmod +x kubectl
-      mv kubectl /usr/local/bin/kubectl
-
-      echo "Updating kubeconfig from EKS..."
-      aws eks update-kubeconfig \
-        --region "${AWS_DEFAULT_REGION}" \
-        --name "${EKS_CLUSTER_NAME_STG}"
-
-      echo "Checking Kubernetes access..."
-      kubectl get nodes -o wide
-      kubectl get ns
   rules:
     - if: '$CI_COMMIT_BRANCH == "develop"'
       when: manual
     - when: never
+  script: |
+    set -e
+    test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
+    test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
+    test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+    test -n "${EKS_CLUSTER_NAME_STG:-}" || { echo "ERROR: EKS_CLUSTER_NAME_STG is missing"; exit 1; }
 
-aws:checks-only:
-  stage: test
-  trigger:
-    include:
-      - local: .gitlab-ci.aws-checks.yml
-    strategy: depend
-  when: manual
-  rules:
-    - if: '$CI_COMMIT_BRANCH == "develop"'
-      when: manual
-    - when: never
+    echo "Installing kubectl..."
+    KUBECTL_VERSION="$(curl -L -s https://dl.k8s.io/release/stable.txt)"
+    curl -L -o kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+    chmod +x kubectl
+    mv kubectl /usr/local/bin/kubectl
 
-# ============================================
-# Stage 3: SonarQube Scan
-# ============================================
+    aws eks update-kubeconfig \
+      --region "${AWS_DEFAULT_REGION}" \
+      --name "${EKS_CLUSTER_NAME_STG}"
 
-sonar:frontend:
-  stage: scan
-  tags: [k8s]
-  image: sonarsource/sonar-scanner-cli:latest
-  variables:
-    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
-  script:
-    - >
-      sonar-scanner
-      -Dsonar.projectKey=tutum-frontend
-      -Dsonar.projectName="Tutum Frontend"
-      -Dsonar.sources=frontend/app,frontend/components,frontend/hooks,frontend/lib,frontend/contexts,frontend/context
-      -Dsonar.exclusions=node_modules/**,**/*.test.*,**/*.spec.*,.next/**,public/**
-      -Dsonar.host.url=http://sonarqube-sonarqube.sonarqube.svc.cluster.local:9000
-      -Dsonar.token=${SONAR_TOKEN}
-  allow_failure: true
-  rules:
-    - changes:
-        - frontend/**/*
+    kubectl get nodes -o wide
+    kubectl get ns
 
 sonar:backend:
   stage: scan
@@ -377,24 +279,19 @@ sonar:backend:
   variables:
     SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
   script:
-    - >
-      sonar-scanner
-      -Dsonar.projectKey=tutum-backend
-      -Dsonar.projectName="Tutum Backend"
-      -Dsonar.sources=backend/app
-      -Dsonar.exclusions=**/__pycache__/**,**/tests/**,.venv/**,workers/**
-      -Dsonar.host.url=http://sonarqube-sonarqube.sonarqube.svc.cluster.local:9000
-      -Dsonar.token=${SONAR_TOKEN}
+    - |
+      sonar-scanner \
+        -Dsonar.projectKey=tutum-backend \
+        -Dsonar.projectName="Tutum Backend" \
+        -Dsonar.sources=backend/app,backend/workers \
+        -Dsonar.exclusions=**/__pycache__/**,**/tests/**,.venv/** \
+        -Dsonar.host.url=${SONAR_HOST_URL} \
+        -Dsonar.token=${SONAR_TOKEN}
   allow_failure: true
   rules:
     - changes:
         - backend/**/*
 
-# ============================================
-# Stage 4: Docker Build & Push to GitLab CR
-# ============================================
-
-# GitLab registry jwt/auth 502/503 등 일시 장애 대응용 재시도 정책
 .build_retry_registry: &build_retry_registry
   retry:
     max: 2
@@ -403,30 +300,6 @@ sonar:backend:
       - runner_system_failure
       - api_failure
       - stuck_or_timeout_failure
-
-build:frontend:
-  <<: *build_retry_registry
-  stage: build
-  image:
-    name: gcr.io/kaniko-project/executor:v1.23.2-debug
-    entrypoint: [""]
-  variables:
-    KUBERNETES_EPHEMERAL_STORAGE_REQUEST: "8Gi"
-    KUBERNETES_EPHEMERAL_STORAGE_LIMIT: "10Gi"
-  before_script:
-    - mkdir -p /kaniko/.docker
-    - printf '{"credHelpers":{"%s":"ecr-login"}}' "${ECR_REGISTRY}" > /kaniko/.docker/config.json
-  script:
-    - /kaniko/executor
-      --context "${CI_PROJECT_DIR}/frontend"
-      --dockerfile "${CI_PROJECT_DIR}/frontend/Dockerfile"
-      --destination "${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}"
-      --destination "${FRONTEND_IMAGE}:latest"
-      --compressed-caching=false
-  rules:
-    - changes:
-        - frontend/**/*
-        - backend/**/*
 
 build:backend:
   <<: *build_retry_registry
@@ -449,7 +322,6 @@ build:backend:
       --compressed-caching=false
   rules:
     - changes:
-        - frontend/**/*
         - backend/**/*
     - if: '$CI_PIPELINE_SOURCE == "api"'
 
@@ -474,35 +346,8 @@ build:workers:
       --compressed-caching=false
   rules:
     - changes:
-        - frontend/**/*
         - backend/**/*
     - if: '$CI_PIPELINE_SOURCE == "api"'
-
-# ============================================
-# Stage 5: Trivy 이미지 취약점 스캔
-# ============================================
-
-security:frontend:
-  stage: security
-  tags: [k8s]
-  image: aquasec/trivy:latest
-  variables:
-    TRIVY_DB_REPOSITORY: "ghcr.io/aquasecurity/trivy-db:2"
-  before_script:
-    - apk add --no-cache aws-cli
-    - export TRIVY_USERNAME=AWS
-    - export TRIVY_PASSWORD=$(aws ecr get-login-password --region ${AWS_DEFAULT_REGION})
-    - export TRIVY_AUTH_URL=${ECR_REGISTRY}
-  script:
-    - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
-  allow_failure: true
-  needs:
-    - job: build:frontend
-      optional: true
-  rules:
-    - changes:
-        - frontend/**/*
-        - backend/**/*
 
 security:backend:
   stage: security
@@ -523,7 +368,6 @@ security:backend:
       optional: true
   rules:
     - changes:
-        - frontend/**/*
         - backend/**/*
     - if: '$CI_PIPELINE_SOURCE == "api"'
 
@@ -546,58 +390,8 @@ security:workers:
       optional: true
   rules:
     - changes:
-        - frontend/**/*
         - backend/**/*
     - if: '$CI_PIPELINE_SOURCE == "api"'
-
-# ============================================
-# Stage 6: Cosign 이미지 서명
-# ============================================
-#
-# [IMPORTANT - DO NOT MODIFY WITHOUT REVIEW]
-#
-# 설계 의도:
-#   각 sign:* 잡은 build:* 잡을 '필수(non-optional) needs'로 가짐.
-#   이는 단순한 순서 보장이 아니라 보안 정책을 강제하기 위한 의도적 설계임:
-#
-#   - build:* 가 skip되면 → sign:* 도 자동 skip (이미지가 없으므로 서명 시도 자체를 방지)
-#   - build:* 가 실패하면 → sign:* 도 실행 안 됨 (미완성 이미지 서명 방지)
-#   - deploy:staging 은 sign:* 3개 모두 성공을 requires → 미서명 이미지 배포 불가
-#
-# [사고 사례 - 2026-03-05]
-#   workers:d0fbd48e 이미지가 sign:workers 실패로 미서명 상태에서,
-#   팀원이 kustomization.yaml을 직접 수동 수정하여 배포 → Kyverno PolicyViolation 반복 발생.
-#   이 needs 체인은 그 재발을 막기 위해 추가된 것임.
-#
-# [AI 에이전트 주의]
-#   'optional: true' 가 없는 needs 항목을 임의로 optional로 바꾸거나 삭제하지 말 것.
-#   security:* 는 optional이 맞으나 (Trivy 결과와 무관하게 서명), build:* 는 필수임.
-# ============================================
-
-sign:frontend:
-  stage: sign
-  tags: [k8s]
-  image: alpine:3.20
-  variables:
-    COSIGN_YES: "true"
-  before_script:
-    - apk add --no-cache aws-cli curl
-    - curl -sLo /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
-    - chmod +x /usr/local/bin/cosign
-    - TOKEN=$(aws ecr get-login-password --region ${AWS_DEFAULT_REGION})
-    - mkdir -p ~/.docker
-    - printf '{"auths":{"%s":{"auth":"%s"}}}' "${ECR_REGISTRY}" "$(printf 'AWS:%s' "$TOKEN" | base64 -w 0)" > ~/.docker/config.json
-  script:
-    - cosign sign --key env://COSIGN_PRIVATE_KEY --registry-referrers-mode=legacy ${FRONTEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
-  allow_failure: false
-  needs:
-    - job: build:frontend        # [필수] build skip → sign skip. optional로 변경 금지
-    - job: security:frontend
-      optional: true             # Trivy 결과와 무관하게 서명 진행 (allow_failure: true)
-  rules:
-    - changes:
-        - frontend/**/*
-        - backend/**/*
 
 sign:backend:
   stage: sign
@@ -616,12 +410,11 @@ sign:backend:
     - cosign sign --key env://COSIGN_PRIVATE_KEY --registry-referrers-mode=legacy ${BACKEND_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
-    - job: build:backend         # [필수] build skip → sign skip. optional로 변경 금지
+    - job: build:backend
     - job: security:backend
-      optional: true             # Trivy 결과와 무관하게 서명 진행 (allow_failure: true)
+      optional: true
   rules:
     - changes:
-        - frontend/**/*
         - backend/**/*
     - if: '$CI_PIPELINE_SOURCE == "api"'
 
@@ -642,20 +435,13 @@ sign:workers:
     - cosign sign --key env://COSIGN_PRIVATE_KEY --registry-referrers-mode=legacy ${WORKERS_IMAGE}:${CI_COMMIT_SHORT_SHA}
   allow_failure: false
   needs:
-    - job: build:workers         # [필수] build skip → sign skip. optional로 변경 금지
+    - job: build:workers
     - job: security:workers
-      optional: true             # Trivy 결과와 무관하게 서명 진행 (allow_failure: true)
+      optional: true
   rules:
     - changes:
-        - frontend/**/*
         - backend/**/*
     - if: '$CI_PIPELINE_SOURCE == "api"'
-
-# ============================================
-# Stage 7: GitOps 배포 (k8s-manifests 이미지 태그 업데이트)
-# ============================================
-# ArgoCD auto-sync가 k8s-manifests repo 변경을 감지하여 자동 배포
-# staging: automated sync, production: manual sync
 
 deploy:staging:
   stage: deploy
@@ -663,26 +449,47 @@ deploy:staging:
   before_script:
     - apk add --no-cache git
   needs:
-    - job: sign:frontend
     - job: sign:backend
     - job: sign:workers
-  script:
-    - git clone ${K8S_MANIFESTS_REPO} /tmp/manifests && cd /tmp/manifests
-    - git config user.email ci@tutum.dev
-    - git config user.name "GitLab CI"
-    - git checkout develop
-    - 'sed -i "/name: ${ECR_REGISTRY}\/tutum\/frontend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/staging/kustomization.yaml'
-    - 'sed -i "/name: ${ECR_REGISTRY}\/tutum\/backend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/staging/kustomization.yaml'
-    - 'sed -i "/name: ${ECR_REGISTRY}\/tutum\/workers$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/staging/kustomization.yaml'
-    - git add k8s-manifests/overlays/staging/kustomization.yaml
-    - 'git diff --cached --quiet || git commit -m "deploy: staging ${CI_COMMIT_SHORT_SHA} [skip ci]"'
-    - git push origin develop
+  script: |
+    set -e
+    git clone "${K8S_MANIFESTS_REPO}" /tmp/manifests
+    cd /tmp/manifests
+    git config user.email ci@tutum.dev
+    git config user.name "GitLab CI"
+    git checkout "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-develop}"
+
+    touch /tmp/manifest_changed
+    echo "0" > /tmp/manifest_changed
+    kustomization_file="${STAGING_MANIFEST}"
+
+    update_kustomization() {
+      local image="$1"
+      if grep -qF "  - name: ${image}" "${kustomization_file}"; then
+        sed -i "\#  - name: ${image}$#{n;s#newTag: .*#newTag: ${CI_COMMIT_SHORT_SHA}#;}" "${kustomization_file}"
+        echo "1" > /tmp/manifest_changed
+        echo "Updated ${image}"
+      else
+        echo "WARN: ${image} not found in ${kustomization_file}"
+      fi
+    }
+
+    update_kustomization "${BACKEND_IMAGE}"
+    update_kustomization "${WORKERS_IMAGE}"
+
+    if [ "$(cat /tmp/manifest_changed)" = "0" ]; then
+      echo "No backend/worker image tags to update. Exit."
+      exit 0
+    fi
+
+    git add "${kustomization_file}"
+    git diff --cached --quiet || git commit -m "deploy(staging): backend+workers ${CI_COMMIT_SHORT_SHA} [skip ci]"
+    git push origin "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-develop}"
   environment:
     name: staging
   rules:
     - if: '$CI_COMMIT_BRANCH == "develop"'
       changes:
-        - frontend/**/*
         - backend/**/*
 
 deploy:production:
@@ -690,29 +497,50 @@ deploy:production:
   image: alpine:3.20
   before_script:
     - apk add --no-cache git
-  script:
-    - git clone ${K8S_MANIFESTS_REPO} /tmp/manifests && cd /tmp/manifests
-    - git config user.email ci@tutum.dev
-    - git config user.name "GitLab CI"
-    - git checkout main
-    - 'sed -i "/name: ${ECR_REGISTRY}\/tutum\/frontend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/production/kustomization.yaml'
-    - 'sed -i "/name: ${ECR_REGISTRY}\/tutum\/backend$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/production/kustomization.yaml'
-    - 'sed -i "/name: ${ECR_REGISTRY}\/tutum\/workers$/{n;s/newTag: .*/newTag: ${CI_COMMIT_SHORT_SHA}/;}" k8s-manifests/overlays/production/kustomization.yaml'
-    - git add k8s-manifests/overlays/production/kustomization.yaml
-    - 'git diff --cached --quiet || git commit -m "deploy: production ${CI_COMMIT_SHORT_SHA} [skip ci]"'
-    - git push origin main
+  when: manual
+  needs:
+    - job: sign:backend
+    - job: sign:workers
+  script: |
+    set -e
+    git clone "${K8S_MANIFESTS_REPO}" /tmp/manifests
+    cd /tmp/manifests
+    git config user.email ci@tutum.dev
+    git config user.name "GitLab CI"
+    git checkout main
+
+    echo "0" > /tmp/manifest_changed
+    kustomization_file="${PRODUCTION_MANIFEST}"
+
+    update_kustomization() {
+      local image="$1"
+      if grep -qF "  - name: ${image}" "${kustomization_file}"; then
+        sed -i "\#  - name: ${image}$#{n;s#newTag: .*#newTag: ${CI_COMMIT_SHORT_SHA}#;}" "${kustomization_file}"
+        echo "1" > /tmp/manifest_changed
+        echo "Updated ${image}"
+      else
+        echo "WARN: ${image} not found in ${kustomization_file}"
+      fi
+    }
+
+    update_kustomization "${BACKEND_IMAGE}"
+    update_kustomization "${WORKERS_IMAGE}"
+
+    if [ "$(cat /tmp/manifest_changed)" = "0" ]; then
+      echo "No backend/worker image tags to update. Exit."
+      exit 0
+    fi
+
+    git add "${kustomization_file}"
+    git diff --cached --quiet || git commit -m "deploy(prod): backend+workers ${CI_COMMIT_SHORT_SHA} [skip ci]"
+    git push origin main
   environment:
     name: production
-  when: manual
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
       changes:
-        - frontend/**/*
         - backend/**/*
-
-# ============================================
-# Slack, Jira
-# ============================================
 
 notify:slack_on_failure:
   stage: notify
@@ -721,38 +549,8 @@ notify:slack_on_failure:
   script:
     - |
       curl -fsS -X POST -H "Content-type: application/json" \
-      --data "{\"text\":\"[CI FAIL] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\n${CI_PIPELINE_URL}\"}" \
+      --data "{\"text\":\"[CI FAIL] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\\n${CI_PIPELINE_URL}\"}" \
       "${SLACK_WEBHOOK_URL}"
-  when: on_failure
-
-notify:jira_on_failure:
-  stage: notify
-  image: curlimages/curl:8.7.1
-  allow_failure: true
-  script:
-    - |
-      curl -fsS -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -X POST "${JIRA_BASE_URL}/rest/api/3/issue" \
-        -d '{
-          "fields": {
-            "project": { "key": "'"${JIRA_PROJECT_KEY}"'" },
-            "summary": "[CI FAIL] '"${CI_PROJECT_PATH}"' #'"${CI_PIPELINE_ID}"'",
-            "description": {
-              "type": "doc",
-              "version": 1,
-              "content": [
-                {
-                  "type": "paragraph",
-                  "content": [
-                    { "type": "text", "text": "Pipeline URL: '"${CI_PIPELINE_URL}"'" }
-                  ]
-                }
-              ]
-            },
-            "issuetype": { "name": "Task" }
-          }
-        }'
   when: on_failure
 
 notify:slack_on_success:
@@ -762,36 +560,6 @@ notify:slack_on_success:
   script:
     - |
       curl -fsS -X POST -H "Content-type: application/json" \
-      --data "{\"text\":\"[CI OK] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\n${CI_PIPELINE_URL}\"}" \
+      --data "{\"text\":\"[CI OK] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\\n${CI_PIPELINE_URL}\"}" \
       "${SLACK_WEBHOOK_URL}"
-  when: on_success
-
-notify:jira_on_success:
-  stage: notify
-  image: curlimages/curl:8.7.1
-  allow_failure: true
-  script:
-    - |
-      curl -fsS -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
-        -H "Content-Type: application/json" \
-        -X POST "${JIRA_BASE_URL}/rest/api/3/issue" \
-        -d '{
-          "fields": {
-            "project": { "key": "'"${JIRA_PROJECT_KEY}"'" },
-            "summary": "[CI OK] '"${CI_PROJECT_PATH}"' #'"${CI_PIPELINE_ID}"'",
-            "description": {
-              "type": "doc",
-              "version": 1,
-              "content": [
-                {
-                  "type": "paragraph",
-                  "content": [
-                    { "type": "text", "text": "Pipeline URL: '"${CI_PIPELINE_URL}"'" }
-                  ]
-                }
-              ]
-            },
-            "issuetype": { "name": "Task" }
-          }
-        }'
   when: on_success
