@@ -95,8 +95,9 @@ async def require_admin_access(
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin_access)])
 
 # Shared HTTP clients — reused across requests for connection pooling
-_HTTP_MIMIR = httpx.AsyncClient(timeout=5.0)
-_HTTP_LOKI = httpx.AsyncClient(timeout=8.0)
+# X-Scope-OrgID: Mimir/Loki multi-tenancy 필수 헤더 (tenant=tutum)
+_HTTP_MIMIR = httpx.AsyncClient(timeout=5.0, headers={"X-Scope-OrgID": "tutum"})
+_HTTP_LOKI = httpx.AsyncClient(timeout=8.0, headers={"X-Scope-OrgID": "tutum"})
 _HTTP_MISC = httpx.AsyncClient(timeout=8.0)
 
 
