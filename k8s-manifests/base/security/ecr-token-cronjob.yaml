@@ -1,0 +1,76 @@
+# ECR 토큰 갱신 CronJob
+# ECR 임시 토큰은 12시간 유효 → 6시간마다 갱신
+# Kyverno verify-image-signature 정책이 ECR 이미지 pull 시 사용하는 imagePullSecret 갱신
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ecr-token-refresher
+  namespace: kyverno
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::903913341620:role/tutum-eks-node-role-stg
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ecr-token-refresher
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ecr-token-refresher
+subjects:
+  - kind: ServiceAccount
+    name: ecr-token-refresher
+    namespace: kyverno
+roleRef:
+  kind: ClusterRole
+  name: ecr-token-refresher
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ecr-token-refresher
+  namespace: kyverno
+spec:
+  schedule: "0 */6 * * *"  # 6시간마다
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: ecr-token-refresher
+          annotations:
+            sidecar.istio.io/inject: "false"
+        spec:
+          serviceAccountName: ecr-token-refresher
+          restartPolicy: OnFailure
+          containers:
+            - name: ecr-token-refresher
+              image: amazon/aws-cli:2.15.0
+              env:
+                - name: AWS_REGION
+                  value: ap-northeast-2
+                - name: ECR_REGISTRY
+                  value: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  echo "[ECR] Getting login token..."
+                  TOKEN=$(aws ecr get-login-password --region "$AWS_REGION")
+
+                  # 각 네임스페이스에 ecr-pull-secret 생성/갱신
+                  for NS in tutum-app tutum-data tutum-storage kyverno; do
+                    echo "[ECR] Updating secret in namespace: $NS"
+                    kubectl create secret docker-registry ecr-pull-secret                       --namespace=$NS                       --docker-server="$ECR_REGISTRY"                       --docker-username=AWS                       --docker-password="$TOKEN"                       --dry-run=client -o yaml | kubectl apply -f -
+                  done
+                  echo "[ECR] Done. Token refreshed in all namespaces."

@@ -1848,6 +1848,7 @@ async def get_action_needed():
 # ─── 트레이스 (Tempo) ─────────────────────────────────────────────────────────
 
 TEMPO_URL = os.getenv("TEMPO_URL", "http://192.168.0.230:3200")
+GRAFANA_URL = os.getenv("GRAFANA_URL", "http://192.168.0.230:3000")
 
 
 @router.get("/traces")
@@ -1862,7 +1863,7 @@ async def get_traces(limit: int = 20, min_duration_ms: int = 50):
 
     def _grafana_url(trace_id: str) -> str:
         return (
-            "http://192.168.0.230:3000/explore?datasource=tempo&left="
+            f"{GRAFANA_URL}/explore?datasource=tempo&left="
             "{\"queries\":[{\"refId\":\"A\",\"datasource\":{\"type\":\"tempo\"},"
             f"\"queryType\":\"traceql\",\"query\":\"{trace_id}\",\"tableType\":\"traces\"}}]}}"
         )

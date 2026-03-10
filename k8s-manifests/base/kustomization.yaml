@@ -34,6 +34,7 @@ resources:
   - autoscaling/keda-scaledobjects.yaml
   - autoscaling/pdb.yaml
   - security/network-policy.yaml
+  - security/ecr-token-cronjob.yaml
   - backup/mongodb-backup.yaml
   - backup/etcd-backup.yaml
   - infra/cloudflared.yaml
