@@ -1,6 +1,6 @@
 # 2026-03-10 Istio Hub 수정 + MariaDB → RDS 이전 + Terraform IaC 계획
 
-- 작업자: 박성준
+- 작업자: Kyungyoon Kim
 - 작업 시간: 2026-03-10 (세션 연속)
 
 ---
