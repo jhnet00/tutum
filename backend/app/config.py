@@ -58,7 +58,9 @@ class Settings(BaseSettings):
     ELASTICSEARCH_URL: str = "http://192.168.56.13:9200"
     ELASTICSEARCH_INDEX: str = "news"
 
-    # MinIO 설정 (Node2)
+    # Storage 설정 (S3 / MinIO fallback)
+    # S3_BUCKET_NAME 이 설정되면 boto3 (IRSA) 사용, 없으면 MinIO fallback
+    S3_BUCKET_NAME: str = ""
     MINIO_ENDPOINT: str = "localhost:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
