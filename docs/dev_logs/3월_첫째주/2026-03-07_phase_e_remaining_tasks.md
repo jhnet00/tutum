@@ -16,25 +16,33 @@
 
 ---
 
-## ⚠️ 블로커: Cloudflare DNS 설정 필요 (담당자 전달)
+## 해결 방법: 가비아 네임서버 → Route53 변경
 
-`tutum.my` 도메인의 실제 네임서버: **Cloudflare** (`rodrigo.ns.cloudflare.com`, `gail.ns.cloudflare.com`)
-Route53에 등록해도 실제 DNS에 반영 안 됨 → Cloudflare에 직접 추가 필요
+`tutum.my`는 **가비아**에서 구매한 도메인. Cloudflare는 기존 온프레미스 시절 DNS 호스팅으로 사용했으나 EKS 전환 후 불필요.
+Route53 Hosted Zone에 모든 레코드가 이미 등록되어 있으므로, 가비아에서 네임서버만 교체하면 됨.
 
-### Cloudflare > tutum.my > DNS 레코드 추가
+### 가비아 네임서버 변경
 
-| Type | Name | Value | Proxy |
-|------|------|-------|-------|
-| CNAME | `_6c8cd6bb0901cac2de8fc47417d88c34` | `_0a6858f03b9918dee5cb09a3e501c17f.jkddzztszm.acm-validations.aws.` | **DNS only** (필수) |
-| CNAME | `@` (루트) | `k8s-tutumstg-522ae53287-1398442796.ap-northeast-2.elb.amazonaws.com` | DNS only |
-| CNAME | `*` (와일드카드) | `k8s-tutumstg-522ae53287-1398442796.ap-northeast-2.elb.amazonaws.com` | DNS only |
+`gabia.com` 로그인 → My가비아 → 서비스 관리 → 도메인 → `tutum.my` 관리 → 네임서버 수정
 
-> **첫 번째 CNAME** (긴 이름): ACM 인증서 DNS validation용. Proxy OFF 필수.
-> **`@`, `*`**: ALB 트래픽 라우팅용. Proxy OFF 권장 (HTTPS redirect는 ALB에서 처리).
+| 네임서버 |
+|---------|
+| `ns-1504.awsdns-60.org` |
+| `ns-542.awsdns-03.net` |
+| `ns-1540.awsdns-00.co.uk` |
+| `ns-49.awsdns-06.com` |
+
+### Route53에 이미 등록된 레코드 (전부 준비 완료 ✅)
+
+| Type | Name | Value |
+|------|------|-------|
+| A (Alias) | `tutum.my` | ALB (`k8s-tutumstg-522ae53287-...`) |
+| A (Alias) | `*.tutum.my` | ALB (동일) |
+| CNAME | `_6c8cd6bb0901cac2de8fc47417d88c34` | ACM 인증서 검증용 |
 
 ---
 
-## Cloudflare 설정 완료 후 진행할 작업
+## 네임서버 전파 후 진행할 작업
 
 ### 1. ACM 인증서 ISSUED 확인
 

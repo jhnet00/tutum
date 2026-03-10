@@ -120,7 +120,8 @@
   cert-manager-cainjector 1/1 Running
   cert-manager-webhook    1/1 Running
   ```
-  - **다음 단계 (온프레미스 스킵)**: 현재 Cloudflare Tunnel이 HTTPS TLS를 처리하고 있어 Let's Encrypt + Istio 443 설정 불필요
+  - **온프레미스**: Cloudflare Tunnel이 HTTPS TLS를 처리했으므로 Let's Encrypt 불필요 (온프레미스 한정)
+  - **EKS 전환**: Cloudflare 미사용 — 가비아 네임서버를 Route53으로 변경하여 ACM + ALB로 직접 HTTPS 처리
   - **EKS 전환 시**: Let's Encrypt 대신 ACM (AWS Certificate Manager) + AWS Load Balancer Controller 사용 예정
     - ACM: 인증서 자동 갱신, 추가 비용 없음
     - AWS Load Balancer Controller: ALB를 K8s Ingress 리소스로 제어
