@@ -21,6 +21,9 @@ rules:
     resources: ["pods", "nodes", "namespaces", "endpoints", "services"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
     resources: ["nodes/proxy"]
     verbs: ["get"]
 ---
