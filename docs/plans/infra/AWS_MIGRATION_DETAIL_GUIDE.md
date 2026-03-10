@@ -19,7 +19,7 @@
 | **CNI** | Calico (tigera-operator) | AWS VPC CNI + Network Policy |
 | **컨테이너 레지스트리** | ~~GitLab CR~~ → **ECR 전환 완료** (Phase C, 2026-03-06) | `903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/{frontend\|backend\|workers}` |
 | **인그레스** | MetalLB VIP 192.168.0.240 + Istio IngressGateway | ALB (internet-facing) — Istio IngressGateway 제거 |
-| **외부 HTTPS** | Cloudflare Tunnel → 192.168.0.240 | Cloudflare Tunnel → ALB DNS (origin만 변경) |
+| **외부 HTTPS** | Cloudflare Tunnel → 192.168.0.240 | Route53 → ALB (가비아 네임서버를 Route53으로 변경, Cloudflare 미사용) |
 | **Service Mesh** | Istio (istiod + IngressGateway, mTLS STRICT, tutum-app ns) | Istio minimal profile (istiod만, IngressGateway 제거, mTLS STRICT 유지) |
 | **MongoDB** | K8s StatefulSet **3-replica** (tutum-data ns, PVC 30Gi×3, worker1/2/3 분산) + 독립 VM (192.168.0.231, v7.0.30) | EKS StatefulSet 그대로 이식 |
 | **MariaDB** | 211.46.52.153:15432 (학원 공인 IP) | **변경 없음** (EKS NAT GW → 직접 접속) |
@@ -36,7 +36,7 @@
 ### 변경 없는 항목 (이전 불필요)
 - MariaDB: 학원 공인 IP(211.46.52.153:15432), EKS에서도 NAT GW → 직접 TCP 연결 (VPN 불필요)
 - GitLab: SaaS, CI/CD 파이프라인은 Phase C에서 이미 ECR 전환 완료
-- Cloudflare Tunnel: 터널 자체는 유지, origin URL(IP)만 ALB DNS로 변경 (Phase E)
+- DNS: Cloudflare 미사용 — 가비아 레지스트라에서 네임서버를 Route53으로 변경 (Phase E 완료)
 
 ### 이미 완료된 항목 (이전 작업에서 처리됨)
 - **컨테이너 레지스트리**: GitLab CR → ECR 전환 완료 (`.gitlab-ci.yml`, kustomization.yaml, Cosign 키 재발급, Kyverno 정책 갱신)
@@ -381,8 +381,9 @@ on-prem vs EKS 트래픽 구조:
          → Istio IngressGateway → VirtualService → Service → Envoy Sidecar → Pod
 
 [EKS 이전 후]
-  Client → Cloudflare Tunnel → ALB DNS
+  Client → Route53 (tutum.my) → ALB
          → ALB → K8s Service → Envoy Sidecar → Pod (mTLS STRICT 유지)
+         (Cloudflare 미사용 — 가비아 네임서버를 Route53으로 변경하여 직접 라우팅)
          (Istio IngressGateway 불필요 — ALB가 외부 진입점 역할)
 ```
 
@@ -425,8 +426,9 @@ metadata:
     kubernetes.io/ingress.class: alb
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
-    # Cloudflare가 TLS 처리하므로 ALB는 HTTP만
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    # ACM 인증서로 ALB에서 TLS 처리 (Cloudflare 미사용)
 spec:
   rules:
     - http:
@@ -1415,29 +1417,41 @@ kubectl logs -l app.kubernetes.io/name=alloy -n monitoring --tail=20 | grep -i "
 
 ## Phase E (D+19 ~ D+24): 트래픽 컷오버 + 온프레미스 철수
 
-### E-1. Cloudflare Tunnel origin 변경 (핵심 컷오버 단계)
+### E-1. DNS 컷오버 — 가비아 네임서버 → Route53 (핵심 컷오버 단계)
 
-**현재 Tunnel 구성**:
+**현재 DNS 구성**:
 ```
-Cloudflare Edge → Tunnel → 192.168.0.240 (MetalLB, Istio IngressGateway)
+가비아(레지스트라) → 네임서버: Cloudflare → DNS 레코드: Cloudflare
 ```
 
 **변경 후**:
 ```
-Cloudflare Edge → Tunnel → k8s-tutumap-xxx.ap-northeast-2.elb.amazonaws.com (ALB)
+가비아(레지스트라) → 네임서버: Route53 → DNS 레코드: Route53 (ALB Alias)
 ```
 
-```bash
-# Cloudflare Zero Trust Dashboard에서 변경
-# Tunnels → tutum-tunnel → Edit → Public Hostname
-# Service: HTTP
-# URL: http://k8s-tutumap-xxx.ap-northeast-2.elb.amazonaws.com
+> **Cloudflare 완전 제거**: tutum.my는 온프레미스 K8s 시절 Cloudflare Tunnel을 사용했으나,
+> EKS 전환 후 Route53 + ALB로 직접 트래픽을 처리하므로 Cloudflare는 더 이상 불필요.
 
-# 또는 cloudflared CLI로 변경
-cloudflared tunnel route dns tutum-tunnel tutum.app
-# config.yaml의 ingress 수정:
-# - hostname: tutum.app
-#   service: http://k8s-tutumap-xxx.ap-northeast-2.elb.amazonaws.com
+**Route53 네임서버 (tutum.my Hosted Zone: Z04669402IT42VPHL8CRP)**:
+```
+ns-1504.awsdns-60.org
+ns-542.awsdns-03.net
+ns-1540.awsdns-00.co.uk
+ns-49.awsdns-06.com
+```
+
+**Route53에 이미 등록된 레코드**:
+```
+tutum.my        A (Alias) → k8s-tutumstg-522ae53287-1398442796.ap-northeast-2.elb.amazonaws.com
+*.tutum.my      A (Alias) → 동일 ALB
+_6c8cd6bb...    CNAME     → ACM 인증서 DNS 검증용
+```
+
+**가비아에서 네임서버 변경 절차**:
+```
+gabia.com 로그인 → My가비아 → 서비스 관리 → 도메인
+→ tutum.my 관리 → 네임서버 탭 → 수정
+→ 기존 Cloudflare NS 제거 후 위 Route53 NS 4개 입력 → 저장
 ```
 
 **컷오버 체크리스트** (순서 중요):
@@ -1445,15 +1459,18 @@ cloudflared tunnel route dns tutum-tunnel tutum.app
 1. [ ] EKS 스테이징에서 E2E 기능 검증 완료
 2. [ ] MinIO → S3 데이터 이전 완료 + 백엔드 S3 연결 확인
 3. [ ] Elasticsearch EC2 복원 완료 + 뉴스 검색 정상
-4. [ ] OAuth 콜백 URL 업데이트 (Google, Naver) → ALB DNS로 변경
-5. [ ] Cloudflare Tunnel origin 변경 (수 초 내 전환)
-6. [ ] 브라우저에서 tutum.app 접속 → EKS 응답 확인
-7. [ ] 로그인, 시세 조회, 뉴스, AI 채팅 빠른 확인
-8. [ ] Grafana 대시보드에서 EKS 지표 수신 확인
+4. [ ] 가비아 네임서버 → Route53 변경
+5. [ ] ACM 인증서 ISSUED 확인 (네임서버 전파 후 자동 완료)
+6. [ ] ALB Ingress HTTPS annotation 활성화 (certificate-arn, ssl-redirect)
+7. [ ] OAuth 콜백 URL 업데이트 (Google, Naver) → https://tutum.my
+8. [ ] 브라우저에서 tutum.my 접속 → EKS 응답 확인
+9. [ ] 로그인, 시세 조회, 뉴스, AI 채팅 빠른 확인
+10. [ ] Grafana 대시보드에서 EKS 지표 수신 확인
 ```
 
-> **롤백**: Cloudflare Tunnel origin을 다시 `192.168.0.240`으로 변경하면 즉시 온프레미스로 복귀 가능.
-> 이 때문에 온프레미스 클러스터는 **1주일 이상 병행 운영** 후 철수 권장.
+> **전파 시간**: 가비아 네임서버 변경 후 수 분 ~ 최대 48시간 (보통 1시간 이내)
+> **롤백**: 가비아에서 네임서버를 다시 Cloudflare로 변경하면 온프레미스 복귀 가능.
+> 온프레미스 클러스터는 **1주일 이상 병행 운영** 후 철수 권장.
 
 ---
 
@@ -1482,7 +1499,7 @@ EKS:            실 트래픽 처리
 
 모니터링 지표:
 - EKS Error Rate < 1%  → 온프레미스 철수 진행
-- EKS Error Rate > 5%  → Cloudflare Tunnel 즉시 rollback
+- EKS Error Rate > 5%  → 가비아 네임서버 Cloudflare로 즉시 복구 (온프레미스 rollback)
 ```
 
 ---
@@ -1621,8 +1638,9 @@ aws budgets create-budget \
 ### Phase E (컷오버) — ⬜ 미시작
 - [ ] ACM `*.tutum.my` 인증서 ISSUED 확인 후 ALB Ingress 생성
 - [ ] OAuth 콜백 URL → ALB DNS 또는 tutum.my (Google, Naver)
-- [ ] Cloudflare Tunnel origin → ALB DNS
-- [ ] tutum.app 전체 기능 접속 확인
+- [ ] 가비아 네임서버 → Route53 변경 (Cloudflare 제거)
+- [ ] ACM 인증서 ISSUED 확인 후 ALB HTTPS annotation 활성화
+- [ ] tutum.my 전체 기능 접속 확인
 - [ ] 1주일 병행 운영 (EKS Error Rate < 1% 확인 후 온프레미스 철수)
 - [ ] 온프레미스 워크로드 순차 중단
 - [ ] AWS Budget Alert $700 임계값 설정
@@ -1635,11 +1653,11 @@ aws budgets create-budget \
 
 | 단계 | 롤백 방법 | 소요 시간 |
 |------|---------|---------|
-| Cloudflare Tunnel 컷오버 후 | Tunnel origin → 192.168.0.240으로 변경 | ~30초 |
+| DNS 컷오버 후 (네임서버 전파 중) | 가비아에서 네임서버를 Cloudflare로 재변경 | ~수 분 (TTL 만료 후) |
 | EKS 서비스 장애 | ArgoCD rollback to previous revision | ~2분 |
 | 데이터 이전 중 | S3 데이터는 유지, MinIO도 유지 (병행) | 즉시 |
-| 전체 EKS 장애 | Cloudflare Tunnel rollback → 온프레미스 복귀 | ~30초 |
+| 전체 EKS 장애 | 가비아 네임서버 Cloudflare 복구 → 온프레미스 복귀 | ~수 분 |
 
-> **핵심**: Cloudflare Tunnel의 origin 변경이 사실상 유일한 사용자-facing 컷오버 포인트.
-> origin을 되돌리는 것만으로 즉시 온프레미스로 돌아올 수 있으므로
+> **핵심**: 가비아에서 네임서버 변경이 사용자-facing 컷오버 포인트.
+> 네임서버를 되돌리는 것으로 온프레미스로 돌아올 수 있으므로
 > **온프레미스는 컷오버 후 최소 1주일 유지** 후 철수.

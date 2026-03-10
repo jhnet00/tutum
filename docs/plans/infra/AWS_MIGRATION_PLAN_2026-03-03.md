@@ -75,7 +75,7 @@
 | elastic-consumer | tutum-app | ✅ Running (KEDA 0-3) | 검색 인덱스 처리 |
 | email-worker | tutum-app | ✅ Running | 이메일 인증 처리 |
 | ocr | tutum-app | ✅ Running | OCR (GCP Vision API) |
-| cloudflared | tutum-app | ✅ Running (2 pod) | Cloudflare Tunnel |
+| ~~cloudflared~~ | ~~tutum-app~~ | ~~Running~~ | ~~Cloudflare Tunnel~~ (EKS 전환 시 제거 — Route53 직접 라우팅으로 대체) |
 | MongoDB | tutum-data | ✅ StatefulSet 3-replica (30Gi×3) | 자산/포트폴리오/AI 결과 |
 | Redis | tutum-data | ✅ StatefulSet 3-replica Master+2Replica (5Gi×3) | 캐시, 세션, Rate Limiting |
 | Kafka (KRaft) | tutum-data | ✅ StatefulSet 3-replica, RF=3 (20Gi×3) | 이벤트 스트리밍 |
@@ -519,7 +519,7 @@ Monitoring EC2 (EKS VPC private subnet, ap-northeast-2c, t3.medium 이상)
 ### Phase E (D+19 ~ D+24): 안정화 — ⬜ 미시작
 1. ACM `*.tutum.my` ISSUED 확인 후 ALB Ingress 생성 (tutum.my 도메인 연결)
 2. OAuth 콜백 URL → ALB DNS or tutum.my (Google, Naver)
-3. Cloudflare Tunnel origin → ALB DNS
+3. 가비아 네임서버 → Route53 변경 (Cloudflare 제거, tutum.my 직접 ALB 라우팅)
 4. canary/rollback 리허설
 5. SCP/IAM 권한 최소화 최종 검토
 6. AWS Budget Alert $700 설정
