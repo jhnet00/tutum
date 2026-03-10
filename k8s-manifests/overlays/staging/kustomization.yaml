@@ -3,6 +3,8 @@ kind: Kustomization
 
 resources:
   - ../../base
+  - alb-ingress.yaml
+  - peer-authentication.yaml
 
 patches:
   - path: replicas-patch.yaml

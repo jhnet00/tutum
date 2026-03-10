@@ -1,0 +1,29 @@
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: frontend-permissive
+  namespace: tutum-app
+spec:
+  selector:
+    matchLabels:
+      app: frontend
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    "3000":
+      mode: PERMISSIVE
+---
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: backend-permissive
+  namespace: tutum-app
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    "8000":
+      mode: PERMISSIVE
