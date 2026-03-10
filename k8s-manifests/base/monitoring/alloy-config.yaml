@@ -1,0 +1,96 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: monitoring
+data:
+  config.alloy: |
+    // ── Prometheus metrics scraping ──────────────────────────────────────
+    prometheus.scrape "kubernetes_pods" {
+      targets    = discovery.kubernetes.pods.targets
+      forward_to = [prometheus.remote_write.mimir.receiver]
+      scrape_interval = "30s"
+    }
+
+    discovery.kubernetes "pods" {
+      role = "pod"
+      namespaces {
+        names = ["tutum-app", "tutum-data"]
+      }
+      selectors {
+        role  = "pod"
+        label = "app"
+      }
+    }
+
+    prometheus.scrape "kubernetes_nodes" {
+      targets    = discovery.kubernetes.nodes.targets
+      forward_to = [prometheus.remote_write.mimir.receiver]
+      scrape_interval = "30s"
+    }
+
+    discovery.kubernetes "nodes" {
+      role = "node"
+    }
+
+    prometheus.remote_write "mimir" {
+      endpoint {
+        url = "http://10.60.11.95:9009/api/v1/push"
+        headers = {
+          "X-Scope-OrgID" = "tutum",
+        }
+      }
+    }
+
+    // ── Loki log collection ───────────────────────────────────────────────
+    discovery.kubernetes "log_pods" {
+      role = "pod"
+    }
+
+    discovery.relabel "log_pods" {
+      targets = discovery.kubernetes.log_pods.targets
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        target_label  = "app"
+      }
+    }
+
+    loki.source.kubernetes "pods" {
+      targets    = discovery.relabel.log_pods.output
+      forward_to = [loki.write.loki.receiver]
+    }
+
+    loki.write "loki" {
+      endpoint {
+        url = "http://10.60.11.95:3100/loki/api/v1/push"
+        tenant_id = "tutum"
+      }
+    }
+
+    // ── OTLP traces → Tempo ───────────────────────────────────────────────
+    otelcol.receiver.otlp "default" {
+      grpc { endpoint = "0.0.0.0:4317" }
+      http { endpoint = "0.0.0.0:4318" }
+      output {
+        traces = [otelcol.exporter.otlp.tempo.input]
+      }
+    }
+
+    otelcol.exporter.otlp "tempo" {
+      client {
+        endpoint = "10.60.11.95:4317"
+        tls { insecure = true }
+      }
+    }
