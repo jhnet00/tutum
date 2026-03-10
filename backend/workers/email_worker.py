@@ -21,8 +21,8 @@ from botocore.exceptions import ClientError
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.config import get_settings
-from app.services.email_service import get_email_service
+from app.config import get_settings  # noqa: E402
+from app.services.email_service import get_email_service  # noqa: E402
 
 settings = get_settings()
 email_service = get_email_service()
