@@ -409,9 +409,9 @@ async def _fetch_stock_polygon(symbols: list[str]) -> list[dict[str, Any]]:
                     price = _safe_float(day.get("c"), 0.0)
                 if price <= 0:
                     continue
-                prev_close  = _safe_float(prev.get("c"), 0.0)
-                change      = price - prev_close if prev_close > 0 else 0.0
-                change_pct  = (change / prev_close * 100.0) if prev_close > 0 else 0.0
+                prev_close = _safe_float(prev.get("c"), 0.0)
+                change = price - prev_close if prev_close > 0 else 0.0
+                change_pct = (change / prev_close * 100.0) if prev_close > 0 else 0.0
                 out.append({
                     "symbol": symbol, "asset_type": "stock", "market": "US",
                     "price": price, "currency": "USD", "timestamp": _utc_iso_now(),
