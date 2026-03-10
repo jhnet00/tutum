@@ -63,6 +63,7 @@ def env_int(*keys: str, default: int) -> int:
     except Exception:
         return default
 
+
 # 하위 호환용 기본값: source별 limit이 없으면 LIMIT 사용
 LIMIT = env_int("LIMIT", "PRODUCER_LIMIT", default=5)
 PAGES = env_int("PAGES", "PRODUCER_PAGES", default=3)        # ✅ 여러 페이지 훑기
