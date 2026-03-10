@@ -35,9 +35,9 @@ KST = ZoneInfo("Asia/Seoul")
 
 # ─── Kafka ────────────────────────────────────────────────────────────────────
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-PRICE_TOPIC             = os.getenv("PRICE_TOPIC", "prices")
-PRICE_TICK_TOPIC        = os.getenv("PRICE_TICK_TOPIC", "price_tick")
-MAX_RECONNECT_DELAY     = 60
+PRICE_TOPIC = os.getenv("PRICE_TOPIC", "prices")
+PRICE_TICK_TOPIC = os.getenv("PRICE_TICK_TOPIC", "price_tick")
+MAX_RECONNECT_DELAY = 60
 
 # ─── 크립토 (업비트) ──────────────────────────────────────────────────────────
 DEFAULT_CRYPTO_MARKETS = "KRW-BTC,KRW-ETH,KRW-SOL,KRW-XRP"
@@ -49,9 +49,9 @@ CRYPTO_MARKETS = [
 UPBIT_WS_URL = "wss://api.upbit.com/websocket/v1"
 
 # ─── 국내주식 (KIS) ───────────────────────────────────────────────────────────
-KIS_APP_KEY    = os.getenv("KIS_APP_KEY", "").strip()
+KIS_APP_KEY = os.getenv("KIS_APP_KEY", "").strip()
 KIS_APP_SECRET = os.getenv("KIS_APP_SECRET", "").strip()
-KIS_MODE       = os.getenv("KIS_MODE", "real").lower()
+KIS_MODE = os.getenv("KIS_MODE", "real").lower()
 
 DEFAULT_KIS_DOMESTIC = "005930,000660,035720,051910"
 KIS_DOMESTIC_SYMBOLS = [
@@ -73,9 +73,9 @@ KIS_APPROVAL_URL = (
 
 # ─── 해외주식 (Finnhub / Polygon) ────────────────────────────────────────────
 STOCK_POLL_INTERVAL = max(5, int(os.getenv("PRICE_POLL_INTERVAL_SECONDS", "5")))
-STOCK_VENDOR        = os.getenv("STOCK_VENDOR", "auto").lower()
-FINNHUB_API_KEY     = os.getenv("FINNHUB_API_KEY", "").strip()
-POLYGON_API_KEY     = os.getenv("POLYGON_API_KEY", "").strip()
+STOCK_VENDOR = os.getenv("STOCK_VENDOR", "auto").lower()
+FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "").strip()
+POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
 ALLOW_MOCK_PRICE_FEED = os.getenv("ALLOW_MOCK_PRICE_FEED", "false").lower() in {"1", "true", "yes", "on"}
 
 DEFAULT_STOCK_SYMBOLS = "AAPL,NVDA,TSLA,MSFT"
@@ -145,7 +145,7 @@ def _parse_upbit_ws_message(raw: dict) -> dict[str, Any] | None:
         return None
     market = str(raw.get("code", "")).upper()
     symbol = _normalize_symbol(market)
-    price  = _safe_float(raw.get("trade_price"), 0.0)
+    price = _safe_float(raw.get("trade_price"), 0.0)
     if not symbol or price <= 0:
         return None
     ts_ms = raw.get("timestamp") or raw.get("trade_timestamp")
@@ -253,12 +253,12 @@ def _parse_kis_domestic_tick(raw: str) -> dict[str, Any] | None:
         return None
 
     symbol = fields[0].strip()
-    price  = _safe_float(fields[2], 0.0)
+    price = _safe_float(fields[2], 0.0)
     if not symbol or price <= 0:
         return None
 
     # 전일대비율 부호 적용
-    sign       = fields[3]
+    sign = fields[3]
     change_pct = _safe_float(fields[5], 0.0)
     if sign in ("4", "5"):
         change_pct = -abs(change_pct)
@@ -270,7 +270,7 @@ def _parse_kis_domestic_tick(raw: str) -> dict[str, Any] | None:
     # 체결시각 KST HHMMSS → UTC ISO
     time_str = fields[1]
     try:
-        today  = date.today()
+        today = date.today()
         dt_kst = datetime(
             today.year, today.month, today.day,
             int(time_str[0:2]), int(time_str[2:4]), int(time_str[4:6]),
@@ -367,7 +367,7 @@ async def _fetch_stock_finnhub(symbols: list[str]) -> list[dict[str, Any]]:
                     params={"symbol": symbol, "token": FINNHUB_API_KEY},
                 )
                 resp.raise_for_status()
-                row   = resp.json()
+                row = resp.json()
                 price = _safe_float(row.get("c"), 0.0)
                 if price <= 0:
                     continue
@@ -401,8 +401,8 @@ async def _fetch_stock_polygon(symbols: list[str]) -> list[dict[str, Any]]:
                 )
                 resp.raise_for_status()
                 payload = resp.json()
-                row  = payload.get("ticker") or {}
-                day  = row.get("day") or {}
+                row = payload.get("ticker") or {}
+                day = row.get("day") or {}
                 prev = row.get("prevDay") or {}
                 price = _safe_float(row.get("lastTrade", {}).get("p"), 0.0)
                 if price <= 0:
