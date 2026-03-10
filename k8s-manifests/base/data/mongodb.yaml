@@ -136,6 +136,8 @@ spec:
     metadata:
       labels:
         app: mongodb-rs-init
+      annotations:
+        sidecar.istio.io/inject: "false"
     spec:
       restartPolicy: OnFailure
       containers:
