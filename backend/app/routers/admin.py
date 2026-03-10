@@ -8,8 +8,8 @@ Admin 대시보드에 실시간 데이터를 제공합니다.
 
 데이터 소스:
   - K8s API Server: in-cluster ServiceAccount (nodes, pods)
-  - Mimir: http://192.168.0.230:9009/prometheus (메트릭)
-  - Loki:  http://192.168.0.230:3100 (로그)
+  - Mimir: http://10.60.11.95:9009/prometheus (메트릭)
+  - Loki:  http://10.60.11.95:3100 (로그)
 """
 
 import asyncio
@@ -32,8 +32,8 @@ from .auth import UserResponse, get_current_user
 
 logger = logging.getLogger(__name__)
 
-MIMIR_URL = os.getenv("MIMIR_URL", "http://192.168.0.230:9009/prometheus")
-LOKI_URL = os.getenv("LOKI_URL", "http://192.168.0.230:3100")
+MIMIR_URL = os.getenv("MIMIR_URL", "http://10.60.11.95:9009/prometheus")
+LOKI_URL = os.getenv("LOKI_URL", "http://10.60.11.95:3100")
 
 _DEFAULT_ADMIN_NETWORKS = "127.0.0.0/8,192.168.0.0/24,10.0.0.0/8"
 
