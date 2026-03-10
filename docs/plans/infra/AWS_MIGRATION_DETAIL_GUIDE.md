@@ -57,11 +57,13 @@
   └─ Elasticsearch (K8s StatefulSet)        →  EKS StatefulSet (그대로 이식)
 
 마이그레이션 순서:
-Phase A (D+0~3)  : AWS 기반 준비 (계정, ECR, VPC 설계)          ← ✅ ECR/EKS 생성 완료, SSM 검증 완료
-Phase B (D+4~7)  : EKS 클러스터 구성 + 기존 addon 이식          ← 🔶 진행 중 (ALB/Istio/ArgoCD/NP 완료, KEDA/Kyverno/시크릿 미완)
-Phase C (D+8~12) : CI/CD 파이프라인 전환 + 스테이징 검증        ← 🔶 CI/CD 코드 완료, 파이프라인 실행 미완
-Phase D (D+13~18): 데이터 이전 (MinIO→S3, Elasticsearch 이전)  ← ⬜ 미시작
-Phase E (D+19~24): 트래픽 컷오버 + 온프레미스 철수              ← ⬜ 미시작
+Phase A (D+0~3)  : AWS 기반 준비 (계정, ECR, VPC 설계)               ← ✅ ECR/EKS 생성 완료, SSM 검증 완료           [5/8  63%]
+Phase B (D+4~7)  : EKS 클러스터 구성 + 기존 addon 이식               ← 🔶 진행 중 (ALB/Istio/ArgoCD 완료, KEDA/Runner/미러링 미완) [8/20 40%]
+Phase C (D+8~12) : CI/CD 파이프라인 전환 + 스테이징 검증             ← 🔶 코드 완료, COSIGN키/파이프라인 실행 미완   [5/8  63%]
+Phase D (D+13~18): 데이터 이전 (MongoDB/Kafka/ES/MinIO→S3/모니터링)  ← 🔶 RDS/모니터링EC2 완료, 나머지 미완          [4/17 24%]
+Phase E (D+19~24): 트래픽 컷오버 + 온프레미스 철수                   ← ⬜ 미시작                                     [0/9   0%]
+
+전체 진행률: 22/62 ≈ 35%
 ```
 
 ---
@@ -1028,6 +1030,139 @@ aws ec2 describe-security-group-rules \
 
 ---
 
+### B-16. ArgoCD · KEDA ECR 이미지 미러링
+
+> ⬜ **미완료** — ArgoCD(quay.io), KEDA(ghcr.io) 이미지가 외부 레지스트리에서 pull되어
+> EKS private subnet + VPC Endpoint 환경에서 NAT GW 경유 또는 차단 위험 있음.
+> Istio 이미지는 이미 ECR 미러링 완료 (903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/istio/{pilot,proxyv2}:1.25.0).
+
+```bash
+ECR_REG="903913341620.dkr.ecr.ap-northeast-2.amazonaws.com"
+REGION="ap-northeast-2"
+
+# ECR 로그인
+aws ecr get-login-password --region $REGION \
+  | docker login --username AWS --password-stdin "$ECR_REG"
+
+# ── 1. ArgoCD 이미지 미러링 ──
+# 현재 설치된 ArgoCD 버전 확인
+ARGO_VERSION=$(kubectl get deployment argocd-server -n argocd \
+  -o jsonpath='{.spec.template.spec.containers[0].image}' | cut -d: -f2)
+echo "ArgoCD 버전: $ARGO_VERSION"
+
+# ECR repo 생성
+aws ecr create-repository --repository-name argocd/argocd --region $REGION 2>/dev/null || true
+
+# 이미지 미러링
+docker pull quay.io/argoproj/argocd:${ARGO_VERSION}
+docker tag quay.io/argoproj/argocd:${ARGO_VERSION} \
+           ${ECR_REG}/argocd/argocd:${ARGO_VERSION}
+docker push ${ECR_REG}/argocd/argocd:${ARGO_VERSION}
+
+# ── 2. KEDA 이미지 미러링 ──
+KEDA_VERSION=$(kubectl get deployment keda-operator -n keda \
+  -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null | cut -d: -f2 || echo "2.15.0")
+echo "KEDA 버전: $KEDA_VERSION"
+
+for img in keda-operator keda-operator-metrics-apiserver keda-admission-webhooks; do
+  aws ecr create-repository --repository-name kedacore/${img} --region $REGION 2>/dev/null || true
+  docker pull ghcr.io/kedacore/${img}:${KEDA_VERSION}
+  docker tag  ghcr.io/kedacore/${img}:${KEDA_VERSION} \
+              ${ECR_REG}/kedacore/${img}:${KEDA_VERSION}
+  docker push ${ECR_REG}/kedacore/${img}:${KEDA_VERSION}
+done
+
+# ── 3. KEDA Helm values — ECR 이미지 경로로 재설치 ──
+helm upgrade --install keda kedacore/keda -n keda --create-namespace \
+  --version ${KEDA_VERSION} \
+  --set image.keda.registry=${ECR_REG}/kedacore \
+  --set image.metricsApiServer.registry=${ECR_REG}/kedacore \
+  --set image.webhooks.registry=${ECR_REG}/kedacore \
+  --set image.keda.tag=${KEDA_VERSION} \
+  --set image.metricsApiServer.tag=${KEDA_VERSION} \
+  --set image.webhooks.tag=${KEDA_VERSION}
+
+# ── 4. ArgoCD Helm values — ECR 이미지 경로로 재설치 ──
+# ArgoCD는 kubectl apply로 설치된 경우 패치 방식 적용
+kubectl set image deployment/argocd-server \
+  argocd-server=${ECR_REG}/argocd/argocd:${ARGO_VERSION} -n argocd
+kubectl set image deployment/argocd-application-controller \
+  application-controller=${ECR_REG}/argocd/argocd:${ARGO_VERSION} -n argocd
+kubectl set image deployment/argocd-repo-server \
+  repo-server=${ECR_REG}/argocd/argocd:${ARGO_VERSION} -n argocd
+
+kubectl rollout status deployment/argocd-server -n argocd
+```
+
+**체크리스트**:
+- [ ] ArgoCD 현재 버전 확인 + ECR repo 생성 + 이미지 미러링
+- [ ] KEDA 이미지 미러링 (keda-operator, metrics-apiserver, admission-webhooks)
+- [ ] KEDA Helm upgrade — ECR registry 경로로 재설치
+- [ ] ArgoCD 컨테이너 이미지 ECR로 패치 + rollout 확인
+
+---
+
+### B-17. 파이프라인 온프레미스 의존성 체크
+
+> ⬜ **미완료** — GitLab CI 파이프라인이 온프레미스 리소스(K8s API, Harbor 등)에 의존하는
+> 단계가 남아있는지 확인하고 제거. GitLab Runner가 EKS에 배포되어야 완전히 온프레미스 독립.
+
+```bash
+# ── 1. 현재 GitLab Runner 위치 확인 ──
+# 온프레미스 K8s에 runner가 있는지
+kubectl get pods -n gitlab-runner 2>/dev/null || echo "온프레미스 gitlab-runner ns 없음"
+
+# GitLab.com → Settings → CI/CD → Runners 에서 등록된 runner 확인
+# runner tag: 'docker', 'k8s', 'eks' 등 — 온프레미스 runner가 online인지 확인
+
+# ── 2. EKS에 GitLab Runner 설치 (온프레미스 의존 제거) ──
+helm repo add gitlab https://charts.gitlab.io && helm repo update
+
+# GitLab runner registration token 확인 (GitLab → Settings → CI/CD → Runners)
+GITLAB_RUNNER_TOKEN="<registration-token>"
+
+helm install gitlab-runner gitlab/gitlab-runner \
+  -n gitlab-runner --create-namespace \
+  --set gitlabUrl=https://gitlab.com \
+  --set runnerRegistrationToken="${GITLAB_RUNNER_TOKEN}" \
+  --set rbac.create=true \
+  --set runners.tags="eks,docker,k8s" \
+  --set runners.privileged=true   # DinD(Docker-in-Docker) 빌드용
+
+# ── 3. .gitlab-ci.yml 온프레미스 의존 항목 점검 ──
+# 아래 패턴으로 온프레미스 IP/주소 하드코딩 확인
+grep -rn "192\.168\." .gitlab-ci.yml backend/.gitlab-ci.yml || echo "온프레미스 IP 없음"
+grep -rn "211\.46\.52\.153" .gitlab-ci.yml backend/.gitlab-ci.yml || echo "학원IP 없음"
+grep -rn "harbor\." .gitlab-ci.yml backend/.gitlab-ci.yml || echo "Harbor 없음"
+
+# ── 4. 온프레미스 deploy 단계 → EKS deploy로 교체 확인 ──
+# 기존: kubectl --server=https://192.168.0.220:6443 apply ...
+# 변경: kubectl --server=https://kubernetes.default.svc apply ...
+#       (EKS 내 GitLab Runner는 IRSA로 K8s API 직접 접근)
+
+# ── 5. 파이프라인 실행 후 전 단계 통과 여부 확인 ──
+# build → scan(trivy) → sign(cosign) → deploy(argocd sync)
+# GitLab → CI/CD → Pipelines → 최신 파이프라인 단계별 로그 확인
+```
+
+**온프레미스 의존 항목 체크리스트**:
+
+| 항목 | 확인 방법 | 상태 |
+|------|---------|------|
+| GitLab Runner 위치 | GitLab Settings → Runners | ⬜ 확인 필요 |
+| Harbor 레지스트리 참조 | `.gitlab-ci.yml` grep | ⬜ |
+| 온프레미스 K8s API 참조 | `192.168.0.220` grep | ⬜ |
+| ArgoCD destination | `staging-app.yaml` | ⬜ `https://kubernetes.default.svc` 여부 |
+| Cosign 키 GitLab 변수 | GitLab CI Variables | ⬜ COSIGN_PRIVATE_KEY 업데이트 |
+
+- [ ] GitLab CI 파이프라인 실행 (build → scan → sign → deploy 전 구간)
+- [ ] EKS GitLab Runner 설치 + 온프레미스 runner 비활성화
+- [ ] `.gitlab-ci.yml` 온프레미스 IP·주소 하드코딩 없음 확인
+- [ ] ArgoCD `staging-app.yaml` destination → `https://kubernetes.default.svc`
+- [ ] 파이프라인 완료 후 EKS 배포 Pod 정상 Running 확인
+
+---
+
 ## Phase C (D+8 ~ D+12): CI/CD 파이프라인 전환
 
 ### C-1. .gitlab-ci.yml — GitLab CR → ECR 전환
@@ -1642,6 +1777,445 @@ terraform/
 
 ---
 
+### D-9. MongoDB 독립 VM → EC2 이전 + LGTM 동작 확인
+
+**배경**:
+- 현재 MongoDB는 두 곳에서 운영 중:
+  1. K8s StatefulSet 3-replica (`tutum-data` ns) — 앱 연결 기준
+  2. 독립 VM (192.168.0.231, MongoDB v7.0.30) — 별도 운영 (백업·관리용)
+- 사용자 요청: 독립 VM의 MongoDB를 EC2 standalone으로 이전 + 앱 연결 EC2로 변경
+
+**목표 구성**:
+```
+현재: app → mongodb.tutum-data.svc.cluster.local:27017 (K8s StatefulSet)
+변경: app → MongoDB EC2 (10.60.11.x, standalone 또는 ReplicaSet)
+     독립 VM(192.168.0.231) → EC2로 데이터 이전 + 폐기
+```
+
+```bash
+# ── Step 1: MongoDB EC2 생성 (private subnet, t3.large) ──
+PRIVATE_SUBNET_A=$(aws ec2 describe-subnets \
+  --filters "Name=cidr-block,Values=10.60.11.0/24" \
+  --query 'Subnets[0].SubnetId' --output text)
+
+CLUSTER_SG=$(aws eks describe-cluster --name tutum-stg-eks \
+  --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
+
+# MongoDB 전용 SG 생성
+MONGO_SG=$(aws ec2 create-security-group \
+  --group-name tutum-mongodb-sg \
+  --description "MongoDB EC2 standalone" \
+  --vpc-id "$(aws ec2 describe-vpcs --filters Name=cidr-block,Values=10.60.0.0/16 \
+              --query 'Vpcs[0].VpcId' --output text)" \
+  --query 'GroupId' --output text)
+
+# EKS 노드 → MongoDB 27017 inbound 허용
+aws ec2 authorize-security-group-ingress \
+  --group-id "$MONGO_SG" \
+  --ip-permissions "[{
+    \"IpProtocol\":\"tcp\",\"FromPort\":27017,\"ToPort\":27017,
+    \"UserIdGroupPairs\":[{\"GroupId\":\"$CLUSTER_SG\",\"Description\":\"EKS apps\"}]
+  }]"
+
+# SSM outbound 허용
+aws ec2 authorize-security-group-egress \
+  --group-id "$MONGO_SG" \
+  --ip-permissions '[{"IpProtocol":"tcp","FromPort":443,"ToPort":443,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]'
+
+# EC2 생성 (SSM Instance Profile 재사용)
+MONGO_EC2=$(aws ec2 run-instances \
+  --image-id ami-042e76978adeb8c48 \
+  --instance-type t3.large \
+  --subnet-id "$PRIVATE_SUBNET_A" \
+  --security-group-ids "$MONGO_SG" \
+  --iam-instance-profile Name=tutum-monitoring-profile \
+  --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]' \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=tutum-mongodb}]' \
+  --query 'Instances[0].InstanceId' --output text)
+
+aws ec2 wait instance-running --instance-ids "$MONGO_EC2"
+MONGO_IP=$(aws ec2 describe-instances --instance-ids "$MONGO_EC2" \
+  --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)
+echo "MongoDB EC2 IP: $MONGO_IP"
+
+# ── Step 2: MongoDB 7.0 설치 (SSM) ──
+aws ssm send-command \
+  --instance-ids "$MONGO_EC2" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=[
+    "curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg",
+    "echo \"deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse\" | tee /etc/apt/sources.list.d/mongodb-org-7.0.list",
+    "apt-get update -y && apt-get install -y mongodb-org",
+    "systemctl enable --now mongod",
+    "mongosh --eval \"db.runCommand({connectionStatus:1})\""
+  ]' --region ap-northeast-2
+
+# ── Step 3: 온프레미스 독립 VM(192.168.0.231)에서 dump → S3 ──
+# 온프레미스 cp-1에서 실행
+ssh cp-1 << 'EOF'
+  mongodump \
+    --host 192.168.0.231 --port 27017 \
+    --out /tmp/mongo-vm-dump
+  tar czf /tmp/mongo-vm-dump.tar.gz -C /tmp mongo-vm-dump
+  # S3에 업로드 (AWS CLI 설치 필요)
+  aws s3 cp /tmp/mongo-vm-dump.tar.gz \
+    s3://tutum-prod-storage/migration/mongodb/mongo-vm-dump.tar.gz
+EOF
+
+# ── Step 4: EC2에서 S3 dump 다운로드 + restore ──
+aws ssm send-command \
+  --instance-ids "$MONGO_EC2" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=[
+    "apt-get install -y awscli",
+    "aws s3 cp s3://tutum-prod-storage/migration/mongodb/mongo-vm-dump.tar.gz /tmp/",
+    "tar xzf /tmp/mongo-vm-dump.tar.gz -C /tmp/",
+    "mongorestore --host localhost --port 27017 /tmp/mongo-vm-dump/"
+  ]' --region ap-northeast-2
+
+# ── Step 5: K8s StatefulSet MongoDB dump → EC2 restore ──
+# (앱 연결을 EC2로 변경할 경우 최신 데이터 동기화)
+kubectl exec -it mongodb-0 -n tutum-data -- \
+  mongodump --host mongodb.tutum-data.svc.cluster.local:27017 \
+  --username root --password <password> \
+  --replicaSet mongo-rs --out /tmp/k8s-dump/
+
+kubectl cp tutum-data/mongodb-0:/tmp/k8s-dump /tmp/k8s-dump
+tar czf /tmp/k8s-dump.tar.gz -C /tmp k8s-dump
+aws s3 cp /tmp/k8s-dump.tar.gz s3://tutum-prod-storage/migration/mongodb/k8s-dump.tar.gz
+
+# EC2에서 복원
+aws ssm send-command \
+  --instance-ids "$MONGO_EC2" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=[
+    "aws s3 cp s3://tutum-prod-storage/migration/mongodb/k8s-dump.tar.gz /tmp/",
+    "tar xzf /tmp/k8s-dump.tar.gz -C /tmp/",
+    "mongorestore --drop --host localhost --port 27017 /tmp/k8s-dump/"
+  ]' --region ap-northeast-2
+
+# ── Step 6: backend-secret MongoDB 연결 주소 변경 ──
+kubectl patch secret backend-secret -n tutum-app --type=merge -p "{
+  \"data\": {
+    \"MONGODB_URL\": \"$(echo -n "mongodb://${MONGO_IP}:27017/tutum?authSource=admin" | base64)\"
+  }
+}"
+kubectl rollout restart deployment/backend -n tutum-app
+kubectl rollout status deployment/backend -n tutum-app
+```
+
+**체크리스트**:
+- [ ] MongoDB EC2 생성 (t3.large, 100GB gp3, private subnet 10.60.11.x)
+- [ ] MongoDB SG 생성 (EKS Cluster SG → 27017 inbound)
+- [ ] MongoDB 7.0 설치 + 서비스 기동 확인
+- [ ] 독립 VM(192.168.0.231) mongodump → S3 업로드
+- [ ] EC2에서 S3 dump 복원 (mongorestore)
+- [ ] K8s StatefulSet 최신 데이터 EC2로 동기화 (필요 시)
+- [ ] backend-secret MONGODB_URL → EC2 IP로 변경 + rolling restart
+- [ ] 앱 로그에서 MongoDB 연결 오류 없음 확인
+
+---
+
+### D-9-V. LGTM 어드민 페이지 동작 확인
+
+> 파이프라인 정상 동작 후, 모니터링 EC2(10.60.11.95)의 Grafana 어드민 페이지에서
+> EKS 워크로드 메트릭·로그가 정상 수집되는지 검증.
+
+```bash
+# ── 1. Grafana 접근 (SSM 포트포워딩) ──
+MONITORING_EC2="i-0a8cab5d5ce1cac60"
+aws ssm start-session \
+  --target "$MONITORING_EC2" \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters "portNumber=3000,localPortNumber=3000"
+# → 브라우저: http://localhost:3000 (admin / tutum2026!)
+
+# ── 2. Alloy DaemonSet 상태 확인 ──
+kubectl get pods -n monitoring -l app.kubernetes.io/name=alloy
+kubectl logs -n monitoring -l app.kubernetes.io/name=alloy --tail=50 | grep -E "error|warn|remote_write"
+
+# ── 3. Mimir 메트릭 수신 확인 ──
+# Grafana → Explore → Mimir datasource → 쿼리:
+# up{namespace="tutum-app"}
+# container_cpu_usage_seconds_total{namespace="tutum-app"}
+
+# ── 4. Loki 로그 수신 확인 ──
+# Grafana → Explore → Loki datasource → 쿼리:
+# {namespace="tutum-app"}
+
+# ── 5. 체크 항목 ──
+# Grafana 대시보드: "Kubernetes / Compute Resources / Namespace (Workloads)"
+# - tutum-app: backend, frontend, price-consumer, news-consumer pods 표시 여부
+# - tutum-data: kafka, redis, mongodb pods 표시 여부
+# Loki: 각 pod 실시간 로그 조회 가능 여부
+# Mimir: PromQL up{namespace="tutum-app"} == 1 확인
+```
+
+**LGTM 검증 체크리스트**:
+- [ ] Grafana 어드민 페이지 접속 확인 (SSM 포트포워딩)
+- [ ] Alloy DaemonSet 모든 노드에서 Running 확인
+- [ ] Mimir: tutum-app 네임스페이스 Pod 메트릭 수신 확인
+- [ ] Loki: tutum-app 네임스페이스 Pod 로그 수신 확인
+- [ ] Grafana 대시보드 "K8s / Namespace" — backend/frontend 지표 표시 확인
+- [ ] MongoDB EC2 이전 후 backend Pod 재기동 로그 정상 확인
+
+---
+
+### D-10. Kafka EC2 이전 (Docker Compose)
+
+**배경**: 현재 K8s StatefulSet KRaft 3-replica(tutum-data)로 운영 중인 Kafka를
+EC2 Docker Compose 방식으로 이전. 온프레미스 K8s 의존성 제거 목적.
+
+**목표 구성**:
+```
+현재: kafka.tutum-data.svc.cluster.local:9092 (K8s StatefulSet 3-broker KRaft)
+변경: Kafka EC2 (10.60.11.x, Docker Compose, KRaft 또는 단일 브로커 구성)
+Consumer/Producer: kafka-bootstrap 주소 → EC2 내부 IP로 변경
+```
+
+```bash
+# ── Step 1: Kafka EC2 생성 ──
+PRIVATE_SUBNET_A=$(aws ec2 describe-subnets \
+  --filters "Name=cidr-block,Values=10.60.11.0/24" \
+  --query 'Subnets[0].SubnetId' --output text)
+
+CLUSTER_SG=$(aws eks describe-cluster --name tutum-stg-eks \
+  --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
+
+# Kafka 전용 SG 생성
+KAFKA_SG=$(aws ec2 create-security-group \
+  --group-name tutum-kafka-sg \
+  --description "Kafka EC2" \
+  --vpc-id "$(aws ec2 describe-vpcs --filters Name=cidr-block,Values=10.60.0.0/16 \
+              --query 'Vpcs[0].VpcId' --output text)" \
+  --query 'GroupId' --output text)
+
+# EKS → Kafka 9092 inbound 허용
+aws ec2 authorize-security-group-ingress \
+  --group-id "$KAFKA_SG" \
+  --ip-permissions "[{
+    \"IpProtocol\":\"tcp\",\"FromPort\":9092,\"ToPort\":9092,
+    \"UserIdGroupPairs\":[{\"GroupId\":\"$CLUSTER_SG\",\"Description\":\"EKS apps\"}]
+  },{
+    \"IpProtocol\":\"tcp\",\"FromPort\":9093,\"ToPort\":9093,
+    \"UserIdGroupPairs\":[{\"GroupId\":\"$CLUSTER_SG\",\"Description\":\"KRaft controller\"}]
+  }]"
+
+aws ec2 authorize-security-group-egress \
+  --group-id "$KAFKA_SG" \
+  --ip-permissions '[{"IpProtocol":"tcp","FromPort":443,"ToPort":443,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]'
+
+# EC2 생성 (t3.large, 50GB gp3)
+KAFKA_EC2=$(aws ec2 run-instances \
+  --image-id ami-042e76978adeb8c48 \
+  --instance-type t3.large \
+  --subnet-id "$PRIVATE_SUBNET_A" \
+  --security-group-ids "$KAFKA_SG" \
+  --iam-instance-profile Name=tutum-monitoring-profile \
+  --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":50,"VolumeType":"gp3"}}]' \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=tutum-kafka}]' \
+  --query 'Instances[0].InstanceId' --output text)
+
+aws ec2 wait instance-running --instance-ids "$KAFKA_EC2"
+KAFKA_IP=$(aws ec2 describe-instances --instance-ids "$KAFKA_EC2" \
+  --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)
+echo "Kafka EC2 IP: $KAFKA_IP"
+
+# ── Step 2: Docker + Kafka 설치 (SSM) ──
+# docker-compose.yml을 S3에 업로드 후 EC2에서 다운로드
+cat > /tmp/kafka-compose.yml << EOF
+version: '3'
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${KAFKA_IP}:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    restart: always
+volumes:
+  kafka_data:
+EOF
+
+aws s3 cp /tmp/kafka-compose.yml s3://tutum-prod-storage/migration/kafka/docker-compose.yml
+
+aws ssm send-command \
+  --instance-ids "$KAFKA_EC2" \
+  --document-name "AWS-RunShellScript" \
+  --parameters 'commands=[
+    "apt-get update -y && apt-get install -y docker.io docker-compose-v2",
+    "systemctl enable --now docker",
+    "mkdir -p /opt/kafka",
+    "aws s3 cp s3://tutum-prod-storage/migration/kafka/docker-compose.yml /opt/kafka/docker-compose.yml",
+    "cd /opt/kafka && docker compose up -d",
+    "sleep 10 && docker compose logs kafka | tail -20"
+  ]' --region ap-northeast-2
+
+# ── Step 3: 토픽 생성 (온프레미스 토픽 목록 복제) ──
+# 온프레미스 토픽 목록 확인
+kubectl exec -it kafka-0 -n tutum-data -- \
+  kafka-topics.sh --bootstrap-server kafka-bootstrap:9092 --list
+
+# EC2 Kafka에 동일 토픽 생성 (SSM)
+aws ssm send-command \
+  --instance-ids "$KAFKA_EC2" \
+  --document-name "AWS-RunShellScript" \
+  --parameters "commands=[
+    \"docker exec kafka kafka-topics --bootstrap-server localhost:9092 --create --topic price-topic --partitions 3 --replication-factor 1 --if-not-exists\",
+    \"docker exec kafka kafka-topics --bootstrap-server localhost:9092 --create --topic news-topic --partitions 3 --replication-factor 1 --if-not-exists\",
+    \"docker exec kafka kafka-topics --bootstrap-server localhost:9092 --create --topic stock-topic --partitions 3 --replication-factor 1 --if-not-exists\",
+    \"docker exec kafka kafka-topics --bootstrap-server localhost:9092 --list\"
+  ]" --region ap-northeast-2
+
+# ── Step 4: backend-secret Kafka 주소 변경 ──
+kubectl patch secret backend-secret -n tutum-app --type=merge -p "{
+  \"data\": {
+    \"KAFKA_BOOTSTRAP_SERVERS\": \"$(echo -n "${KAFKA_IP}:9092" | base64)\"
+  }
+}"
+
+# KEDA ScaledObject의 bootstrapServers 주소도 변경 필요
+# k8s-manifests/base/autoscaling/ 내 ScaledObject 파일에서 수정
+sed -i "s|kafka.tutum-data.svc.cluster.local:9092|${KAFKA_IP}:9092|g" \
+  k8s-manifests/base/autoscaling/*.yaml
+kubectl apply -f k8s-manifests/base/autoscaling/
+
+# ── Step 5: Consumer 재기동 + 정상 동작 확인 ──
+kubectl rollout restart deployment/price-consumer deployment/news-consumer \
+  deployment/elastic-consumer -n tutum-app
+kubectl rollout status deployment/price-consumer -n tutum-app
+
+# Consumer 로그에서 Kafka 연결 확인
+kubectl logs -n tutum-app -l app=price-consumer --tail=20 | grep -E "kafka|connect|error"
+```
+
+**체크리스트**:
+- [ ] Kafka EC2 생성 (t3.large, 50GB gp3, private subnet)
+- [ ] Kafka SG 생성 (EKS → 9092/9093 inbound)
+- [ ] Docker Compose Kafka 설치 + 서비스 기동
+- [ ] 온프레미스 토픽 목록 확인 + EC2 Kafka에 동일 토픽 생성
+- [ ] backend-secret `KAFKA_BOOTSTRAP_SERVERS` → EC2 IP로 변경
+- [ ] KEDA ScaledObject `bootstrapServers` → EC2 IP로 변경
+- [ ] price-consumer / news-consumer / elastic-consumer rolling restart
+- [ ] Consumer 로그에서 Kafka 연결 + 메시지 수신 확인
+
+---
+
+### D-11. 온프레미스 VM 워크로드 EC2 마이그레이션 — 누락 항목
+
+> 온프레미스 VM 8대(cp1/2/3 + worker1/2/3 + monitoring + mongodb)에서 실행 중인
+> 모든 워크로드를 EC2 또는 EKS로 이전하기 위한 **전체 항목 점검 및 누락 태스크 정의**.
+
+#### 현재 온프레미스 VM → AWS 이전 상태 매핑
+
+| 온프레미스 컴포넌트 | 위치 | AWS 이전 대상 | 상태 |
+|---|---|---|---|
+| K8s cp1/2/3 | VirtualBox VM | EKS (managed) | ✅ EKS 완료 |
+| K8s worker1/2/3 | VirtualBox VM | EKS Auto Mode node | ✅ EKS 완료 |
+| backend Deployment | K8s tutum-app | EKS tutum-app | 🔶 이식 중 (파이프라인 미실행) |
+| frontend Deployment | K8s tutum-app | EKS tutum-app | 🔶 이식 중 |
+| price-consumer | K8s tutum-app | EKS tutum-app | 🔶 이식 중 |
+| news-consumer | K8s tutum-app | EKS tutum-app | 🔶 이식 중 |
+| elastic-consumer | K8s tutum-app | EKS tutum-app | 🔶 이식 중 |
+| MongoDB StatefulSet | K8s tutum-data | MongoDB EC2 (D-9) | ⬜ 미완료 |
+| Redis StatefulSet | K8s tutum-data | EKS tutum-data | ⬜ 미완료 |
+| Kafka StatefulSet | K8s tutum-data | Kafka EC2 (D-10) | ⬜ 미완료 |
+| Elasticsearch StatefulSet | K8s tutum-data | EKS tutum-data | ⬜ 미완료 |
+| MinIO StatefulSet | K8s tutum-storage | S3 버킷 (D-1) | ⬜ 미완료 |
+| Monitoring VM (192.168.0.230) | VirtualBox VM | EC2 10.60.11.95 | ✅ 완료 |
+| MongoDB VM (192.168.0.231) | VirtualBox VM | MongoDB EC2 (D-9) | ⬜ 미완료 |
+| ArgoCD | K8s argocd ns | EKS argocd ns | ✅ 설치 완료 (GitLab 연결 미완료) |
+| KEDA | K8s keda ns | EKS keda ns | ⬜ 미완료 |
+| Kyverno | K8s kyverno ns | EKS kyverno ns | ⬜ 미완료 |
+| GitLab Runner | on-prem or SaaS | EKS gitlab-runner | ⬜ 확인 필요 (B-17) |
+| Istio istiod | K8s istio-system | EKS istio-system | ✅ 완료 |
+| Istio IngressGateway | K8s istio-system | 제거 (ALB 대체) | ✅ 완료 |
+| Cloudflare Tunnel | on-prem client | 제거 (Route53 ALB) | ⬜ Phase E |
+| MariaDB (학원 서버) | 외부 211.46.52.153 | RDS | ✅ 완료 |
+
+#### 누락 확인 태스크
+
+```bash
+# ── 1. 온프레미스 K8s 전체 리소스 현황 스냅샷 ──
+# (마이그레이션 기준선 확보 — 이전에 실행 안 했다면 지금 실행)
+ssh cp-1
+kubectl get all -A -o wide > /tmp/onprem-all-$(date +%Y%m%d).txt
+kubectl get pvc -A > /tmp/onprem-pvc-$(date +%Y%m%d).txt
+kubectl get secrets -A --no-headers | grep -v 'kubernetes.io/service-account' > /tmp/onprem-secrets-$(date +%Y%m%d).txt
+kubectl get configmap -A --no-headers > /tmp/onprem-cm-$(date +%Y%m%d).txt
+
+# ── 2. 온프레미스에서 여전히 살아있는 서비스 확인 ──
+kubectl get pods -n tutum-app --field-selector=status.phase=Running
+kubectl get pods -n tutum-data --field-selector=status.phase=Running
+kubectl get pods -n tutum-storage --field-selector=status.phase=Running
+
+# ── 3. EKS에서 미배포된 리소스 확인 ──
+# (EKS kubeconfig로 전환 후)
+aws eks update-kubeconfig --name tutum-stg-eks --region ap-northeast-2
+kubectl get pods -n tutum-app   # backend/frontend/workers Running 여부
+kubectl get pods -n tutum-data  # kafka/redis/mongodb/elasticsearch Running 여부
+
+# ── 4. 외부 의존성 체크 ──
+# 학원 서버 의존 제거 확인
+kubectl get secret backend-secret -n tutum-app -o jsonpath='{.data}' | \
+  python3 -c "import sys,json,base64; [print(k,'=',base64.b64decode(v).decode()[:50]) for k,v in json.load(sys.stdin).items()]" \
+  | grep -i "211.46\|192.168\|harbor"
+
+# ── 5. CloudTrail 활성화 (감사 로그) ──
+aws cloudtrail create-trail \
+  --name tutum-cloudtrail \
+  --s3-bucket-name tutum-prod-storage \
+  --s3-key-prefix cloudtrail \
+  --include-global-service-events \
+  --is-multi-region-trail
+aws cloudtrail start-logging --name tutum-cloudtrail
+```
+
+#### 누락 태스크 목록
+
+**즉시 처리 필요 (Phase B 완료 조건)**:
+- [ ] **GitLab Runner EKS 설치** (B-17): 온프레미스 runner 사용 중이면 파이프라인 온프레미스 의존
+- [ ] **KEDA EKS 설치 + ScaledObject 적용** (B-5): HPA 미작동, 부하 대응 불가
+- [ ] **Kyverno EKS 설치 + ECR 정책** (B-6): 이미지 서명 검증 없어 보안 취약
+
+**데이터 이전 완료 필요 (Phase D)**:
+- [ ] **Redis EKS StatefulSet 배포** (D-2): 세션/캐시 Redis EKS에 미배포
+- [ ] **Kafka EC2 이전** (D-10): consumer 연결 전환 필요
+- [ ] **Elasticsearch EKS 배포 + S3 스냅샷 복원** (D-4): 뉴스 검색 미작동
+- [ ] **MongoDB EC2 이전** (D-9): 독립 VM 폐기 조건
+
+**파이프라인 연동 (Phase C)**:
+- [ ] **COSIGN_PRIVATE_KEY GitLab 변수 업데이트**: 현재 변수 미갱신으로 파이프라인 차단
+- [ ] **ArgoCD GitLab 리포 연결**: `argocd repo add` 미완료
+
+**철수 전 확인**:
+- [ ] 온프레미스 VM에서 외부로 열린 포트 확인 (Cloudflare Tunnel 등)
+- [ ] 학원 MariaDB(211.46.52.153) 로그인 시도 없음 확인
+- [ ] MongoDB VM (192.168.0.231) EC2 이전 완료 후 VM shutdown
+- [ ] Monitoring VM (192.168.0.230) EC2 이전 완료 확인 → VM shutdown
+
+**체크리스트**:
+- [ ] 온프레미스 전체 리소스 스냅샷 추출 (기준선)
+- [ ] EKS vs 온프레미스 미배포 리소스 Gap 분석 완료
+- [ ] 외부 의존성(온프레미스 IP, 학원 서버) 없음 확인
+- [ ] CloudTrail 활성화
+- [ ] 위 누락 태스크 전체 완료 후 온프레미스 VM 단계적 shutdown
+
+---
+
 ## Phase E (D+19 ~ D+24): 트래픽 컷오버 + 온프레미스 철수
 
 ### E-1. DNS 컷오버 — 가비아 네임서버 → Route53 (핵심 컷오버 단계)
@@ -1825,6 +2399,9 @@ aws budgets create-budget \
 - [ ] **staging-app.yaml destination → `https://kubernetes.default.svc`**
 - [ ] Worker SG outbound 211.46.52.153:15432 명시적 허용 (현재 기본 SG로 통과 중)
 - [ ] **Cluster SG + Monitoring EC2 SG 생성** (B-15): EKS → Monitoring(Loki/Tempo/Mimir) outbound 허용
+- [ ] **ArgoCD · KEDA ECR 이미지 미러링** (B-16): quay.io/ghcr.io → ECR, Helm values 재설치
+- [ ] **GitLab Runner EKS 설치 + 온프레미스 runner 비활성화** (B-17)
+- [ ] **파이프라인 온프레미스 의존 항목 없음 확인** (B-17): `.gitlab-ci.yml` IP 하드코딩, Harbor 참조 없음
 
 **미완료 — 보안 강화 (B-9 ~ B-13)**
 - [ ] **NACL 생성** — public subnet (10.60.1/2.0/24): 80/443 inbound only
@@ -1854,17 +2431,20 @@ aws budgets create-budget \
 - [ ] MinIO → S3 mc mirror 완료 (ocr-images, profile-images 버킷)
 - [ ] Backend MINIO_* env → S3 + IRSA 적용 (키 제거)
 - [ ] Redis: 빈 상태 시작 (캐시 데이터 손실 허용) or RDB 이전
-- [ ] Kafka: 빈 상태 시작 + 동일 토픽 생성 (메시지 재생산 가능)
-- [ ] Elasticsearch: EKS StatefulSet 배포 + S3 스냅샷 복원 (repository-s3 플러그인 필요)
 - [x] 모니터링 EC2 생성 (EKS VPC private subnet, t3.medium) ← 완료 (10.60.11.95)
 - [x] Docker Compose LGTM 기동 (Grafana/Loki/Tempo/Mimir) ← 완료
 - [x] EKS Alloy DaemonSet remote_write → 모니터링 EC2 내부 IP ← 완료
 - [ ] S3 Lifecycle 설정 (ocr-images 180일 만료, backups/ Glacier 30일)
 - [ ] CloudTrail 활성화 + S3 저장 (90일 보관)
 - [x] **[완료] MariaDB → RDS 이전** (D-5, 2026-03-10: tutum-mariadb.cfoeqgoysp2f, backend-secret 패치 완료)
-- [ ] **[신규] SonarQube 배포** (D-6: CI/CD 코드 품질 게이트)
-- [ ] **[신규] Kiali 설치** (D-7: Istio 서비스 메시 시각화, InfluxDB 대체=Mimir 사용)
-- [ ] **[신규] Terraform IaC** (D-8: 기존 AWS 인프라 terraform import → 코드화)
+- [ ] **SonarQube 배포** (D-6: CI/CD 코드 품질 게이트)
+- [ ] **Kiali 설치** (D-7: Istio 서비스 메시 시각화, Mimir 연동)
+- [ ] **Terraform IaC** (D-8: 기존 AWS 인프라 terraform import → 코드화)
+- [ ] **[신규] MongoDB EC2 이전** (D-9): 독립 VM(192.168.0.231) → EC2 standalone, 앱 연결 변경
+- [ ] **[신규] LGTM Grafana 어드민 페이지 동작 확인** (D-9-V): Alloy→Mimir/Loki 메트릭/로그 수신 확인
+- [ ] **[신규] Kafka EC2 이전** (D-10): K8s StatefulSet → EC2 Docker Compose, Consumer 연결 전환
+- [ ] **[신규] Elasticsearch EKS StatefulSet 배포 + S3 스냅샷 복원** (D-4)
+- [ ] **[신규] 온프레미스 VM 워크로드 누락 항목 점검 + 전체 Gap 해소** (D-11)
 
 ### Phase E (컷오버) — ⬜ 미시작
 - [ ] ACM `*.tutum.my` 인증서 ISSUED 확인 후 ALB Ingress 생성
@@ -1892,3 +2472,54 @@ aws budgets create-budget \
 > **핵심**: 가비아에서 네임서버 변경이 사용자-facing 컷오버 포인트.
 > 네임서버를 되돌리는 것으로 온프레미스로 돌아올 수 있으므로
 > **온프레미스는 컷오버 후 최소 1주일 유지** 후 철수.
+
+---
+
+## 마이그레이션 진행률 대시보드
+
+> 마지막 업데이트: 2026-03-10
+
+### 전체 진행률: **35%** (22 / 62 항목 완료)
+
+```
+Phase A ████████████░░░░░░░░  63%  (5/8)   ← 기반 준비 대부분 완료
+Phase B ████████░░░░░░░░░░░░  40%  (8/20)  ← EKS 기본 완료, addon 이식 진행 중
+Phase C █████████████░░░░░░░  63%  (5/8)   ← 코드 완료, 파이프라인 실행 필요
+Phase D ████░░░░░░░░░░░░░░░░  24%  (4/17)  ← RDS/모니터링 완료, 데이터 이전 대기
+Phase E ░░░░░░░░░░░░░░░░░░░░   0%  (0/9)   ← 미시작 (Phase C/D 완료 후 진행)
+```
+
+### 완료된 주요 이정표
+
+| 완료일 | 항목 |
+|--------|------|
+| 2026-03-06 | ECR 레포지토리 3개 생성 (tutum/backend, frontend, workers) |
+| 2026-03-06 | EKS 클러스터 생성 (tutum-stg-eks, Auto Mode, v1.29) |
+| 2026-03-06 | VPC / NAT GW / ACM 인증서 설정 |
+| 2026-03-06 | Istio minimal profile 설치 (istiod, mTLS STRICT) |
+| 2026-03-06 | ALB Ingress Controller 설치 (v3.1.0) |
+| 2026-03-06 | ArgoCD 설치 (7/7 Running) |
+| 2026-03-06 | NetworkPolicy 이식 |
+| 2026-03-06 | GitLab CI ECR 전환 (.gitlab-ci.yml 코드 완료) |
+| 2026-03-06 | Cosign 새 키쌍 생성 + on-prem Kyverno 정책 적용 |
+| 2026-03-06 | Istio 이미지 ECR 미러링 완료 (pilot, proxyv2:1.25.0) |
+| 2026-03-10 | 모니터링 EC2 생성 (10.60.11.95, LGTM Docker Compose) |
+| 2026-03-10 | EKS Alloy DaemonSet → 모니터링 EC2 연결 |
+| 2026-03-10 | MariaDB → RDS 이전 완료 (tutum-mariadb.cfoeqgoysp2f) |
+
+### 다음 우선 작업 (블로커 순)
+
+| 우선순위 | 항목 | 섹션 | 이유 |
+|---|---|---|---|
+| 🔴 1 | COSIGN_PRIVATE_KEY GitLab 변수 업데이트 | C | 파이프라인 차단 중 |
+| 🔴 2 | 파이프라인 실행 (build→sign→deploy) | C | EKS 배포 차단 중 |
+| 🔴 3 | ArgoCD GitLab 리포 연결 + destination 변경 | B-7 | GitOps 미연결 |
+| 🟠 4 | KEDA EKS 설치 + ECR 미러링 (B-16) | B-5/B-16 | HPA 미작동 |
+| 🟠 5 | GitLab Runner EKS 설치 (B-17) | B-17 | 온프레미스 CI 의존 잔존 |
+| 🟠 6 | MongoDB EC2 이전 | D-9 | 독립 VM 폐기 조건 |
+| 🟠 7 | Kafka EC2 이전 | D-10 | K8s 워크로드 의존 제거 |
+| 🟡 8 | Kyverno EKS 설치 | B-6 | 이미지 서명 검증 미적용 |
+| 🟡 9 | Redis EKS StatefulSet 배포 | D-2 | 세션/캐시 미작동 |
+| 🟡 10 | Elasticsearch EKS 배포 + S3 스냅샷 복원 | D-4 | 뉴스 검색 미작동 |
+| 🟡 11 | LGTM 어드민 페이지 동작 확인 | D-9-V | 모니터링 검증 |
+| 🟡 12 | MinIO → S3 이전 | D-1 | 파일 업로드 미작동 |
