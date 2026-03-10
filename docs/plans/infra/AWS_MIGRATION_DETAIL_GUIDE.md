@@ -22,7 +22,7 @@
 | **외부 HTTPS** | Cloudflare Tunnel → 192.168.0.240 | Route53 → ALB (가비아 네임서버를 Route53으로 변경, Cloudflare 미사용) |
 | **Service Mesh** | Istio (istiod + IngressGateway, mTLS STRICT, tutum-app ns) | Istio minimal profile (istiod만, IngressGateway 제거, mTLS STRICT 유지) |
 | **MongoDB** | K8s StatefulSet **3-replica** (tutum-data ns, PVC 30Gi×3, worker1/2/3 분산) + 독립 VM (192.168.0.231, v7.0.30) | EKS StatefulSet 그대로 이식 |
-| **MariaDB** | 211.46.52.153:15432 (학원 공인 IP) | **변경 없음** (EKS NAT GW → 직접 접속) |
+| **MariaDB** | 211.46.52.153:15432 (학원 공인 IP) | **RDS 이전 완료** (D-5, 2026-03-10) — `tutum-mariadb.cfoeqgoysp2f.ap-northeast-2.rds.amazonaws.com:3306` |
 | **Redis** | K8s StatefulSet 3-replica, Master+2Replica (tutum-data, PVC 5Gi×3) | EKS StatefulSet 그대로 이식 |
 | **Kafka** | K8s StatefulSet KRaft 3-replica (tutum-data, PVC 20Gi×3, RF=3) | EKS StatefulSet 그대로 이식 |
 | **Elasticsearch** | K8s StatefulSet 1-replica (tutum-data, PVC 30Gi) | EKS StatefulSet 그대로 이식 + S3 스냅샷 복원 |
@@ -34,7 +34,7 @@
 | **StorageClass** | local-path-provisioner | AWS EBS CSI gp3 |
 
 ### 변경 없는 항목 (이전 불필요)
-- MariaDB: 학원 공인 IP(211.46.52.153:15432), EKS에서도 NAT GW → 직접 TCP 연결 (VPN 불필요)
+- ~~MariaDB: 학원 공인 IP(211.46.52.153:15432), EKS에서도 NAT GW → 직접 TCP 연결~~ → **RDS 이전 완료** (D-5, 2026-03-10, tutum-mariadb.cfoeqgoysp2f.ap-northeast-2.rds.amazonaws.com:3306)
 - GitLab: SaaS, CI/CD 파이프라인은 Phase C에서 이미 ECR 전환 완료
 - DNS: Cloudflare 미사용 — 가비아 레지스트라에서 네임서버를 Route53으로 변경 (Phase E 완료)
 
@@ -1461,13 +1461,20 @@ kubectl run mysql-client --image=mariadb:10.11 --rm -it --restart=Never -n tutum
 # MARIADB_URL: jdbc:mariadb://211.46.52.153:15432/team3 → jdbc:mariadb://<rds-endpoint>:3306/team3
 ```
 
+**완료 결과** (2026-03-10):
+- RDS Endpoint: `tutum-mariadb.cfoeqgoysp2f.ap-northeast-2.rds.amazonaws.com:3306`
+- DB: team3, User: tutum_admin, Password: Tutum2026RDS
+- SG: sg-0a8c73b3ea2d26143 (EKS Cluster SG → 3306, Monitoring EC2 SG → 3306)
+- 학원 DB 덤프: users(22 rows) + portfolios 복원 완료 (monitoring EC2 경유)
+- backend-secret: MARIADB_HOST/PORT/USER/PASSWORD 모두 RDS로 패치 완료
+
 **체크리스트**:
-- [ ] RDS Subnet Group 생성
-- [ ] RDS Security Group 생성 (EKS → 3306)
-- [ ] RDS MariaDB (db.t3.micro) 생성
-- [ ] 학원 DB 덤프 + RDS 복원
-- [ ] backend-secret MARIADB_URL 업데이트
-- [ ] 연결 테스트 (로그인/회원가입 E2E)
+- [x] RDS Subnet Group 생성 (tutum-rds-subnet-group)
+- [x] RDS Security Group 생성 (sg-0a8c73b3ea2d26143)
+- [x] RDS MariaDB (db.t3.micro) 생성 (MariaDB 10.11)
+- [x] 학원 DB 덤프 + RDS 복원 (monitoring EC2 중계, mysqldump → mysql)
+- [x] backend-secret MARIADB_HOST/PORT/USER/PASSWORD 패치
+- [ ] 연결 테스트 (로그인/회원가입 E2E) — 브라우저 E2E 필요
 
 ---
 
@@ -1577,6 +1584,61 @@ kubectl port-forward svc/kiali 20001:20001 -n istio-system
 - [ ] Kiali Operator Helm 설치
 - [ ] Kiali CR 생성 (Mimir/Tempo/Grafana 연동)
 - [ ] 서비스 메시 그래프 확인 (tutum-app 트래픽 흐름)
+
+---
+
+### D-8. Terraform IaC — 기존 AWS 인프라 코드화
+
+**배경**: 수동 AWS CLI/Console로 생성된 인프라를 Terraform으로 import → GitOps로 인프라 변경 이력 관리.
+
+**State Backend**: S3 버킷 + DynamoDB (별도 생성 필요)
+```bash
+aws s3api create-bucket --bucket tutum-terraform-state-903913341620 \
+  --region ap-northeast-2 --create-bucket-configuration LocationConstraint=ap-northeast-2
+aws s3api put-bucket-versioning --bucket tutum-terraform-state-903913341620 \
+  --versioning-configuration Status=Enabled
+aws dynamodb create-table --table-name tutum-terraform-locks \
+  --attribute-definitions AttributeName=LockID,AttributeType=S \
+  --key-schema AttributeName=LockID,KeyType=HASH \
+  --billing-mode PAY_PER_REQUEST --region ap-northeast-2
+```
+
+**Import 대상 리소스**:
+| 리소스 | ID |
+|--------|-----|
+| VPC | vpc-07de5077a86cac33f |
+| Subnet ×4 | public(2a/2b), private(2a/2b) |
+| IGW | igw-03917cebd25167079 |
+| NAT GW | nat-02d4de6a0d9b1cd72 |
+| SG ×3 | eks-cluster-sg, tutum-rds-sg, tutum-monitoring-sg |
+| EC2 | i-0a8cab5d5ce1cac60 (tutum-monitoring) |
+| RDS | tutum-mariadb |
+| Route53 | Z04669402IT42VPHL8CRP (tutum.my) |
+| ACM | cc8731ed-... (*.tutum.my) |
+| VPC Endpoints ×4 | S3, ECR DKR, ECR API, Secrets Manager |
+
+**EKS**: `data "aws_eks_cluster"` 로만 참조 (Auto Mode + Karpenter 관리 복잡성으로 직접 import 제외)
+
+**디렉토리 구조**:
+```
+terraform/
+├── versions.tf / backend.tf / variables.tf / main.tf / outputs.tf
+├── terraform.tfvars.example
+└── modules/
+    ├── networking/   # VPC, subnets, IGW, NAT, route tables, VPC endpoints
+    ├── security/     # Security Groups
+    ├── compute/      # EC2 (tutum-monitoring)
+    ├── database/     # RDS subnet group + MariaDB instance
+    └── dns/          # Route53 zone, ACM cert
+```
+
+**체크리스트**:
+- [ ] State Backend S3 + DynamoDB 생성
+- [ ] terraform/ 디렉토리 및 모든 모듈 파일 작성
+- [ ] `terraform init` 성공 (S3 backend 연결)
+- [ ] 전체 리소스 `terraform import` 완료
+- [ ] `terraform plan` → "No changes" 확인
+- [ ] `.gitignore`에 `terraform/terraform.tfvars` 추가 (RDS 비밀번호 보호)
 
 ---
 
@@ -1799,9 +1861,10 @@ aws budgets create-budget \
 - [x] EKS Alloy DaemonSet remote_write → 모니터링 EC2 내부 IP ← 완료
 - [ ] S3 Lifecycle 설정 (ocr-images 180일 만료, backups/ Glacier 30일)
 - [ ] CloudTrail 활성화 + S3 저장 (90일 보관)
-- [ ] **[신규] MariaDB → RDS 이전** (D-5: 회원정보 학원 서버 의존성 제거)
+- [x] **[완료] MariaDB → RDS 이전** (D-5, 2026-03-10: tutum-mariadb.cfoeqgoysp2f, backend-secret 패치 완료)
 - [ ] **[신규] SonarQube 배포** (D-6: CI/CD 코드 품질 게이트)
 - [ ] **[신규] Kiali 설치** (D-7: Istio 서비스 메시 시각화, InfluxDB 대체=Mimir 사용)
+- [ ] **[신규] Terraform IaC** (D-8: 기존 AWS 인프라 terraform import → 코드화)
 
 ### Phase E (컷오버) — ⬜ 미시작
 - [ ] ACM `*.tutum.my` 인증서 ISSUED 확인 후 ALB Ingress 생성
