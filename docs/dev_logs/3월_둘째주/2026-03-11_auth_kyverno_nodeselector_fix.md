@@ -96,12 +96,57 @@ nodeSelector:
 
 ---
 
-## 결과
+## 수정 항목 5: app workload nodeSelector 제거 (private-only → 없음)
 
-- ArgoCD tutum-app-staging: Synced
-- auth pod: private-only 노드에 정상 스케줄링 예정
-- Kyverno admission webhook: Sigstore TUF 정상 접근
-- Cosign 서명: auth:latest ECR 서명 아티팩트 존재
+**문제**: `private-only` 노드 1개가 CPU 95% 포화(1700m/1780m).
+EKS Auto Mode는 NodePool 제약으로 새 `private-only` 노드를 자동 프로비저닝 불가.
+모든 app pod가 하나의 private-only 노드에 집중되어 신규 RS 스케줄링 불가.
+
+**분석**: app 워크로드(auth/backend/frontend/workers)는 Istio sidecar가 있어 클러스터 내부 통신에는 인터넷 불필요.
+Kyverno(Sigstore TUF)와 GitLab Runner(CI 패키지)만 인터넷 접근이 필수.
+
+**수정**: auth/backend/frontend/workers/elasticsearch/kibana에서 nodeSelector 완전 제거.
+→ EKS Auto Mode가 `default` nodeclass 노드에 자유롭게 스케줄링.
+→ Kyverno + Runner만 `private-only` nodeSelector 유지.
+
+---
+
+## 수정 항목 6: Istio mTLS STRICT - mongodb-rs-init Job 연결 차단 수정
+
+**문제**: ArgoCD PostSync hook `mongodb-rs-init` Job이 MongoDB에 연결 불가.
+```
+MongoServerSelectionError: read ECONNRESET
+```
+원인: `tutum-data` 네임스페이스 mTLS STRICT + Job에 `sidecar.istio.io/inject: "false"` →
+Job(mTLS 없음)이 MongoDB(mTLS STRICT) 27017에 접근 시 Istio가 거부.
+
+**수정**: `k8s-manifests/base/ingress/peer-authentication.yaml`에 추가.
+```yaml
+# Kafka와 동일한 패턴
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: mongodb-permissive
+  namespace: tutum-data
+spec:
+  selector:
+    matchLabels:
+      app: mongodb
+  portLevelMtls:
+    "27017":
+      mode: PERMISSIVE
+```
+
+추가로 mongodb-0 pod를 재시작하여 6시간째 unhealthy 상태인 Istio 사이드카 복구.
+
+---
+
+## 최종 결과
+
+- ArgoCD tutum-staging: **Synced** (revision: 34e972d)
+- auth pod: **2/2 Running** ×2 (`default` nodeclass 노드에 스케줄링)
+- mongodb-rs-init Job: **Completed** (Replica set already initialized)
+- mongodb-0: **2/2 Running** (Istio sidecar 정상 복구)
 
 ---
 
@@ -109,11 +154,12 @@ nodeSelector:
 
 | 파일 | 변경 내용 |
 |------|----------|
-| `k8s-manifests/base/data/mongodb.yaml` | mongodb-rs-init Job ArgoCD hook 추가 |
+| `k8s-manifests/base/data/mongodb.yaml` | mongodb-rs-init Job ArgoCD PostSync hook 추가 |
 | `k8s-manifests/base/kyverno/kyverno-ecr-values.yaml` | 전체 컴포넌트 private-only nodeSelector 추가 |
-| `k8s-manifests/base/auth/deployment.yaml` | nodeSelector workload→EKS nodeclass |
-| `k8s-manifests/base/backend/deployment.yaml` | nodeSelector workload→EKS nodeclass |
-| `k8s-manifests/base/frontend/deployment.yaml` | nodeSelector workload→EKS nodeclass |
-| `k8s-manifests/base/data/elasticsearch.yaml` | nodeSelector workload→EKS nodeclass |
-| `k8s-manifests/base/data/kibana.yaml` | nodeSelector workload→EKS nodeclass |
-| `k8s-manifests/base/workers/*.yaml` (8개) | nodeSelector workload→EKS nodeclass |
+| `k8s-manifests/base/auth/deployment.yaml` | nodeSelector 완전 제거 |
+| `k8s-manifests/base/backend/deployment.yaml` | nodeSelector 완전 제거 |
+| `k8s-manifests/base/frontend/deployment.yaml` | nodeSelector 완전 제거 |
+| `k8s-manifests/base/data/elasticsearch.yaml` | nodeSelector 완전 제거 |
+| `k8s-manifests/base/data/kibana.yaml` | nodeSelector 완전 제거 |
+| `k8s-manifests/base/workers/*.yaml` (8개) | nodeSelector 완전 제거 |
+| `k8s-manifests/base/ingress/peer-authentication.yaml` | mongodb-permissive PeerAuthentication 추가 |
