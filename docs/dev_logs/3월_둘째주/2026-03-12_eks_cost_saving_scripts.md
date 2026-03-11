@@ -37,11 +37,19 @@
 4. 모니터링 EC2 중지 (Grafana/Loki/Tempo/Mimir/InfluxDB/SonarQube 포함)
 5. Karpenter가 5~10분 내 빈 노드 자동 제거 (Alloy DaemonSet도 자동 소멸)
 
-### 출근 순서 (eks-cost-up.sh)
-1. 모니터링 EC2 시작 (병렬로 시작해두기)
+### 퇴근 순서 (eks-cost-down.sh) — 최신
+1. **ArgoCD 먼저** scale 0 → selfHeal 차단
+2. **KEDA ScaledObjects pause** → minReplicas 기준 자동 복구 방지
+3. `tutum-app`, `tutum-data`, `tutum-storage` 전체 scale 0
+4. `gitlab-runner`, `kyverno`, `istio-ingressgateway` scale 0
+5. 모니터링 EC2 중지
+
+### 출근 순서 (eks-cost-up.sh) — 최신
+1. 모니터링 EC2 시작
 2. ArgoCD 컴포넌트 scale 1
 3. ArgoCD application-controller Ready 대기
-4. selfHeal이 tutum-staging 전체 복구 → Karpenter 노드 자동 프로비저닝
+4. **KEDA ScaledObjects resume** → selfHeal 복구 후 KEDA 정상 관리 재개
+5. ArgoCD selfHeal → tutum-staging 전체 복구 → Karpenter 노드 자동 프로비저닝
 
 ### 남는 고정 비용 (절감 불가)
 | 항목 | 비용 |
@@ -73,6 +81,15 @@ bash scripts/eks-cost-up.sh
 - 4~5개 노드 × $0.096/hr × 14hr ≈ **$5~8/일** 절감
 - 모니터링 EC2 중지 추가 절감
 
+## 트러블슈팅
+
+### KEDA가 scale=0 이후 pods 복구하는 문제 (발견 및 수정)
+- **증상**: cost-down 실행 후 backend/frontend/news-consumer/price-consumer pods가 다시 올라옴
+- **원인**: KEDA ScaledObjects의 `minReplicas` 설정이 scale=0을 override
+- **부작용**: PDB(`news-consumer-pdb`, `price-consumer-pdb`)가 pods 존재로 인해 Karpenter 노드 제거 차단
+- **해결**: cost-down에 `autoscaling.keda.sh/paused=true` annotation 추가, cost-up에 pause 해제 추가
+
 ## 커밋
 - `6248643` — feat(scripts): add eks-cost-down/up scripts for daily cost saving
 - `cf095a8` — docs(scripts): clarify all components covered by eks-cost-down
+- `743d541` — fix(scripts): add KEDA ScaledObject pause/resume to cost down/up scripts
