@@ -325,6 +325,7 @@ build:backend:
     - changes:
         - backend/**/*
     - if: '$CI_PIPELINE_SOURCE == "api"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
 
 build:workers:
   <<: *build_retry_registry
@@ -349,6 +350,7 @@ build:workers:
     - changes:
         - backend/**/*
     - if: '$CI_PIPELINE_SOURCE == "api"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
 
 security:backend:
   stage: security
@@ -499,6 +501,8 @@ deploy:staging:
     - if: '$CI_COMMIT_BRANCH == "develop"'
       changes:
         - backend/**/*
+    - if: '$CI_COMMIT_BRANCH == "develop" && $CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_COMMIT_BRANCH == "develop" && $CI_PIPELINE_SOURCE == "api"'
 
 deploy:production:
   stage: deploy
