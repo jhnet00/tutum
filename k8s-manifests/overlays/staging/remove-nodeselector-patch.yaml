@@ -92,6 +92,16 @@ spec:
       nodeSelector: null
 ---
 apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector: null
+---
+apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: elasticsearch
