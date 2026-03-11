@@ -30,3 +30,18 @@ spec:
   portLevelMtls:
     "9092":
       mode: PERMISSIVE
+---
+# mongodb-rs-init Job (sidecar.istio.io/inject: "false")이 MongoDB 27017에 접근할 수 있도록
+# MongoDB pod의 27017 포트만 PERMISSIVE로 허용
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: mongodb-permissive
+  namespace: tutum-data
+spec:
+  selector:
+    matchLabels:
+      app: mongodb
+  portLevelMtls:
+    "27017":
+      mode: PERMISSIVE
