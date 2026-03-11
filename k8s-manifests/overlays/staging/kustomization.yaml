@@ -6,6 +6,7 @@ resources:
   - alb-ingress.yaml
   - peer-authentication.yaml
   - private-nodepools.yaml
+  - eks-builtin-nodepools.yaml
 
 patches:
   - path: replicas-patch.yaml

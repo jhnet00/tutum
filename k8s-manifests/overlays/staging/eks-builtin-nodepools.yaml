@@ -1,0 +1,113 @@
+# EKS Auto Mode 기본 NodePool 비용 최적화
+# - general-purpose, system NodePool에 spot + instance-size large 제한 추가
+# - NodeClass: default (NAT 없음, ECR VPC endpoint로 internal 이미지 pull 가능)
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: general-purpose
+spec:
+  disruption:
+    budgets:
+      - nodes: 10%
+    consolidateAfter: 30s
+    consolidationPolicy: WhenEmptyOrUnderutilized
+  limits:
+    cpu: 32
+    memory: 64Gi
+  template:
+    metadata: {}
+    spec:
+      expireAfter: 336h
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: default
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values:
+            - spot
+            - on-demand
+        - key: eks.amazonaws.com/instance-category
+          operator: In
+          values:
+            - c
+            - m
+            - r
+        - key: eks.amazonaws.com/instance-generation
+          operator: Gt
+          values:
+            - "4"
+        - key: eks.amazonaws.com/instance-size
+          operator: In
+          values:
+            - small
+            - medium
+            - large
+        - key: kubernetes.io/arch
+          operator: In
+          values:
+            - amd64
+        - key: kubernetes.io/os
+          operator: In
+          values:
+            - linux
+      terminationGracePeriod: 24h0m0s
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: system
+spec:
+  disruption:
+    budgets:
+      - nodes: 10%
+    consolidateAfter: 30s
+    consolidationPolicy: WhenEmptyOrUnderutilized
+  limits:
+    cpu: 16
+    memory: 32Gi
+  template:
+    metadata: {}
+    spec:
+      expireAfter: 336h
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: default
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values:
+            - spot
+            - on-demand
+        - key: eks.amazonaws.com/instance-category
+          operator: In
+          values:
+            - c
+            - m
+            - r
+        - key: eks.amazonaws.com/instance-generation
+          operator: Gt
+          values:
+            - "4"
+        - key: eks.amazonaws.com/instance-size
+          operator: In
+          values:
+            - small
+            - medium
+            - large
+        - key: kubernetes.io/arch
+          operator: In
+          values:
+            - amd64
+            - arm64
+        - key: kubernetes.io/os
+          operator: In
+          values:
+            - linux
+      taints:
+        - key: CriticalAddonsOnly
+          effect: NoSchedule
+      terminationGracePeriod: 24h0m0s
