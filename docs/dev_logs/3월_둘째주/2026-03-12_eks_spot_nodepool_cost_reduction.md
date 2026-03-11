@@ -69,4 +69,5 @@ limits:
 - **레플리카셋(MongoDB/Kafka/Redis)**: 변경하지 않음 — 기존 3-replica 유지
 
 ## 커밋
-- `현재 커밋` — fix(staging): switch Karpenter NodePools to spot+on-demand with instance size limits
+- `8e81d3a` — fix(staging): switch Karpenter NodePools to spot+on-demand with size limits
+- `333955d` — fix(staging): add spot+size limits to EKS built-in NodePools (general-purpose, system)
