@@ -10,8 +10,9 @@
 
 ## 원인 분석
 
-### 1. on-demand 전용 NodePool
-- `private-general`, `private-system` 두 NodePool 모두 `capacity-type: on-demand`만 허용
+### 1. on-demand 전용 NodePool (4개 전부)
+- `private-general`, `private-system` (커스텀) + `general-purpose`, `system` (EKS Auto Mode 기본) 4개 모두 `capacity-type: on-demand`만 허용
+- 특히 `general-purpose`가 9개 노드를 유지하고 있었음 — 비용의 주범
 - Spot 인스턴스 미사용 → on-demand 대비 ~70% 추가 비용 발생
 
 ### 2. 인스턴스 크기 무제한
@@ -23,7 +24,7 @@
 
 ### k8s-manifests/overlays/staging/private-nodepools.yaml
 
-두 NodePool(`private-general`, `private-system`) 모두 동일하게 적용:
+`private-general`, `private-system` 두 NodePool 동일하게 적용:
 
 ```yaml
 # 1. Spot 우선, on-demand fallback
@@ -48,6 +49,22 @@ limits:
 # (private-system: cpu:16, memory:32Gi)
 ```
 
+### k8s-manifests/overlays/staging/eks-builtin-nodepools.yaml (신규)
+
+EKS Auto Mode 기본 NodePool(`general-purpose`, `system`)에 동일한 변경 적용:
+- `general-purpose`: 9개 노드 운영 중, NodeClass `default` (NAT 없음, ECR VPC endpoint로 이미지 pull)
+- `system`: 2개 노드, arm64 아키텍처 추가 허용, `CriticalAddonsOnly` taint 유지
+- `kubectl patch`로 즉시 반영 + ArgoCD 관리 대상으로 git에 추가 (영구 유지)
+
+### 최종 상태 (4개 NodePool 전부)
+
+| NodePool | 변경 전 | 변경 후 |
+|----------|--------|--------|
+| `general-purpose` (9노드) | on-demand, 크기 무제한 | spot+on-demand, large 이하, cpu:32 |
+| `private-general` (3노드) | on-demand, 크기 무제한 | spot+on-demand, large 이하, cpu:32 |
+| `private-system` (1노드) | on-demand, 크기 무제한 | spot+on-demand, large 이하, cpu:16 |
+| `system` (2노드) | on-demand, 크기 무제한 | spot+on-demand, large 이하, cpu:16 |
+
 ## 예상 절감 효과
 
 | 항목 | 변경 전 | 변경 후 |
@@ -71,3 +88,4 @@ limits:
 ## 커밋
 - `8e81d3a` — fix(staging): switch Karpenter NodePools to spot+on-demand with size limits
 - `333955d` — fix(staging): add spot+size limits to EKS built-in NodePools (general-purpose, system)
+- `fed7bc8` — docs(dev_logs): update 2026-03-12 cost reduction log with all 4 NodePool changes
