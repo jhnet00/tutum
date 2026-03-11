@@ -1,6 +1,6 @@
-# ArgoCD self-management Application
+# ArgoCD self-management Application (kustomize 방식)
 # ArgoCD 컴포넌트를 private-only 노드로 고정하고 repo-server 타임아웃 설정
-# ServerSideApply=true: partial spec으로 지정된 필드만 관리 (나머지 필드 간섭 없음)
+# base: ArgoCD v3.3.2 upstream install.yaml + SMP 패치
 # 실행: kubectl apply -f k8s-manifests/argocd/argocd-config-app.yaml -n argocd
 
 apiVersion: argoproj.io/v1alpha1
@@ -16,8 +16,6 @@ spec:
     repoURL: https://gitlab.com/tutum-project/tutum-app/backend.git
     targetRevision: develop
     path: k8s-manifests/apps/argocd
-    directory:
-      recurse: false
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
@@ -26,7 +24,6 @@ spec:
       prune: false
       selfHeal: true
     syncOptions:
-      - ServerSideApply=true
       - ApplyOutOfSyncOnly=true
     retry:
       limit: 3

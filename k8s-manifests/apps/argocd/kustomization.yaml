@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# ArgoCD v3.3.2 upstream 기준 — 버전 업그레이드 시 URL도 함께 변경
+resources:
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.3.2/manifests/install.yaml
+
+patches:
+  - path: node-selector-patch.yaml
+  - path: repo-server-config-patch.yaml

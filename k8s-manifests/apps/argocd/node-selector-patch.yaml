@@ -1,20 +1,23 @@
-# ArgoCD 컴포넌트 private-only nodeSelector 패치
+# ArgoCD 컴포넌트 private-only nodeSelector 패치 (kustomize SMP)
 # 목적: default nodeclass 노드(NAT 없음)에서 이미지 pull 실패 방지
-# spec.selector + template.labels 포함 (SSA 유효성 검증 통과용)
+# namespace는 kustomization.yaml base의 리소스 namespace에 맞춰 지정 안 함
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: argocd-server
-  namespace: argocd
 spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: argocd-server
   template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: argocd-server
+    spec:
+      nodeSelector:
+        eks.amazonaws.com/nodeclass: private-only
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-repo-server
+spec:
+  template:
     spec:
       nodeSelector:
         eks.amazonaws.com/nodeclass: private-only
@@ -23,15 +26,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: argocd-applicationset-controller
-  namespace: argocd
 spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: argocd-applicationset-controller
   template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: argocd-applicationset-controller
     spec:
       nodeSelector:
         eks.amazonaws.com/nodeclass: private-only
@@ -40,15 +36,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: argocd-notifications-controller
-  namespace: argocd
 spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: argocd-notifications-controller
   template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: argocd-notifications-controller
     spec:
       nodeSelector:
         eks.amazonaws.com/nodeclass: private-only
@@ -57,15 +46,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: argocd-dex-server
-  namespace: argocd
 spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: argocd-dex-server
   template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: argocd-dex-server
     spec:
       nodeSelector:
         eks.amazonaws.com/nodeclass: private-only
@@ -74,15 +56,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: argocd-redis
-  namespace: argocd
 spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: argocd-redis
   template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: argocd-redis
     spec:
       nodeSelector:
         eks.amazonaws.com/nodeclass: private-only
@@ -91,15 +66,8 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: argocd-application-controller
-  namespace: argocd
 spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: argocd-application-controller
   template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: argocd-application-controller
     spec:
       nodeSelector:
         eks.amazonaws.com/nodeclass: private-only
