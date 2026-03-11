@@ -9,6 +9,8 @@ resources:
   - backend/service.yaml
   - backend/secret.yaml
   - backend/rbac.yaml
+  - auth/deployment.yaml
+  - auth/service.yaml
   - ingress/gateway.yaml
   - ingress/virtualservice.yaml
   - ingress/peer-authentication.yaml

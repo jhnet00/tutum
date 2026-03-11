@@ -1,0 +1,136 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth
+  namespace: tutum-app
+  labels:
+    app: auth
+    version: v1
+    app.kubernetes.io/name: auth
+    app.kubernetes.io/part-of: tutum
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth
+  template:
+    metadata:
+      labels:
+        app: auth
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: backend-sa
+      nodeSelector:
+        workload: app
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: auth
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: auth
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/auth:latest
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: MONGODB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MONGODB_URL
+            - name: REDIS_URL
+              value: "redis://redis.tutum-data.svc.cluster.local:6379"
+            - name: MARIADB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MARIADB_HOST
+            - name: MARIADB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MARIADB_PORT
+            - name: MARIADB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MARIADB_USER
+            - name: MARIADB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MARIADB_PASSWORD
+            - name: MARIADB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: MARIADB_DATABASE
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: SECRET_KEY
+            - name: GOOGLE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: GOOGLE_CLIENT_ID
+                  optional: true
+            - name: GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: GOOGLE_CLIENT_SECRET
+                  optional: true
+            - name: GOOGLE_REDIRECT_URI
+              value: "https://tutum.my/api/v1/auth/google/callback"
+            - name: NAVER_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: NAVER_CLIENT_ID
+                  optional: true
+            - name: NAVER_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: NAVER_CLIENT_SECRET
+                  optional: true
+            - name: NAVER_REDIRECT_URI
+              value: "https://tutum.my/api/v1/auth/naver/callback"
+            - name: FRONTEND_URL
+              value: "https://tutum.my"
+            - name: CORS_ORIGINS
+              value: '["https://tutum.my"]'
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              cpu: "500m"
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
