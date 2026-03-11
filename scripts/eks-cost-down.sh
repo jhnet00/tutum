@@ -48,7 +48,13 @@ kubectl scale statefulset argocd-application-controller   -n argocd --replicas=0
 #                 각종 exporter (Deployment)
 #   tutum-storage: minio (StatefulSet)
 # ─────────────────────────────────────────
-log "[2/5] 애플리케이션·데이터·스토리지 워크로드 스케일 다운"
+log "[2/6] KEDA ScaledObjects 일시 중지 (재스케일 방지)"
+# KEDA가 scale=0 이후 minReplicas 기준으로 복구하는 것을 막음
+for so in $(kubectl get scaledobject -n tutum-app -o name 2>/dev/null); do
+  kubectl annotate "$so" -n tutum-app autoscaling.keda.sh/paused=true --overwrite
+done
+
+log "[3/6] 애플리케이션·데이터·스토리지 워크로드 스케일 다운"
 
 for ns in tutum-app tutum-data tutum-storage; do
   warn "  → namespace: $ns"
@@ -62,7 +68,7 @@ done
 #   monitoring(alloy)은 DaemonSet → 직접 scale 불가,
 #   노드가 제거되면 자동 소멸
 # ─────────────────────────────────────────
-log "[3/5] gitlab-runner / kyverno / istio 스케일 다운"
+log "[4/6] gitlab-runner / kyverno / istio 스케일 다운"
 
 kubectl scale deployment --all -n gitlab-runner --replicas=0 2>/dev/null || true
 kubectl scale deployment --all -n kyverno       --replicas=0 2>/dev/null || true
@@ -77,7 +83,7 @@ kubectl scale deployment istio-ingressgateway -n istio-system --replicas=0 2>/de
 #   Grafana(:3000), Loki(:3100), Tempo(:3200),
 #   Mimir(:9009), InfluxDB(:8086), SonarQube(:9000)
 # ─────────────────────────────────────────
-log "[4/5] 모니터링 EC2 인스턴스 중지 (i-0a8cab5d5ce1cac60)"
+log "[5/6] 모니터링 EC2 인스턴스 중지 (i-0a8cab5d5ce1cac60)"
 log "       포함: Grafana / Loki / Tempo / Mimir / InfluxDB / SonarQube"
 aws ec2 stop-instances \
   --instance-ids i-0a8cab5d5ce1cac60 \
@@ -88,7 +94,7 @@ aws ec2 stop-instances \
 # ─────────────────────────────────────────
 # STEP 5: 완료 안내
 # ─────────────────────────────────────────
-log "[5/5] 완료"
+log "[6/6] 완료"
 echo ""
 echo "✅ 스케일다운 완료. Karpenter가 5~10분 내로 빈 노드를 자동 제거합니다."
 echo "   (Alloy DaemonSet은 노드 제거 시 자동 소멸)"

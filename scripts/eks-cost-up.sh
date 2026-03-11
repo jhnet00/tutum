@@ -40,14 +40,24 @@ kubectl scale deployment argocd-notifications-controller  -n argocd --replicas=1
 # ─────────────────────────────────────────
 # STEP 3: ArgoCD Ready 대기
 # ─────────────────────────────────────────
-log "[3/4] ArgoCD application-controller 준비 대기 (최대 3분)"
+log "[3/5] ArgoCD application-controller 준비 대기 (최대 3분)"
 kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=180s
 kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=120s
 
 # ─────────────────────────────────────────
-# STEP 4: 완료 안내
+# STEP 4: KEDA ScaledObjects 재개
+#   ArgoCD selfHeal이 replicas를 복구하기 전에 KEDA pause 해제
+#   → KEDA가 정상적으로 min/max replica 관리 재개
 # ─────────────────────────────────────────
-log "[4/4] 완료"
+log "[4/5] KEDA ScaledObjects 재개"
+for so in $(kubectl get scaledobject -n tutum-app -o name 2>/dev/null); do
+  kubectl annotate "$so" -n tutum-app autoscaling.keda.sh/paused- --overwrite 2>/dev/null || true
+done
+
+# ─────────────────────────────────────────
+# STEP 5: 완료 안내
+# ─────────────────────────────────────────
+log "[5/5] 완료"
 echo ""
 echo "✅ ArgoCD 복구 완료. git 상태(selfHeal: true) 기준으로 자동 복구 시작됩니다."
 echo ""
