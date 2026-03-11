@@ -69,7 +69,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: mongodb
-          image: mongo:7.0
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/mongo:7.0
           imagePullPolicy: IfNotPresent
           command: ["mongod"]
           args:
@@ -142,7 +142,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: mongodb-rs-init
-          image: mongo:7.0
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/mongo:7.0
           imagePullPolicy: IfNotPresent
           command:
             - sh

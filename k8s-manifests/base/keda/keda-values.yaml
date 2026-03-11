@@ -1,0 +1,18 @@
+# KEDA v2.16.1 Helm values — ECR 이미지 미러
+# EKS private subnet 노드에서 ghcr.io 접근 불가 → ECR 미러 사용
+# chart: keda/keda v2.16.1
+# helm upgrade keda keda/keda -n keda --version 2.16.1 -f keda-values.yaml
+
+image:
+  keda:
+    registry: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com
+    repository: kedacore/keda
+    tag: 2.16.1
+  metricsApiServer:
+    registry: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com
+    repository: kedacore/keda-metrics-apiserver
+    tag: 2.16.1
+  webhooks:
+    registry: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com
+    repository: kedacore/keda-admission-webhooks
+    tag: 2.16.1

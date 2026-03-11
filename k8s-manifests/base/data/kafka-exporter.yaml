@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
         - name: kafka-exporter
-          image: danielqsj/kafka-exporter:latest
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/danielqsj/kafka-exporter:latest
           imagePullPolicy: IfNotPresent
           args:
             - --kafka.server=kafka.tutum-data.svc.cluster.local:9092

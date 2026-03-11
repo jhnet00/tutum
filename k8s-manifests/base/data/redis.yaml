@@ -68,7 +68,7 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
         - name: redis
-          image: redis:7-alpine
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/redis:7-alpine
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh

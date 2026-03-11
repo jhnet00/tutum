@@ -71,8 +71,18 @@ spec:
       # Prevent service env injection (e.g., KAFKA_PORT) from breaking cp-kafka env parsing.
       enableServiceLinks: false
       initContainers:
+        - name: remove-lost-found
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/busybox:1.35
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - rm -rf /var/lib/kafka/data/lost+found && echo 'Cleaned up lost+found'
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
         - name: wait-for-peers
-          image: busybox:1.35
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/busybox:1.35
           command:
             - /bin/sh
             - -c
@@ -86,7 +96,7 @@ spec:
               echo "All Kafka peers resolvable. Starting Kafka."
       containers:
         - name: kafka
-          image: confluentinc/cp-kafka:7.5.0
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/confluentinc/cp-kafka:7.5.0
           imagePullPolicy: IfNotPresent
           command:
             - /bin/bash

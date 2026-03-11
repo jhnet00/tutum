@@ -42,7 +42,7 @@ spec:
       # initContainer로 MinIO 자격증명을 ES keystore에 주입 → S3 스냅샷 저장소 등록 시 인증 사용
       initContainers:
         - name: setup-keystore
-          image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/elasticsearch/elasticsearch:8.17.0
           command:
             - sh
             - -c
@@ -80,7 +80,7 @@ spec:
           emptyDir: {}
       containers:
         - name: elasticsearch
-          image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/elasticsearch/elasticsearch:8.17.0
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 9200

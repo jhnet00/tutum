@@ -54,7 +54,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: ecr-token-refresher
-              image: amazon/aws-cli:2.15.0
+              image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/amazon/aws-cli:2.15.0
               env:
                 - name: AWS_REGION
                   value: ap-northeast-2

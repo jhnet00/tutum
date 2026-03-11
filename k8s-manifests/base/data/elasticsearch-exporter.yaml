@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
         - name: elasticsearch-exporter
-          image: quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/prometheuscommunity/elasticsearch-exporter:v1.7.0
           imagePullPolicy: IfNotPresent
           args:
             - --es.uri=http://elasticsearch.tutum-data.svc.cluster.local:9200

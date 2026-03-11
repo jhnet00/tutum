@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
         - name: redis-exporter
-          image: oliver006/redis_exporter:v1.62.0
+          image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/oliver006/redis_exporter:v1.62.0
           imagePullPolicy: IfNotPresent
           args:
             - --redis.addr=redis://redis.tutum-data.svc.cluster.local:6379

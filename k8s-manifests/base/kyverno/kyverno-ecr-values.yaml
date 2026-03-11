@@ -1,0 +1,28 @@
+# Kyverno v1.17.1 Helm values — ECR 이미지 미러 (전체)
+# EKS private subnet 노드에서 reg.kyverno.io 접근 불가 → ECR 미러 사용
+# chart: kyverno/kyverno v3.7.1
+# helm upgrade kyverno kyverno/kyverno -n kyverno --version 3.7.1 -f kyverno-ecr-values.yaml
+
+admissionController:
+  initContainer:
+    image:
+      registry: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com
+      repository: kyverno/kyvernopre
+      tag: v1.17.1
+  container:
+    image:
+      registry: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com
+      repository: kyverno/kyverno
+      tag: v1.17.1
+
+backgroundController:
+  image:
+    registry: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com
+    repository: kyverno/background-controller
+    tag: v1.17.1
+
+cleanupController:
+  image:
+    registry: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com
+    repository: kyverno/cleanup-controller
+    tag: v1.17.1

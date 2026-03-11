@@ -29,7 +29,7 @@ variables:
 # GitLab commit policy guard (ignored files such as env examples are allowed)
 guard:commit-policy:
   stage: guard
-  image: alpine:3.20
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/alpine:3.20
   allow_failure: true
   before_script:
     - apk add --no-cache git
@@ -352,7 +352,7 @@ build:workers:
 security:backend:
   stage: security
   tags: [k8s]
-  image: aquasec/trivy:latest
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/aquasec/trivy:latest
   variables:
     TRIVY_DB_REPOSITORY: "ghcr.io/aquasecurity/trivy-db:2"
   before_script:
@@ -374,7 +374,7 @@ security:backend:
 security:workers:
   stage: security
   tags: [k8s]
-  image: aquasec/trivy:latest
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/aquasec/trivy:latest
   variables:
     TRIVY_DB_REPOSITORY: "ghcr.io/aquasecurity/trivy-db:2"
   before_script:
@@ -396,7 +396,7 @@ security:workers:
 sign:backend:
   stage: sign
   tags: [k8s]
-  image: alpine:3.20
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/alpine:3.20
   variables:
     COSIGN_YES: "true"
   before_script:
@@ -421,7 +421,7 @@ sign:backend:
 sign:workers:
   stage: sign
   tags: [k8s]
-  image: alpine:3.20
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/alpine:3.20
   variables:
     COSIGN_YES: "true"
   before_script:
@@ -445,7 +445,7 @@ sign:workers:
 
 deploy:staging:
   stage: deploy
-  image: alpine:3.20
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/alpine:3.20
   before_script:
     - apk add --no-cache git
     - |
@@ -501,7 +501,7 @@ deploy:staging:
 
 deploy:production:
   stage: deploy
-  image: alpine:3.20
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/alpine:3.20
   before_script:
     - apk add --no-cache git
     - |
