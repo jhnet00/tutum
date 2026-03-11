@@ -5,6 +5,7 @@ resources:
   - ../../base
   - alb-ingress.yaml
   - peer-authentication.yaml
+  - private-nodepools.yaml
 
 patches:
   - path: replicas-patch.yaml
@@ -17,5 +18,3 @@ images:
     newTag: 61e93665
   - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/workers
     newTag: 61e93665
-  - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/auth
-    newTag: latest

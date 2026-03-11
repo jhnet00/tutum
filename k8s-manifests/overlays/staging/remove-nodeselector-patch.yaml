@@ -1,5 +1,6 @@
-# EKS Auto Mode용 nodeSelector 제거 패치
-# on-prem 노드 레이블(workload=app/data/consumer)이 EKS에 없으므로 제거
+# Staging workloads that need egress or stable image pulls must stay on
+# private-only EKS Auto Mode nodes. The default nodeclass can land on
+# public-route subnets without NAT and cause intermittent failures.
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -9,7 +10,9 @@ metadata:
 spec:
   template:
     spec:
-      nodeSelector: null
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -19,7 +22,9 @@ metadata:
 spec:
   template:
     spec:
-      nodeSelector: null
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -29,7 +34,9 @@ metadata:
 spec:
   template:
     spec:
-      nodeSelector: null
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -39,7 +46,9 @@ metadata:
 spec:
   template:
     spec:
-      nodeSelector: null
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -49,7 +58,9 @@ metadata:
 spec:
   template:
     spec:
-      nodeSelector: null
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -59,7 +70,9 @@ metadata:
 spec:
   template:
     spec:
-      nodeSelector: null
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -69,7 +82,9 @@ metadata:
 spec:
   template:
     spec:
-      nodeSelector: null
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -79,7 +94,9 @@ metadata:
 spec:
   template:
     spec:
-      nodeSelector: null
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -89,7 +106,9 @@ metadata:
 spec:
   template:
     spec:
-      nodeSelector: null
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -99,7 +118,9 @@ metadata:
 spec:
   template:
     spec:
-      nodeSelector: null
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -109,10 +130,9 @@ metadata:
 spec:
   template:
     spec:
-      nodeSelector: null
-      securityContext:
-        fsGroup: 1000
-        runAsUser: 1000
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -122,13 +142,6 @@ metadata:
 spec:
   template:
     spec:
-      nodeSelector: null
-      securityContext:
-        fsGroup: 1000
-      initContainers:
-        - name: remove-lost-found
-          image: busybox:1.35
-          command: ["sh", "-c", "rm -rf /var/lib/kafka/data/lost+found && echo 'Cleaned up lost+found'"]
-          volumeMounts:
-            - name: kafka-data
-              mountPath: /var/lib/kafka/data
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
