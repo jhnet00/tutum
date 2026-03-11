@@ -1,6 +1,6 @@
 # ArgoCD 컴포넌트 private-only nodeSelector 패치
-# ServerSideApply로 적용 — 이 파일에서 명시한 필드만 관리됨
-# 목적: default nodeclass 노드에서 NAT 없는 노드로 이미지 pull 실패 방지
+# 목적: default nodeclass 노드(NAT 없음)에서 이미지 pull 실패 방지
+# spec.selector + template.labels 포함 (SSA 유효성 검증 통과용)
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -8,18 +8,13 @@ metadata:
   name: argocd-server
   namespace: argocd
 spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-server
   template:
-    spec:
-      nodeSelector:
-        eks.amazonaws.com/nodeclass: private-only
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: argocd-repo-server
-  namespace: argocd
-spec:
-  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argocd-server
     spec:
       nodeSelector:
         eks.amazonaws.com/nodeclass: private-only
@@ -30,7 +25,13 @@ metadata:
   name: argocd-applicationset-controller
   namespace: argocd
 spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-applicationset-controller
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argocd-applicationset-controller
     spec:
       nodeSelector:
         eks.amazonaws.com/nodeclass: private-only
@@ -41,7 +42,13 @@ metadata:
   name: argocd-notifications-controller
   namespace: argocd
 spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-notifications-controller
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argocd-notifications-controller
     spec:
       nodeSelector:
         eks.amazonaws.com/nodeclass: private-only
@@ -52,7 +59,13 @@ metadata:
   name: argocd-dex-server
   namespace: argocd
 spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-dex-server
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argocd-dex-server
     spec:
       nodeSelector:
         eks.amazonaws.com/nodeclass: private-only
@@ -63,7 +76,13 @@ metadata:
   name: argocd-redis
   namespace: argocd
 spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-redis
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argocd-redis
     spec:
       nodeSelector:
         eks.amazonaws.com/nodeclass: private-only
@@ -74,7 +93,13 @@ metadata:
   name: argocd-application-controller
   namespace: argocd
 spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-application-controller
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argocd-application-controller
     spec:
       nodeSelector:
         eks.amazonaws.com/nodeclass: private-only
