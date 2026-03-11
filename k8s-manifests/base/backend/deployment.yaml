@@ -24,8 +24,6 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: backend-sa
-      nodeSelector:
-        eks.amazonaws.com/nodeclass: private-only
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:

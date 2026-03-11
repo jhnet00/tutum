@@ -17,8 +17,6 @@ spec:
       labels:
         app: price-producer
     spec:
-      nodeSelector:
-        eks.amazonaws.com/nodeclass: private-only
       imagePullSecrets:
         - name: gitlab-registry-secret
       containers:

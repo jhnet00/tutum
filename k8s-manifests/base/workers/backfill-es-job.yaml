@@ -18,8 +18,6 @@ spec:
         app: es-backfill
     spec:
       restartPolicy: OnFailure
-      nodeSelector:
-        eks.amazonaws.com/nodeclass: private-only
       imagePullSecrets:
         - name: gitlab-registry-secret
       containers:

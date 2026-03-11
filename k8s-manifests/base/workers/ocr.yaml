@@ -17,8 +17,6 @@ spec:
         app: ocr
         version: v1
     spec:
-      nodeSelector:
-        eks.amazonaws.com/nodeclass: private-only
       containers:
         - name: ocr
           image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/backend:latest
