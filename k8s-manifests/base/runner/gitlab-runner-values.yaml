@@ -26,6 +26,9 @@ runners:
         privileged = true
         pull_policy = ["if-not-present", "always"]
         helper_image = "903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/gitlab-org/gitlab-runner-helper:x86_64-v18.9.0"
+        # job pod을 private-only 노드(NAT GW 있음)에 스케줄 → 외부 레지스트리 pull 가능
+        [runners.kubernetes.node_selector]
+          "eks.amazonaws.com/nodeclass" = "private-only"
         [[runners.kubernetes.volumes.empty_dir]]
           name = "docker-certs"
           mount_path = "/certs/client"

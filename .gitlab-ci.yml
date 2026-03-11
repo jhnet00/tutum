@@ -22,7 +22,8 @@ default:
 variables:
   BACKEND_IMAGE: "${ECR_REGISTRY}/tutum/backend"
   WORKERS_IMAGE: "${ECR_REGISTRY}/tutum/workers"
-  K8S_MANIFESTS_REPO: "https://gitlab.com/tutum-project/tutum-app/k8s-manifests.git"
+  # 매니페스트는 동일 레포(tutum-backend)의 overlays/에 위치 → ArgoCD가 같은 레포 감시
+  K8S_MANIFESTS_REPO: "https://gitlab.com/tutum-project/tutum-app/tutum-backend.git"
   STAGING_MANIFEST: "overlays/staging/kustomization.yaml"
   PRODUCTION_MANIFEST: "overlays/production/kustomization.yaml"
 
@@ -59,7 +60,7 @@ guard:commit-policy:
 
 lint:backend:
   stage: lint
-  image: python:3.11-slim
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/python:3.11-slim
   script:
     - pip install flake8
     - flake8 backend/app --max-line-length=120
@@ -71,7 +72,7 @@ lint:backend:
 
 test:backend:
   stage: test
-  image: python:3.11-slim
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/python:3.11-slim
   script:
     - |
       set -e
@@ -275,7 +276,7 @@ aws:eks-kubectl-smoke:
 sonar:backend:
   stage: scan
   tags: [k8s]
-  image: sonarsource/sonar-scanner-cli:latest
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/sonarsource/sonar-scanner-cli:latest
   variables:
     SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
   script:
@@ -305,7 +306,7 @@ build:backend:
   <<: *build_retry_registry
   stage: build
   image:
-    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
   variables:
     KUBERNETES_EPHEMERAL_STORAGE_REQUEST: "8Gi"
@@ -329,7 +330,7 @@ build:workers:
   <<: *build_retry_registry
   stage: build
   image:
-    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
   variables:
     KUBERNETES_EPHEMERAL_STORAGE_REQUEST: "4Gi"
@@ -558,7 +559,7 @@ deploy:production:
 
 notify:slack_on_failure:
   stage: notify
-  image: curlimages/curl:8.7.1
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/curlimages/curl:8.7.1
   allow_failure: true
   script:
     - |
@@ -569,7 +570,7 @@ notify:slack_on_failure:
 
 notify:slack_on_success:
   stage: notify
-  image: curlimages/curl:8.7.1
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/curlimages/curl:8.7.1
   allow_failure: true
   script:
     - |
