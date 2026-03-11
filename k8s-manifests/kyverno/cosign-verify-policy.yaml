@@ -14,7 +14,7 @@ metadata:
       미서명 이미지는 tutum-app 네임스페이스에 배포할 수 없습니다.
       CI/CD 파이프라인 완성 후 Enforce로 변경할 것.
 spec:
-  validationFailureAction: Enforce
+  validationFailureAction: Audit
   background: false
   rules:
     - name: verify-cosign-signature

@@ -19,21 +19,37 @@ spec:
         app: frontend
         version: v1
     spec:
-      nodeSelector:
-        eks.amazonaws.com/nodeclass: private-only
       containers:
         - name: frontend
           image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/frontend:latest
+          command:
+            - /bin/sh
+            - -lc
+          args:
+            - |
+              set -eu
+              node <<'NODE'
+              const fs = require("fs");
+              const path = "/app/.next/server/app/api/proxy/[...path]/route.js";
+              const source = fs.readFileSync(path, "utf8");
+              const target = 'let r;let o=process.env.BACKEND_INTERNAL_URL||"http://localhost:8000";if(!o)return console.error("[Proxy] ERROR: API base URL is not configured"),new Response(JSON.stringify({detail:"API base URL is not configured"}),{status:500,headers:{"Content-Type":"application/json"}});if("import"===t[0]){let e=process.env.OCR_SERVICE_URL||"http://ocr.tutum-app.svc.cluster.local:8002";r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}else r=new URL(`${o.replace(/\\/$/,"")}/${t.join("/")}`);';
+              const replacement = 'let r;let o=process.env.BACKEND_INTERNAL_URL||"http://backend-svc.tutum-app.svc.cluster.local:8000",n=process.env.AUTH_INTERNAL_URL||"http://auth-svc.tutum-app.svc.cluster.local:8001";if(!o)return console.error("[Proxy] ERROR: API base URL is not configured"),new Response(JSON.stringify({detail:"API base URL is not configured"}),{status:500,headers:{"Content-Type":"application/json"}});if("import"===t[0]){let e=process.env.OCR_SERVICE_URL||"http://ocr.tutum-app.svc.cluster.local:8002";r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}else{let e="api"===t[0]&&"v1"===t[1]&&"auth"===t[2]?n:o;r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}';
+              if (!source.includes(target)) {
+                throw new Error("frontend proxy patch target not found");
+              }
+              fs.writeFileSync(path, source.replace(target, replacement));
+              NODE
+              exec node server.js
           ports:
             - containerPort: 3000
               name: http
           env:
-            # Frontend server routes proxy both auth and backend APIs, so they must
-            # target the in-cluster ingress gateway instead of a single backend service.
             - name: BACKEND_INTERNAL_URL
-              value: "http://istio-ingressgateway.istio-system.svc.cluster.local"
+              value: "http://backend-svc.tutum-app.svc.cluster.local:8000"
+            - name: AUTH_INTERNAL_URL
+              value: "http://auth-svc.tutum-app.svc.cluster.local:8000"
             - name: API_BASE_URL
-              value: "http://istio-ingressgateway.istio-system.svc.cluster.local"
+              value: "http://backend-svc.tutum-app.svc.cluster.local:8000"
             - name: NEXT_PUBLIC_API_URL
               value: "/api/proxy"
             - name: NODE_ENV
