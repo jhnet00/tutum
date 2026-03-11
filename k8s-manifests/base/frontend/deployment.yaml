@@ -28,8 +28,14 @@ spec:
             - containerPort: 3000
               name: http
           env:
+            # Frontend server routes proxy both auth and backend APIs, so they must
+            # target the in-cluster ingress gateway instead of a single backend service.
+            - name: BACKEND_INTERNAL_URL
+              value: "http://istio-ingressgateway.istio-system.svc.cluster.local"
+            - name: API_BASE_URL
+              value: "http://istio-ingressgateway.istio-system.svc.cluster.local"
             - name: NEXT_PUBLIC_API_URL
-              value: "http://backend-svc:8000"
+              value: "/api/proxy"
             - name: NODE_ENV
               value: "production"
           resources:
