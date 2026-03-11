@@ -1,4 +1,4 @@
-# 2026-03-11 auth 배포 + ArgoCD 타임아웃 수정 + elasticsearch OOM 해결
+# 2026-03-11 auth 배포 + ArgoCD 타임아웃 수정 + elasticsearch OOM 해결 + ArgoCD self-management 영구 반영
 
 ## 작업자
 박성준
@@ -48,11 +48,40 @@ containers:
         memory: 3Gi      # 2Gi → 3Gi
 ```
 
-### ArgoCD in-cluster 패치 (git에 없음, 운영 중 적용)
-```bash
-kubectl patch deployment argocd-repo-server -n argocd \
-  --type json -p '[{"op":"add","path":"/spec/template/spec/containers/0/env/-",
-  "value":{"name":"ARGOCD_REPO_SERVER_TIMEOUT_SECONDS","value":"300"}}]'
+### 4. ArgoCD 전체 컴포넌트 private-only 고정 (영구 반영)
+- **배경**: default nodeclass 노드는 NAT 없음 → 재시작 시 `quay.io`, `public.ecr.aws` ImagePullBackOff
+- **해결**: 모든 ArgoCD 컴포넌트에 `nodeSelector: eks.amazonaws.com/nodeclass: private-only` 추가
+- **영구화**: ArgoCD self-management Application(`argocd-config`) 생성
+  - base: ArgoCD v3.3.2 upstream `install.yaml` + kustomize SMP 패치
+  - `selfHeal: true` — 재배포 후 자동으로 재적용
+
+## 적용된 변경사항
+
+### k8s-manifests/overlays/staging/replicas-patch.yaml
+```yaml
+containers:
+  - name: elasticsearch
+    resources:
+      requests:
+        cpu: 200m
+        memory: 2750Mi   # 512Mi → 2750Mi (8GB 노드 강제)
+      limits:
+        cpu: 2
+        memory: 3Gi      # 2Gi → 3Gi
+```
+
+### k8s-manifests/apps/argocd/ (신규)
+```
+apps/argocd/
+├── kustomization.yaml           # base: argoproj/argo-cd v3.3.2 install.yaml
+├── node-selector-patch.yaml     # 전체 컴포넌트 private-only nodeSelector
+└── repo-server-config-patch.yaml# timeout=300s, resource requests
+```
+
+### k8s-manifests/argocd/argocd-config-app.yaml (신규)
+```yaml
+# ArgoCD Application: path=k8s-manifests/apps/argocd
+# selfHeal: true, prune: false, ApplyOutOfSyncOnly
 ```
 
 ## 결과
@@ -62,15 +91,18 @@ kubectl patch deployment argocd-repo-server -n argocd \
 | auth 이미지 | `latest` | `679aba6f` ✅ |
 | ArgoCD kustomize | timeout 90s | timeout 300s ✅ |
 | elasticsearch 노드 | 4GB (OOM) | 8GB (정상) ✅ |
-| ArgoCD sync | Unknown Error | Synced (진행 중) |
+| elastic-consumer | CrashLoopBackOff | 2/2 Running ✅ |
+| ArgoCD sync | Unknown Error | Synced Healthy ✅ |
+| ArgoCD nodeSelector | in-cluster 임시 패치 | git 영구 반영 ✅ |
+| argocd-config App | 없음 | Synced Healthy ✅ |
 
 ## 커밋
 - `f4624a5` — fix(staging): increase elasticsearch memory request to 2Gi to prevent OOM kills
 - `accb1d4` — fix(staging): increase elasticsearch request/limit to 2750Mi/3Gi for 8GB node
-  - ⚠️ GitLab OAuth 만료로 push 보류 → 재인증 후 push 필요
+- `6778399` — docs(dev_logs): record auth deploy, ArgoCD fix, elasticsearch OOM resolution
+- `3e3c153` — feat(argocd): add self-management app to pin all components to private-only nodes
+- `0bb4fc7` — fix(argocd): add required selector/labels fields for SSA validation
+- `c85700c` — fix(argocd): fix kustomize patch namespace — remove explicit namespace from SMP
 
 ## 후속 과제
-- GitLab OAuth 재인증 후 `accb1d4` 커밋 push
-- ArgoCD sync 완료 확인 (elasticsearch healthy 후)
-- `elastic-consumer` CrashLoopBackOff 해소 확인 (elasticsearch 기동 완료 시 자동 해결 예상)
-- `argocd-server`, `argocd-applicationset-controller` 등 나머지 ArgoCD 컴포넌트 private-only 노드셀렉터 추가 (git에 반영 필요)
+- 없음 (모두 완료)
