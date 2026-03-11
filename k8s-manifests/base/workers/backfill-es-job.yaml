@@ -19,7 +19,7 @@ spec:
     spec:
       restartPolicy: OnFailure
       nodeSelector:
-        workload: app
+        eks.amazonaws.com/nodeclass: private-only
       imagePullSecrets:
         - name: gitlab-registry-secret
       containers:

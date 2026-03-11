@@ -37,7 +37,7 @@ spec:
         app: elasticsearch
     spec:
       nodeSelector:
-        workload: app
+        eks.amazonaws.com/nodeclass: private-only
       # ES 8.x: repository-s3는 내장 모듈 (플러그인 설치 불필요)
       # initContainer로 MinIO 자격증명을 ES keystore에 주입 → S3 스냅샷 저장소 등록 시 인증 사용
       initContainers:

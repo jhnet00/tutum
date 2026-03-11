@@ -20,7 +20,7 @@ spec:
         version: v1
     spec:
       nodeSelector:
-        workload: app
+        eks.amazonaws.com/nodeclass: private-only
       containers:
         - name: frontend
           image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/frontend:latest

@@ -2,8 +2,13 @@
 # EKS private subnet 노드에서 reg.kyverno.io 접근 불가 → ECR 미러 사용
 # chart: kyverno/kyverno v3.7.1
 # helm upgrade kyverno kyverno/kyverno -n kyverno --version 3.7.1 -f kyverno-ecr-values.yaml
+#
+# 모든 컴포넌트를 private-only 노드(NAT GW 있음)에 배치
+# → Sigstore TUF(sigstore.dev) 인터넷 접근 가능 → Cosign 서명 검증 정상 동작
 
 admissionController:
+  nodeSelector:
+    eks.amazonaws.com/nodeclass: private-only
   initContainer:
     image:
       registry: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com
@@ -16,13 +21,21 @@ admissionController:
       tag: v1.17.1
 
 backgroundController:
+  nodeSelector:
+    eks.amazonaws.com/nodeclass: private-only
   image:
     registry: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com
     repository: kyverno/background-controller
     tag: v1.17.1
 
 cleanupController:
+  nodeSelector:
+    eks.amazonaws.com/nodeclass: private-only
   image:
     registry: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com
     repository: kyverno/cleanup-controller
     tag: v1.17.1
+
+reportsController:
+  nodeSelector:
+    eks.amazonaws.com/nodeclass: private-only
