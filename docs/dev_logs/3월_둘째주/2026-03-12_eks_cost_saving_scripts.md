@@ -13,13 +13,29 @@
 ### 전략
 - **ArgoCD selfHeal 활용**: git이 원천(source of truth), ArgoCD가 올라오면 git 상태대로 자동 복구
 - **비용 절감 원리**: Deployment/StatefulSet 전체 replicas=0 → Karpenter 노드 자동 제거 (5~10분 내)
-- **모니터링 EC2 포함**: i-0a8cab5d5ce1cac60 (SonarQube + LGTM) aws stop/start
+- **모니터링 EC2 포함**: i-0a8cab5d5ce1cac60 (SonarQube + Grafana/Loki/Tempo/Mimir/InfluxDB) aws stop/start
+
+### 대상 컴포넌트 전체
+
+| 위치 | 네임스페이스 | 리소스 |
+|------|------------|-------|
+| EKS Karpenter | `tutum-app` | backend, frontend, auth, elastic-consumer, news-consumer/producer, price-consumer/producer, email-worker, ocr (Deployment) |
+| EKS Karpenter | `tutum-data` | mongodb, kafka, redis, elasticsearch (StatefulSet) + exporter들 (Deployment) |
+| EKS Karpenter | `tutum-storage` | minio (StatefulSet) |
+| EKS Karpenter | `gitlab-runner` | gitlab-runner (Deployment) |
+| EKS Karpenter | `kyverno` | kyverno (Deployment/StatefulSet) |
+| EKS Karpenter | `istio-system` | istio-ingressgateway (Deployment) |
+| EKS Karpenter | `argocd` | argocd-server, repo-server, application-controller 등 |
+| EKS Karpenter | `monitoring` | alloy (DaemonSet) → 노드 제거 시 자동 소멸, 직접 scale 불가 |
+| EC2 Docker Compose | - | Grafana(:3000), Loki(:3100), Tempo(:3200), Mimir(:9009), InfluxDB(:8086), SonarQube(:9000) |
 
 ### 퇴근 순서 (eks-cost-down.sh)
 1. **ArgoCD 먼저** 0으로 내리기 → selfHeal이 되돌리는 것을 차단
 2. `tutum-app`, `tutum-data`, `tutum-storage` 전체 scale 0
+   - MongoDB, Kafka, Redis, Elasticsearch, MinIO 포함
 3. `gitlab-runner`, `kyverno`, `istio-ingressgateway` scale 0
-4. 모니터링 EC2 중지
+4. 모니터링 EC2 중지 (Grafana/Loki/Tempo/Mimir/InfluxDB/SonarQube 포함)
+5. Karpenter가 5~10분 내 빈 노드 자동 제거 (Alloy DaemonSet도 자동 소멸)
 
 ### 출근 순서 (eks-cost-up.sh)
 1. 모니터링 EC2 시작 (병렬로 시작해두기)
@@ -39,8 +55,8 @@
 
 | 파일 | 설명 |
 |------|------|
-| `scripts/eks-cost-down.sh` | 퇴근 시 실행 — 전체 scale 0 |
-| `scripts/eks-cost-up.sh` | 출근 시 실행 — ArgoCD 복구 → selfHeal |
+| `scripts/eks-cost-down.sh` | 퇴근 시 실행 — 전체 scale 0 + EC2 중지 |
+| `scripts/eks-cost-up.sh` | 출근 시 실행 — EC2 시작 + ArgoCD 복구 → selfHeal |
 
 ## 사용법
 
@@ -55,7 +71,8 @@ bash scripts/eks-cost-up.sh
 ## 예상 절감 효과
 - Karpenter EC2 노드 과금 중단 (야간 14시간 기준)
 - 4~5개 노드 × $0.096/hr × 14hr ≈ **$5~8/일** 절감
-- 모니터링 EC2 (t3.small 또는 동급) 중지 추가 절감
+- 모니터링 EC2 중지 추가 절감
 
 ## 커밋
-- `현재 커밋` — feat(scripts): add eks-cost-down/up scripts for daily cost saving
+- `6248643` — feat(scripts): add eks-cost-down/up scripts for daily cost saving
+- `cf095a8` — docs(scripts): clarify all components covered by eks-cost-down
