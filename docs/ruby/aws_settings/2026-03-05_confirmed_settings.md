@@ -112,3 +112,18 @@
 - Session Manager Plugin: `1.2.779.0`
 - 최종 결과: `aws ssm start-session --target i-0eef06d350fae53d3 --region ap-northeast-2` 접속 성공
 - 결론: Runbook 체크리스트의 Session Manager 검증 항목 완료 처리
+
+## 10) 2026-03-12 prod 비용 홀드 기준 상태
+
+- Cluster `tutum-prd-eks`: `ACTIVE`
+- Managed NodeGroup: 없음
+- 기존 `ng-prd-general`은 제거된 상태
+- 현재 남아 있는 노드:
+  - `system` nodepool `c6g.large` 2대
+  - `general-purpose` nodepool `c5a.large` 3대
+- 현재 남아 있는 prod 앱 namespace:
+  - `tutum-app`
+- 의미:
+  - managed nodegroup 비용은 줄었지만, prod 앱 파드와 Pending 파드 때문에 Karpenter 일반 노드 비용은 계속 발생 가능
+- 상세 절차:
+  - `docs/ruby/aws_settings/2026-03-12_tutum_prd_eks_cost_hold_and_restore_steps.md`
