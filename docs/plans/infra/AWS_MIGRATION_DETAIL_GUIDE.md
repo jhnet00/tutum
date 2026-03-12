@@ -2033,428 +2033,61 @@ kubectl logs -n tutum-app -l app=price-consumer --tail=20 | grep -E "kafka|conne
 
 ---
 
-### D-11. 온프레미스 VM 워크로드 EC2 마이그레이션 — 누락 항목
+### D-11. 온프레미스 VM 워크로드 현황 점검 + 단계별 Shutdown 계획
 
-> 온프레미스 VM 8대(cp1/2/3 + worker1/2/3 + monitoring + mongodb)에서 실행 중인
-> 모든 워크로드를 EC2 또는 EKS로 이전하기 위한 **전체 항목 점검 및 누락 태스크 정의**.
+> 2026-03-12 기준 cp1/2/3, w1/2/3, monitoring, mongodb VM에 SSH 접속해 live 상태를 확인했다.
+> 결론은 "핵심 서비스는 상당 부분 AWS로 이전됐지만, 온프레미스 VM을 지금 한 번에 모두 종료하면 안 된다"이다.
 
-#### 현재 온프레미스 VM → AWS 이전 상태 매핑
+관련 문서:
+- `docs/plans/infra/ONPREM_VM_TO_AWS_MIGRATION_STATUS_2026-03-12.md`
+- `docs/plans/infra/ONPREM_VM_SHUTDOWN_CHECKLIST_2026-03-12.md`
 
-| 온프레미스 컴포넌트 | 위치 | AWS 이전 대상 | 상태 |
+#### 2026-03-12 live 확인 요약
+
+- `cp1/2/3`, `w1~3`는 아직 kubeadm 온프레미스 클러스터로 `Ready` 상태이며 실제 파드가 계속 실행 중이다.
+- `worker1~3`에는 `frontend`, `backend`, `ocr`, `news/price workers`, `kafka`, `mongodb`, `redis`, `elasticsearch`, `minio`, `argocd`, `istio`, `gitlab-runner`, `sonarqube`, `cloudflared` 등이 남아 있다.
+- `monitoring VM(192.168.0.230)`은 Docker Compose 기반 `Grafana/Loki/Tempo/Mimir/Kiali/InfluxDB`를 아직 실행 중이다.
+- `mongodb VM(192.168.0.231)`은 standalone `mongod`가 계속 떠 있다.
+- AWS 쪽에는 `EKS`, `RDS`, `S3`, `monitoring EC2`, `EKS MongoDB/Redis/Kafka/Elasticsearch`, `frontend/backend/auth/ocr`가 실제로 동작 중이다.
+
+#### 기능별 온프레미스 -> AWS 매핑
+
+| 기능 | 기존 온프레미스 위치 | 현재 AWS 대응 리소스 | 상태 | 남은 이슈 |
+|---|---|---|---|---|
+| Kubernetes control plane | `cp1`, `cp2`, `cp3` | EKS managed control plane | 부분 완료 | 온프레미스 kubeadm control-plane이 아직 live |
+| 앱 워크로드 (`frontend/backend/auth/ocr/workers`) | 주로 `w2`, `w3` | EKS `tutum-app` | 대부분 완료 | 온프레미스 중복 파드 정리 필요 |
+| ArgoCD | `w2`, `w3` | EKS `argocd` | 대부분 완료 | on-prem ArgoCD 철수 절차 필요 |
+| GitLab Runner | `w3` | EKS `gitlab-runner` | 부분 완료 | on-prem runner 사용 여부 최종 감사 필요 |
+| SonarQube | `w1`, `w3` | AWS 대응 미정 | 미완료 | 현재 on-prem only로 보임 |
+| Ingress / 외부 진입 | `w3` + MetalLB `192.168.0.240` | AWS ALB + EKS ingress | 부분 완료 | on-prem `cloudflared` 잔존 |
+| Monitoring LGTM | `monitoring VM` | EC2 `10.60.11.95` | 대부분 완료 | old monitoring VM 참조 제거 확인 필요 |
+| MongoDB 앱 DB | `mongodb VM` + on-prem K8s Mongo | EKS `mongodb-0~2` | 대부분 완료 | legacy VM, on-prem Mongo 정리 필요 |
+| MariaDB | 학원 외부 DB | RDS `tutum-mariadb` | 완료 | 앱 경로는 RDS 사용 중 |
+| Redis | on-prem K8s `redis-0~2` | EKS `redis-0~2` | 완료에 가까움 | on-prem Redis 종료 시점만 남음 |
+| Kafka | on-prem K8s `kafka-0~2` | EKS `kafka-0~2` | 대부분 완료 | 장기적으로 D-10 방향 정리 필요 |
+| Elasticsearch | on-prem K8s `elasticsearch-0` | EKS `elasticsearch-0` | 부분 완료 | 복원/검증 후속 필요 |
+| Object storage | on-prem K8s `minio-0~3` | S3 `tutum-prod-storage` | 부분 완료 | mirror/정합성 검증 필요 |
+
+#### VM별 종료 판단
+
+| VM | 현재 역할 | 현재 판단 | 이유 |
 |---|---|---|---|
-| K8s cp1/2/3 | VirtualBox VM | EKS (managed) | ✅ EKS 완료 |
-| K8s worker1/2/3 | VirtualBox VM | EKS Auto Mode node | ✅ EKS 완료 |
-| backend Deployment | K8s tutum-app | EKS tutum-app | 🔶 이식 중 (파이프라인 미실행) |
-| frontend Deployment | K8s tutum-app | EKS tutum-app | 🔶 이식 중 |
-| price-consumer | K8s tutum-app | EKS tutum-app | 🔶 이식 중 |
-| news-consumer | K8s tutum-app | EKS tutum-app | 🔶 이식 중 |
-| elastic-consumer | K8s tutum-app | EKS tutum-app | 🔶 이식 중 |
-| MongoDB StatefulSet | K8s tutum-data | MongoDB EC2 (D-9) | ⬜ 미완료 |
-| Redis StatefulSet | K8s tutum-data | EKS tutum-data | ⬜ 미완료 |
-| Kafka StatefulSet | K8s tutum-data | Kafka EC2 (D-10) | ⬜ 미완료 |
-| Elasticsearch StatefulSet | K8s tutum-data | EKS tutum-data | ⬜ 미완료 |
-| MinIO StatefulSet | K8s tutum-storage | S3 버킷 (D-1) | ☑ 완료 (EKS base 배포 제외) |
-| Monitoring VM (192.168.0.230) | VirtualBox VM | EC2 10.60.11.95 | ✅ 완료 |
-| MongoDB VM (192.168.0.231) | VirtualBox VM | MongoDB EC2 (D-9) | ⬜ 미완료 |
-| ArgoCD | K8s argocd ns | EKS argocd ns | ✅ 설치 완료 (GitLab 연결 미완료) |
-| KEDA | K8s keda ns | EKS keda ns | ⬜ 미완료 |
-| Kyverno | K8s kyverno ns | EKS kyverno ns | ⬜ 미완료 |
-| GitLab Runner | on-prem or SaaS | EKS gitlab-runner | ⬜ 확인 필요 (B-17) |
-| Istio istiod | K8s istio-system | EKS istio-system | ✅ 완료 |
-| Istio IngressGateway | K8s istio-system | 제거 (ALB 대체) | ✅ 완료 |
-| Cloudflare Tunnel | on-prem client | 제거 (Route53 ALB) | ⬜ Phase E |
-| MariaDB (학원 서버) | 외부 211.46.52.153 | RDS | ✅ 완료 |
+| `cp1`, `cp2`, `cp3` | kubeadm control-plane | 종료 금지 | 온프레미스 클러스터 자체가 아직 live |
+| `w1`, `w2`, `w3` | app/data/storage/infra worker | 종료 금지 | 실제 서비스 파드와 infra 파드가 남아 있음 |
+| `monitoring` | old LGTM Docker Compose | 조건부 종료 가능 | AWS monitoring EC2는 있으나 old VM 참조 제거 확인 필요 |
+| `mongodb` | legacy standalone MongoDB | 조건부 종료 가능 | 앱 정본은 EKS Mongo로 전환됐지만 hidden client audit 필요 |
 
-#### 누락 확인 태스크
+#### D-11 후속 작업
 
-```bash
-# ── 1. 온프레미스 K8s 전체 리소스 현황 스냅샷 ──
-# (마이그레이션 기준선 확보 — 이전에 실행 안 했다면 지금 실행)
-ssh cp-1
-kubectl get all -A -o wide > /tmp/onprem-all-$(date +%Y%m%d).txt
-kubectl get pvc -A > /tmp/onprem-pvc-$(date +%Y%m%d).txt
-kubectl get secrets -A --no-headers | grep -v 'kubernetes.io/service-account' > /tmp/onprem-secrets-$(date +%Y%m%d).txt
-kubectl get configmap -A --no-headers > /tmp/onprem-cm-$(date +%Y%m%d).txt
-
-# ── 2. 온프레미스에서 여전히 살아있는 서비스 확인 ──
-kubectl get pods -n tutum-app --field-selector=status.phase=Running
-kubectl get pods -n tutum-data --field-selector=status.phase=Running
-kubectl get pods -n tutum-storage --field-selector=status.phase=Running
-
-# ── 3. EKS에서 미배포된 리소스 확인 ──
-# (EKS kubeconfig로 전환 후)
-aws eks update-kubeconfig --name tutum-stg-eks --region ap-northeast-2
-kubectl get pods -n tutum-app   # backend/frontend/workers Running 여부
-kubectl get pods -n tutum-data  # kafka/redis/mongodb/elasticsearch Running 여부
-
-# ── 4. 외부 의존성 체크 ──
-# 학원 서버 의존 제거 확인
-kubectl get secret backend-secret -n tutum-app -o jsonpath='{.data}' | \
-  python3 -c "import sys,json,base64; [print(k,'=',base64.b64decode(v).decode()[:50]) for k,v in json.load(sys.stdin).items()]" \
-  | grep -i "211.46\|192.168\|harbor"
-
-# ── 5. CloudTrail 활성화 (감사 로그) ──
-aws cloudtrail create-trail \
-  --name tutum-cloudtrail \
-  --s3-bucket-name tutum-prod-storage \
-  --s3-key-prefix cloudtrail \
-  --include-global-service-events \
-  --is-multi-region-trail
-aws cloudtrail start-logging --name tutum-cloudtrail
-```
-
-#### 누락 태스크 목록
-
-**즉시 처리 필요 (Phase B 완료 조건)**:
-- [ ] **GitLab Runner EKS 설치** (B-17): 온프레미스 runner 사용 중이면 파이프라인 온프레미스 의존
-- [ ] **KEDA EKS 설치 + ScaledObject 적용** (B-5): HPA 미작동, 부하 대응 불가
-- [ ] **Kyverno EKS 설치 + ECR 정책** (B-6): 이미지 서명 검증 없어 보안 취약
-
-**데이터 이전 완료 필요 (Phase D)**:
-- [ ] **Redis EKS StatefulSet 배포** (D-2): 세션/캐시 Redis EKS에 미배포
-- [ ] **Kafka EC2 이전** (D-10): consumer 연결 전환 필요
-- [ ] **Elasticsearch EKS 배포 + S3 스냅샷 복원** (D-4): 뉴스 검색 미작동
-- [ ] **MongoDB EC2 이전** (D-9): 독립 VM 폐기 조건
-
-**파이프라인 연동 (Phase C)**:
-- [ ] **COSIGN_PRIVATE_KEY GitLab 변수 업데이트**: 현재 변수 미갱신으로 파이프라인 차단
-- [ ] **ArgoCD GitLab 리포 연결**: `argocd repo add` 미완료
-
-**철수 전 확인**:
-- [ ] 온프레미스 VM에서 외부로 열린 포트 확인 (Cloudflare Tunnel 등)
-- [ ] 학원 MariaDB(211.46.52.153) 로그인 시도 없음 확인
-- [ ] MongoDB VM (192.168.0.231) EC2 이전 완료 후 VM shutdown
-- [ ] Monitoring VM (192.168.0.230) EC2 이전 완료 확인 → VM shutdown
-
-**체크리스트**:
-- [ ] 온프레미스 전체 리소스 스냅샷 추출 (기준선)
-- [ ] EKS vs 온프레미스 미배포 리소스 Gap 분석 완료
-- [ ] 외부 의존성(온프레미스 IP, 학원 서버) 없음 확인
-- [ ] CloudTrail 활성화
-- [ ] 위 누락 태스크 전체 완료 후 온프레미스 VM 단계적 shutdown
+- [ ] `mongodb` VM 접속자, cron, 백업 경로가 더 없는지 확인
+- [ ] old `monitoring` VM을 참조하는 Alloy/Loki/Tempo/Grafana 경로가 없는지 확인
+- [ ] on-prem `cloudflared` 사용 여부 최종 감사
+- [ ] `MinIO -> S3` mirror 및 실제 업로드/다운로드 정합성 확인
+- [ ] `SonarQube`의 AWS 이전 여부 결정 또는 온프레미스 유지 범위 확정
+- [ ] on-prem `worker1~3`에서 app/data/storage/infra 파드를 0으로 줄인 뒤 단계적 drain
+- [ ] on-prem kubeadm control-plane(`cp1~3`) 폐기 절차와 스냅샷 확보
+- [ ] shutdown 순서를 `mongodb -> monitoring -> worker -> control-plane`로 고정하고 단계별 검증
 
 ---
 
 ## Phase E (D+19 ~ D+24): 트래픽 컷오버 + 온프레미스 철수
-
-### E-1. DNS 컷오버 — 가비아 네임서버 → Route53 (핵심 컷오버 단계)
-
-**현재 DNS 구성**:
-```
-가비아(레지스트라) → 네임서버: Cloudflare → DNS 레코드: Cloudflare
-```
-
-**변경 후**:
-```
-가비아(레지스트라) → 네임서버: Route53 → DNS 레코드: Route53 (ALB Alias)
-```
-
-> **Cloudflare 완전 제거**: tutum.my는 온프레미스 K8s 시절 Cloudflare Tunnel을 사용했으나,
-> EKS 전환 후 Route53 + ALB로 직접 트래픽을 처리하므로 Cloudflare는 더 이상 불필요.
-
-**Route53 네임서버 (tutum.my Hosted Zone: Z04669402IT42VPHL8CRP)**:
-```
-ns-1504.awsdns-60.org
-ns-542.awsdns-03.net
-ns-1540.awsdns-00.co.uk
-ns-49.awsdns-06.com
-```
-
-**Route53에 이미 등록된 레코드**:
-```
-tutum.my        A (Alias) → k8s-tutumstg-522ae53287-1398442796.ap-northeast-2.elb.amazonaws.com
-*.tutum.my      A (Alias) → 동일 ALB
-_6c8cd6bb...    CNAME     → ACM 인증서 DNS 검증용
-```
-
-**가비아에서 네임서버 변경 절차**:
-```
-gabia.com 로그인 → My가비아 → 서비스 관리 → 도메인
-→ tutum.my 관리 → 네임서버 탭 → 수정
-→ 기존 Cloudflare NS 제거 후 위 Route53 NS 4개 입력 → 저장
-```
-
-**컷오버 체크리스트** (순서 중요):
-```
-1. [ ] EKS 스테이징에서 E2E 기능 검증 완료
-2. [x] Backend/OCR S3 연결 확인 + 업로드 검증 완료
-3. [ ] Elasticsearch EC2 복원 완료 + 뉴스 검색 정상
-4. [ ] 가비아 네임서버 → Route53 변경
-5. [ ] ACM 인증서 ISSUED 확인 (네임서버 전파 후 자동 완료)
-6. [ ] ALB Ingress HTTPS annotation 활성화 (certificate-arn, ssl-redirect)
-7. [x] OAuth 콜백 URL 업데이트 (Google, Naver) → https://tutum.my ← 완료 (2026-03-11)
-8. [ ] 브라우저에서 tutum.my 접속 → EKS 응답 확인
-9. [ ] 로그인, 시세 조회, 뉴스, AI 채팅 빠른 확인
-10. [ ] Grafana 대시보드에서 EKS 지표 수신 확인
-```
-
-> **전파 시간**: 가비아 네임서버 변경 후 수 분 ~ 최대 48시간 (보통 1시간 이내)
-> **롤백**: 가비아에서 네임서버를 다시 Cloudflare로 변경하면 온프레미스 복귀 가능.
-> 온프레미스 클러스터는 **1주일 이상 병행 운영** 후 철수 권장.
-
----
-
-### E-2. OAuth 콜백 URL 업데이트
-
-컷오버 직전, OAuth 제공사에 등록된 콜백 URL을 ALB DNS 또는 도메인으로 변경.
-
-```
-[Google Cloud Console]
-Authorized redirect URIs:
-- 기존: http://localhost:8000/api/v1/auth/google/callback
-- 추가: https://tutum.app/api/v1/auth/google/callback
-
-[Naver Developer Console]
-- 기존: http://localhost:8000/api/v1/auth/naver/callback
-- 추가: https://tutum.app/api/v1/auth/naver/callback
-```
-
----
-
-### E-3. 병행 운영 기간 (1주일)
-
-```
-온프레미스 K8s:  읽기 전용 모드 유지 (대기 상태)
-EKS:            실 트래픽 처리
-
-모니터링 지표:
-- EKS Error Rate < 1%  → 온프레미스 철수 진행
-- EKS Error Rate > 5%  → 가비아 네임서버 Cloudflare로 즉시 복구 (온프레미스 rollback)
-```
-
----
-
-### E-4. 온프레미스 클러스터 철수 순서
-
-```bash
-# 1. ArgoCD sync 중단 (on-prem ArgoCD)
-argocd app set tutum-staging --sync-policy none
-
-# 2. 서비스 순서대로 중단 (역방향)
-kubectl scale deployment backend frontend price-consumer --replicas=0 -n tutum-app
-kubectl scale statefulset redis kafka --replicas=0 -n tutum-data
-kubectl scale statefulset minio --replicas=0 -n tutum-storage
-
-# 3. PVC 최종 백업 (MinIO는 이미 S3 이전 완료)
-kubectl exec -it redis-0 -n tutum-data -- redis-cli BGSAVE
-
-# 4. 네임스페이스 삭제 (데이터 소멸 확인 후)
-kubectl delete namespace tutum-app tutum-data tutum-storage
-
-# 5. VM 종료 (VirtualBox)
-# worker1~3, cp1~3 순서로 shutdown
-```
-
----
-
-## 비용 모니터링
-
-```bash
-ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-
-aws budgets create-budget \
-  --account-id "$ACCOUNT_ID" \
-  --budget '{
-    "BudgetName": "tutum-monthly-budget",
-    "BudgetLimit": {"Amount": "700", "Unit": "USD"},
-    "TimeUnit": "MONTHLY",
-    "BudgetType": "COST"
-  }' \
-  --notifications-with-subscribers '[{
-    "Notification": {
-      "NotificationType": "ACTUAL",
-      "ComparisonOperator": "GREATER_THAN",
-      "Threshold": 80,
-      "ThresholdType": "PERCENTAGE"
-    },
-    "Subscribers": [{"SubscriptionType": "EMAIL", "Address": "team@tutum.io"}]
-  }]'
-```
-
-예상 비용 (월간):
-| 서비스 | 사양 | 월 비용 |
-|--------|------|--------|
-| EKS Control Plane | - | $73 |
-| EC2 Worker (m5.large × 3) | 720h | $207 |
-| NAT Gateway | - | $35 |
-| ALB | - | $20 |
-| ECR | - | $5 |
-| Elasticsearch EC2 (t3.large) | - | $60 |
-| 모니터링 EC2 (t3.medium) | - | $30 |
-| S3 + CloudTrail | - | $11 |
-| **합계** | | **$441** |
-
----
-
-## 마이그레이션 체크리스트
-
-### Phase A (기반 준비) — 🔶 대부분 완료
-- [ ] 온프레미스 리소스 스냅샷 추출 (`kubectl get all -A -o yaml`)
-- [x] ECR repo 3개 생성 (`tutum/backend`, `tutum/frontend`, `tutum/workers`)
-- [ ] 기존 운영 이미지 → ECR 미러링 (선택사항 — 파이프라인 첫 실행으로 대체 가능)
-- [x] GitLab CI 변수: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `ECR_REGISTRY` 등록 완료
-- [ ] GitLab CI 변수: `COSIGN_PRIVATE_KEY` (File), `COSIGN_PUBLIC_KEY` 수동 업데이트 필요 (cp-2 `/tmp/cosign.key`, `/tmp/cosign.pub`)
-- [x] VPC 생성 완료 (10.60.0.0/16, public 10.60.1~2.0/24, private 10.60.11~12.0/24)
-- [x] NAT Gateway 생성 (public subnet 10.60.1.0/24) + private subnet route table 설정 완료
-- [x] ACM `*.tutum.my` 인증서 발급 신청 + Route53 DNS validation CNAME 등록 완료
-
-### Phase B (EKS 구성) — 🔶 진행 중
-**기본 인프라**
-- [x] EKS 클러스터 생성 (`tutum-stg-eks` ACTIVE, `tutum-prd-eks` ACTIVE, Auto Mode, K8s v1.29)
-- [x] 네임스페이스 생성 (tutum-app, tutum-data, tutum-storage, monitoring, keda)
-- [x] Istio minimal profile 설치 (istiod Running, IngressGateway 없음)
-- [x] 사이드카 주입: tutum-app, tutum-data 네임스페이스 label 완료
-- [x] ALB Ingress Controller 설치 (2/2 Running, eks/aws-load-balancer-controller v3.1.0)
-- [x] ArgoCD 설치 (7/7 Running, private subnet 10.60.11.x)
-- [x] NetworkPolicy 이식 (vpc-cni network policy 활성화 + manifest 적용)
-- [x] MariaDB 연결 확인 (SSM send-command → `MARIADB_REACHABLE` ✅)
-
-**완료**
-- [x] **auth 서비스 K8s 매니페스트 작성** (2026-03-11): `k8s-manifests/base/auth/` Deployment+Service, ECR `tutum/auth` 레포 생성, GitLab CI 파이프라인 트리거, CI 변수 추가
-
-**미완료 — 기본**
-- [ ] **auth 서비스 ECR 이미지 빌드** (CI/CD 팀원 담당) — Kaniko image 경로 ECR 미러로 변경 필요
-- [ ] **auth 서비스 EKS Running 확인** (ECR 빌드 완료 후 ArgoCD auto-sync)
-- [ ] **시크릿 재생성** (app-secrets, OAuth 키, gitlab-registry-secret 등) — EKS에 미생성
-- [ ] **KEDA 설치 + ScaledObject 적용** (on-prem 정상, EKS 미설치)
-- [ ] **Kyverno 설치 + ECR 정책 적용** (on-prem 완료, EKS 미설치)
-- [ ] **ECR 토큰 갱신 CronJob** (`kyverno` ns, 6시간마다 ECR 토큰 갱신)
-- [ ] **ArgoCD GitLab 리포 연결** (`argocd repo add`)
-- [ ] **staging-app.yaml destination → `https://kubernetes.default.svc`**
-- [ ] Worker SG outbound 211.46.52.153:15432 명시적 허용 (현재 기본 SG로 통과 중)
-- [ ] **Cluster SG + Monitoring EC2 SG 생성** (B-15): EKS → Monitoring(Loki/Tempo/Mimir) outbound 허용
-- [ ] **ArgoCD · KEDA ECR 이미지 미러링** (B-16): quay.io/ghcr.io → ECR, Helm values 재설치
-- [ ] **GitLab Runner EKS 설치 + 온프레미스 runner 비활성화** (B-17)
-- [ ] **파이프라인 온프레미스 의존 항목 없음 확인** (B-17): `.gitlab-ci.yml` IP 하드코딩, Harbor 참조 없음
-
-**미완료 — 보안 강화 (B-9 ~ B-13)**
-- [ ] **NACL 생성** — public subnet (10.60.1/2.0/24): 80/443 inbound only
-- [ ] **VPC Endpoint: ECR API** (Interface, private subnet) — ECR 인증 내부망
-- [ ] **VPC Endpoint: ECR DKR** (Interface, private subnet) — 이미지 pull NAT GW 비용↓
-- [ ] **VPC Endpoint: S3 Gateway** (무료, route table 자동 추가) — S3 내부망
-- [ ] **VPC Endpoint: Secrets Manager** (Interface) — 시크릿 조회 내부망
-- [ ] **AWS WAF WebACL** 생성 + ALB 연결 (AWSManagedRulesCommonRuleSet + RateLimit 2000/5min)
-- [ ] **GuardDuty 활성화** (EKS Audit Logs + Runtime Monitoring + S3 Data Events)
-- [ ] **GuardDuty → SNS → Slack `#tutum-alerts`** EventBridge 연동
-- [ ] **AWS KMS CMK** 생성 (EBS PVC 암호화, S3 버킷 암호화용)
-- [ ] **AWS Secrets Manager** app-secrets 등록 + External Secrets Operator + IRSA
-
-### Phase C (CI/CD 전환) — 🔶 코드 완료, 파이프라인 미실행
-- [x] `backend/Dockerfile`, `backend/workers/Dockerfile` → `python:3.11-alpine` 전환
-- [x] `.gitlab-ci.yml` ECR 전환 (build/scan/sign/deploy 전 구간)
-- [x] `k8s-manifests/overlays/staging|production/kustomization.yaml` ECR 이미지 경로
-- [x] Cosign 새 키쌍 생성 (cp-2 `/tmp/cosign.key`, `/tmp/cosign.pub`, 패스워드: tutum123)
-- [x] Kyverno cosign-verify-policy.yaml ECR 경로 + 새 공개키 → on-prem 적용 완료
-- [ ] **GitLab CI COSIGN_PRIVATE_KEY/PUBLIC_KEY 수동 업데이트** → 파이프라인 실행 차단 중
-- [ ] 파이프라인 실행 (build → scan → sign → deploy, ECR 전 구간 동작 확인)
-- [ ] Kyverno 이미지 서명 검증 통과 확인 (EKS 설치 후)
-- [ ] 스테이징 E2E 검증 (로그인, 시세, 뉴스, AI, OCR, MariaDB)
-
-### Phase D (데이터 이전) — 🔶 진행 중
-- [x] S3 버킷 생성 (`tutum-prod-storage`) + KMS 암호화 + 퍼블릭 액세스 차단
-- [ ] MinIO → S3 mc mirror 완료 (ocr-images, profile-images 버킷)
-- [x] Backend MINIO_* env → S3 + IRSA 적용 (키 제거)
-- [ ] Redis: 빈 상태 시작 (캐시 데이터 손실 허용) or RDB 이전
-- [x] 모니터링 EC2 생성 (EKS VPC private subnet, t3.medium) ← 완료 (10.60.11.95)
-- [x] Docker Compose LGTM 기동 (Grafana/Loki/Tempo/Mimir) ← 완료
-- [x] EKS Alloy DaemonSet remote_write → 모니터링 EC2 내부 IP ← 완료
-- [x] **Mimir out-of-order 샘플 허용 설정** (2026-03-11): `limits.out_of_order_time_window: 30m` 추가 → mimir 재시작 완료, Alloy 400 에러 해소
-- [x] S3 Lifecycle 설정 (ocr-images 180일 만료, backups/ Glacier 30일)
-- [ ] CloudTrail 활성화 + S3 저장 (90일 보관)
-- [x] **[완료] MariaDB → RDS 이전** (D-5, 2026-03-10: tutum-mariadb.cfoeqgoysp2f, backend-secret 패치 완료)
-- [ ] **SonarQube 배포** (D-6: CI/CD 코드 품질 게이트)
-- [ ] **Kiali 설치** (D-7: Istio 서비스 메시 시각화, Mimir 연동)
-- [ ] **Terraform IaC** (D-8: 기존 AWS 인프라 terraform import → 코드화)
-- [x] **[완료] MongoDB Atlas → EKS ReplicaSet 정본 전환** (D-9, 2026-03-12: backend/auth/ocr + news secret cutover)
-- [ ] **[진행 중] LGTM / Admin 모니터링 검증** (D-9-V): Overview/Logs 정상, traces export timeout + Kafka lag metric 후속 필요
-- [ ] **[신규] Kafka EC2 이전** (D-10): K8s StatefulSet → EC2 Docker Compose, Consumer 연결 전환
-- [ ] **[신규] Elasticsearch EKS StatefulSet 배포 + S3 스냅샷 복원** (D-4)
-- [ ] **[신규] 온프레미스 VM 워크로드 누락 항목 점검 + 전체 Gap 해소** (D-11)
-
-### Phase E (컷오버) — 🔶 진행 중
-- [ ] ACM `*.tutum.my` 인증서 ISSUED 확인 후 ALB Ingress 생성
-- [x] OAuth 콜백 URL → https://tutum.my 등록 완료 (Google + Naver, 2026-03-11)
-- [ ] 가비아 네임서버 → Route53 변경 (Cloudflare 제거)
-- [ ] ACM 인증서 ISSUED 확인 후 ALB HTTPS annotation 활성화
-- [ ] tutum.my 전체 기능 접속 확인
-- [ ] 1주일 병행 운영 (EKS Error Rate < 1% 확인 후 온프레미스 철수)
-- [ ] 온프레미스 워크로드 순차 중단
-- [ ] AWS Budget Alert $700 임계값 설정
-- [ ] IAM Access Analyzer 미사용 권한 정리
-- [ ] 운영 문서 최종 갱신
-
----
-
-## 롤백 계획
-
-| 단계 | 롤백 방법 | 소요 시간 |
-|------|---------|---------|
-| DNS 컷오버 후 (네임서버 전파 중) | 가비아에서 네임서버를 Cloudflare로 재변경 | ~수 분 (TTL 만료 후) |
-| EKS 서비스 장애 | ArgoCD rollback to previous revision | ~2분 |
-| 데이터 이전 중 | S3 데이터는 유지, MinIO도 유지 (병행) | 즉시 |
-| 전체 EKS 장애 | 가비아 네임서버 Cloudflare 복구 → 온프레미스 복귀 | ~수 분 |
-
-> **핵심**: 가비아에서 네임서버 변경이 사용자-facing 컷오버 포인트.
-> 네임서버를 되돌리는 것으로 온프레미스로 돌아올 수 있으므로
-> **온프레미스는 컷오버 후 최소 1주일 유지** 후 철수.
-
----
-
-## 마이그레이션 진행률 대시보드
-
-> 마지막 업데이트: 2026-03-12
-> 2026-03-11~2026-03-12 기준 모니터링 복구, MongoDB 정본 전환, Bedrock runtime 갱신 반영 상태를 기준으로 재정리했다.
-
-### 전체 진행률: **45%** (29 / 64 항목 완료)
-
-```
-Phase A ████████████░░░░░░░░  63%  (5/8)   ← 기반 준비 대부분 완료
-Phase B █████████░░░░░░░░░░░  45%  (9/20)  ← EKS 기본 구성, auth manifest 작성, addon 이식 진행 중
-Phase C █████████████░░░░░░░  63%  (5/8)   ← 코드 완료, 파이프라인 실행 필요
-Phase D █████████░░░░░░░░░░░  47%  (9/19)  ← RDS/모니터링/S3/Mongo cutover 완료, 나머지 이전 대기
-Phase E ██░░░░░░░░░░░░░░░░░░  11%  (1/9)   ← OAuth 콜백 반영, 전체 cutover는 미완
-```
-
-### 완료된 주요 이정표
-
-| 완료일 | 항목 |
-|--------|------|
-| 2026-03-06 | ECR 레포지토리 3개 생성 (tutum/backend, frontend, workers) |
-| 2026-03-06 | EKS 클러스터 생성 (tutum-stg-eks, Auto Mode, v1.29) |
-| 2026-03-06 | VPC / NAT GW / ACM 인증서 설정 |
-| 2026-03-06 | Istio minimal profile 설치 (istiod, mTLS STRICT) |
-| 2026-03-06 | ALB Ingress Controller 설치 (v3.1.0) |
-| 2026-03-06 | ArgoCD 설치 (7/7 Running) |
-| 2026-03-06 | NetworkPolicy 이식 |
-| 2026-03-06 | GitLab CI ECR 전환 (.gitlab-ci.yml 코드 완료) |
-| 2026-03-06 | Cosign 새 키쌍 생성 + on-prem Kyverno 정책 적용 |
-| 2026-03-06 | Istio 이미지 ECR 미러링 완료 (pilot, proxyv2:1.25.0) |
-| 2026-03-10 | 모니터링 EC2 생성 (10.60.11.95, LGTM Docker Compose) |
-| 2026-03-10 | EKS Alloy DaemonSet → 모니터링 EC2 연결 |
-| 2026-03-10 | MariaDB → RDS 이전 완료 (tutum-mariadb.cfoeqgoysp2f) |
-| 2026-03-11 | Mimir out-of-order 샘플 허용 설정 (`limits.out_of_order_time_window: 30m`) + 재시작 |
-| 2026-03-11~2026-03-12 | `tutum.my` frontend proxy / ALB / private-only nodepool 안정화 |
-| 2026-03-12 | Backend/OCR S3 cutover + MinIO base 제거 |
-| 2026-03-12 | admin `/api/proxy` ingress 복구 + Overview/Logs 검증 |
-| 2026-03-12 | MongoDB Atlas → EKS ReplicaSet 정본 전환 |
-| 2026-03-12 | Bedrock runtime → Claude Sonnet 4.6 inference profile 적용 |
-| 2026-03-11 | auth 서비스 K8s 매니페스트 작성 + ECR 레포 생성 (CI/CD 빌드 팀원 인계) |
-
-### 다음 우선 작업 (블로커 순)
-
-| 우선순위 | 항목 | 섹션 | 이유 |
-|---|---|---|---|
-| 🔴 1 | COSIGN_PRIVATE_KEY GitLab 변수 업데이트 | C | 파이프라인 차단 중 |
-| 🔴 2 | 파이프라인 실행 (build→sign→deploy) | C | EKS 배포 차단 중 |
-| 🔴 3 | ArgoCD GitLab 리포 연결 + destination 변경 | B-7 | GitOps 미연결 |
-| 🟠 4 | KEDA EKS 설치 + ECR 미러링 (B-16) | B-5/B-16 | HPA 미작동 |
-| ✅ - | Mimir out-of-order 수정 완료 | D-5 | Alloy 400 에러 해소, 모니터링 수집 정상화 |
-| 🔴 2.5 | auth 서비스 EKS 배포 확인 (ECR 빌드 후) | B | tutum.my 소셜로그인 차단 중 |
-| 🟠 5 | GitLab Runner EKS 설치 (B-17) | B-17 | 온프레미스 CI 의존 잔존 |
-| 🟠 6 | MongoDB in-cluster auth hardening + Atlas writer audit | D-9 | 정본 전환 후 보안/정리 필요 |
-| 🟠 7 | Kafka EC2 이전 | D-10 | K8s 워크로드 의존 제거 |
-| 🟡 8 | Kyverno EKS 설치 | B-6 | 이미지 서명 검증 미적용 |
-| 🟡 9 | Redis EKS StatefulSet 배포 | D-2 | 세션/캐시 미작동 |
-| 🟡 10 | Elasticsearch EKS 배포 + S3 스냅샷 복원 | D-4 | 뉴스 검색 미작동 |
-| 🟠 11 | Tempo trace export 복구 + Kafka lag metric 수집 | D-9-V | 모니터링 검증 미완 |
-| 🟡 12 | MinIO 잔여 데이터 mirror 및 배포 검증 | D-1 | object 정합성 최종 확인 필요 |
