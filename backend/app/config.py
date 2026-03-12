@@ -1,13 +1,13 @@
-"""
+﻿"""
 ============================================
-FastAPI 환경 설정
+FastAPI ?섍꼍 ?ㅼ젙
 ============================================
 
-환경 변수를 관리하는 설정 클래스입니다.
-.env 파일 또는 시스템 환경 변수에서 값을 로드합니다.
+?섍꼍 蹂?섎? 愿由ы븯???ㅼ젙 ?대옒?ㅼ엯?덈떎.
+.env ?뚯씪 ?먮뒗 ?쒖뒪???섍꼍 蹂?섏뿉??媛믪쓣 濡쒕뱶?⑸땲??
 
-운영 환경 VM 배치:
-- Node1: 이 백엔드 서버가 실행됨
+?댁쁺 ?섍꼍 VM 諛곗튂:
+- Node1: ??諛깆뿏???쒕쾭媛 ?ㅽ뻾??
 - Node2: MongoDB Primary, Redis Master, MinIO
 - Node3: MongoDB Secondary, Elasticsearch, Kafka Workers
 """
@@ -24,18 +24,18 @@ ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 
 
 class Settings(BaseSettings):
-    """애플리케이션 설정"""
+    """?좏뵆由ъ??댁뀡 ?ㅼ젙"""
 
-    # 기본 설정
+    # 湲곕낯 ?ㅼ젙
     APP_NAME: str = "CloudDX Asset Management API"
     DEBUG: bool = True
     API_V1_PREFIX: str = "/api/v1"
 
-    # MongoDB 설정 (Node2)
+    # MongoDB ?ㅼ젙 (Node2)
     MONGODB_URL: str = "mongodb://localhost:27017"
     MONGODB_DB_NAME: str = "clouddx"
 
-    # MariaDB 설정 (학원 제공 서버)
+    # MariaDB ?ㅼ젙 (?숈썝 ?쒓났 ?쒕쾭)
     MARIADB_HOST: str = "211.46.52.153"
     MARIADB_PORT: int = 15432
     MARIADB_USER: str = "team3"
@@ -44,22 +44,22 @@ class Settings(BaseSettings):
     MARIADB_POOL_SIZE: int = 5
     MARIADB_MAX_OVERFLOW: int = 10
 
-    # Redis 설정 (Node2)
+    # Redis ?ㅼ젙 (Node2)
     REDIS_URL: str = "redis://localhost:6379"
     REDIS_DB: int = 0
 
     EXCHANGE_RATE_API_URL: str = "https://open.er-api.com/v6/latest"
     EXCHANGE_RATE_TIMEOUT_SECONDS: float = 5.0
 
-    # Kafka 설정 (Node3)
+    # Kafka ?ㅼ젙 (Node3)
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
 
-    # Elasticsearch 설정 (Node3)
+    # Elasticsearch ?ㅼ젙 (Node3)
     ELASTICSEARCH_URL: str = "http://192.168.56.13:9200"
     ELASTICSEARCH_INDEX: str = "news"
 
-    # Storage 설정 (S3 / MinIO fallback)
-    # S3_BUCKET_NAME 이 설정되면 boto3 (IRSA) 사용, 없으면 MinIO fallback
+    # Storage ?ㅼ젙 (S3 / MinIO fallback)
+    # S3_BUCKET_NAME ???ㅼ젙?섎㈃ boto3 (IRSA) ?ъ슜, ?놁쑝硫?MinIO fallback
     S3_BUCKET_NAME: str = ""
     MINIO_ENDPOINT: str = "localhost:9000"
     MINIO_ACCESS_KEY: str = "minioadmin"
@@ -67,27 +67,27 @@ class Settings(BaseSettings):
     MINIO_BUCKET_NAME: str = "clouddx-assets"
     MINIO_SECURE: bool = False  # Use HTTPS if True
 
-    # AWS SQS 설정 (Email Queue)
+    # AWS SQS ?ㅼ젙 (Email Queue)
     AWS_REGION: str = "ap-northeast-2"
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
     SQS_QUEUE_NAME: str = "tutum-email-verify-queue"
     SQS_DLQ_NAME: str = "tutum-email-verify-dlq"
 
-    # AWS SES 설정 (Email Sending)
+    # AWS SES ?ㅼ젙 (Email Sending)
     SES_SENDER_EMAIL: str = "clouddx.krb@gmail.com"
     SES_SENDER_NAME: str = "TUTUM"
 
-    # Email Verification 설정
+    # Email Verification ?ㅼ젙
     VERIFICATION_TOKEN_EXPIRE_MINUTES: int = 60
 
-    # JWT 인증 설정
+    # JWT ?몄쬆 ?ㅼ젙
     SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 120
     REFRESH_TOKEN_EXPIRE_DAYS: int = 14
 
-    # CORS 설정 (프론트엔드 도메인)
+    # CORS ?ㅼ젙 (?꾨줎?몄뿏???꾨찓??
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     FRONTEND_URL: str = "http://localhost:3000"
 
@@ -95,12 +95,12 @@ class Settings(BaseSettings):
     # Market Data API Settings
     # ============================================
 
-    # 한국투자증권 (KIS)
+    # ?쒓뎅?ъ옄利앷텒 (KIS)
     KIS_APP_KEY: str = ""
     KIS_APP_SECRET: str = ""
-    KIS_CANO: str = ""  # 종합계좌번호 (8자리)
-    KIS_ACNT_PRDT_CD: str = "01"  # 계좌상품코드 (보통 01)
-    KIS_MODE: str = "virtual"  # real or virtual (모의투자)
+    KIS_CANO: str = ""  # 醫낇빀怨꾩쥖踰덊샇 (8?먮━)
+    KIS_ACNT_PRDT_CD: str = "01"  # 怨꾩쥖?곹뭹肄붾뱶 (蹂댄넻 01)
+    KIS_MODE: str = "virtual"  # real or virtual (紐⑥쓽?ъ옄)
 
     # Upbit
     UPBIT_ACCESS_KEY: str = ""
@@ -127,7 +127,7 @@ class Settings(BaseSettings):
     NAVER_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/naver/callback"
 
     # ============================================
-    # AWS Bedrock 설정
+    # AWS Bedrock ?ㅼ젙
     # ============================================
     AWS_REGION: str = "ap-northeast-2"
     AWS_ACCESS_KEY_ID: str = ""
@@ -147,24 +147,24 @@ class Settings(BaseSettings):
 
         if errors:
             raise ValueError(
-                f"필수 환경변수가 설정되지 않았습니다: {', '.join(errors)}. "
-                f".env 파일을 확인하세요."
+                f"?꾩닔 ?섍꼍蹂?섍? ?ㅼ젙?섏? ?딆븯?듬땲?? {', '.join(errors)}. "
+                f".env ?뚯씪???뺤씤?섏꽭??"
             )
 
         warnings = []
         if not self.AWS_ACCESS_KEY_ID or not self.AWS_SECRET_ACCESS_KEY:
             warnings.append(
-                "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (Bedrock AI 기능 비활성)"
+                "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (Bedrock AI 湲곕뒫 鍮꾪솢??"
             )
         if not self.GOOGLE_CLIENT_ID:
-            warnings.append("GOOGLE_CLIENT_ID (Google OAuth 비활성)")
+            warnings.append("GOOGLE_CLIENT_ID (Google OAuth 鍮꾪솢??")
         if not self.KAKAO_CLIENT_ID:
-            warnings.append("KAKAO_CLIENT_ID (Kakao OAuth 비활성)")
+            warnings.append("KAKAO_CLIENT_ID (Kakao OAuth 鍮꾪솢??")
         if not self.NAVER_CLIENT_ID:
-            warnings.append("NAVER_CLIENT_ID (Naver OAuth 비활성)")
+            warnings.append("NAVER_CLIENT_ID (Naver OAuth 鍮꾪솢??")
 
         for w in warnings:
-            logger.warning("선택 환경변수 미설정: %s", w)
+            logger.warning("?좏깮 ?섍꼍蹂??誘몄꽕?? %s", w)
 
         return self
 
@@ -176,5 +176,6 @@ class Settings(BaseSettings):
 
 @lru_cache()
 def get_settings() -> Settings:
-    """설정 싱글톤 인스턴스 반환"""
+    """?ㅼ젙 ?깃????몄뒪?댁뒪 諛섑솚"""
     return Settings()
+

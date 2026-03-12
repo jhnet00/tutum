@@ -1,15 +1,15 @@
-"""
+﻿"""
 ============================================
-Admin Router - 클러스터 모니터링 API
+Admin Router - ?대윭?ㅽ꽣 紐⑤땲?곕쭅 API
 ============================================
 
-K8s 노드/파드 상태와 Mimir 메트릭을 조회해
-Admin 대시보드에 실시간 데이터를 제공합니다.
+K8s ?몃뱶/?뚮뱶 ?곹깭? Mimir 硫뷀듃由?쓣 議고쉶??
+Admin ??쒕낫?쒖뿉 ?ㅼ떆媛??곗씠?곕? ?쒓났?⑸땲??
 
-데이터 소스:
+?곗씠???뚯뒪:
   - K8s API Server: in-cluster ServiceAccount (nodes, pods)
-  - Mimir: http://10.60.11.95:9009/prometheus (메트릭)
-  - Loki:  http://10.60.11.95:3100 (로그)
+  - Mimir: http://10.60.11.95:9009/prometheus (硫뷀듃由?
+  - Loki:  http://10.60.11.95:3100 (濡쒓렇)
 """
 
 import asyncio
@@ -94,8 +94,8 @@ async def require_admin_access(
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin_access)])
 
-# Shared HTTP clients — reused across requests for connection pooling
-# X-Scope-OrgID: Mimir/Loki multi-tenancy 필수 헤더 (tenant=tutum)
+# Shared HTTP clients ??reused across requests for connection pooling
+# X-Scope-OrgID: Mimir/Loki multi-tenancy ?꾩닔 ?ㅻ뜑 (tenant=tutum)
 _HTTP_MIMIR = httpx.AsyncClient(timeout=5.0, headers={"X-Scope-OrgID": "tutum"})
 _HTTP_LOKI = httpx.AsyncClient(timeout=8.0, headers={"X-Scope-OrgID": "tutum"})
 _HTTP_MISC = httpx.AsyncClient(timeout=8.0)
@@ -145,7 +145,7 @@ async def _mimir_query(api_path: str, params: dict) -> dict | None:
         logger.warning("Mimir query failed [%s]: %s", api_path, last_error)
     return None
 
-# ─── Bedrock client (lazy init) ───────────────────────────────────────────────
+# ??? Bedrock client (lazy init) ???????????????????????????????????????????????
 
 _bedrock_client = None
 
@@ -163,7 +163,7 @@ def _get_bedrock_client():
     return _bedrock_client
 
 
-# ─── K8s client (lazy init) ──────────────────────────────────────────────────
+# ??? K8s client (lazy init) ??????????????????????????????????????????????????
 
 _k8s_core = None
 _k8s_metrics = None
@@ -182,10 +182,10 @@ def _get_k8s_clients():
     return _k8s_core, _k8s_metrics
 
 
-# ─── 헬퍼 ─────────────────────────────────────────────────────────────────────
+# ??? ?ы띁 ?????????????????????????????????????????????????????????????????????
 
 def _pod_downtime_sec(container_statuses) -> int:
-    """마지막 재시작 시 다운되어 있었던 시간(초). 재시작 이력 없으면 0."""
+    """留덉?留??ъ떆?????ㅼ슫?섏뼱 ?덉뿀???쒓컙(珥?. ?ъ떆???대젰 ?놁쑝硫?0."""
     for cs in container_statuses:
         if cs.last_state and cs.last_state.terminated:
             finished = cs.last_state.terminated.finished_at
@@ -214,19 +214,127 @@ def _node_status(node) -> str:
     return "Unknown"
 
 
-# ─── Endpoints ────────────────────────────────────────────────────────────────
+DEFAULT_INSTANCE_HOURLY_RATES_USD = {
+    "c5.large": 0.085,
+    "c5.xlarge": 0.17,
+    "c5a.large": 0.077,
+    "c6g.large": 0.088,
+    "c6i.large": 0.102,
+    "m5.large": 0.096,
+    "m5.xlarge": 0.192,
+    "m5.2xlarge": 0.384,
+    "m6i.large": 0.12,
+    "m6i.xlarge": 0.24,
+    "t3.medium": 0.042,
+    "t3.large": 0.083,
+}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Ignoring invalid float env %s=%s", name, raw)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Ignoring invalid int env %s=%s", name, raw)
+        return default
+
+
+def _load_rate_map(env_name: str, defaults: dict[str, float]) -> dict[str, float]:
+    raw = os.getenv(env_name, "").strip()
+    if not raw:
+        return dict(defaults)
+
+    merged = dict(defaults)
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("Ignoring invalid JSON env %s", env_name)
+        return merged
+
+    if not isinstance(loaded, dict):
+        logger.warning("Ignoring non-object JSON env %s", env_name)
+        return merged
+
+    for key, value in loaded.items():
+        try:
+            merged[str(key).strip()] = float(value)
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid hourly rate %s=%s in %s", key, value, env_name)
+    return merged
+
+
+def _node_label(labels: dict, *keys: str) -> str:
+    for key in keys:
+        value = labels.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _normalize_capacity_type(raw_value: str) -> str:
+    normalized = (raw_value or "").strip().lower().replace("_", "-")
+    if normalized in {"spot", "on-demand"}:
+        return normalized
+    if normalized in {"ondemand", "on demand"}:
+        return "on-demand"
+    return "on-demand"
+
+
+def _estimate_hourly_rate(
+    instance_type: str,
+    capacity_type: str,
+    on_demand_rates: dict[str, float],
+    spot_rates: dict[str, float],
+    spot_discount_ratio: float,
+) -> tuple[float | None, str]:
+    if not instance_type:
+        return None, "missing-instance-type"
+
+    if capacity_type == "spot" and instance_type in spot_rates:
+        return round(spot_rates[instance_type], 4), "spot-explicit"
+
+    base_rate = on_demand_rates.get(instance_type)
+    if base_rate is None:
+        return None, "missing-rate"
+
+    if capacity_type == "spot":
+        return round(base_rate * spot_discount_ratio, 4), "spot-ratio"
+
+    return round(base_rate, 4), "on-demand"
+
+
+def _safe_round_money(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return round(value, 2)
+
+
+# ??? Endpoints ????????????????????????????????????????????????????????????????
 
 @router.get("/nodes")
 async def get_nodes():
     """
-    K8s 노드 목록과 CPU/Memory 사용률 반환.
-    metrics-server가 배포돼 있어야 사용량 데이터가 제공됩니다.
+    K8s ?몃뱶 紐⑸줉怨?CPU/Memory ?ъ슜瑜?諛섑솚.
+    metrics-server媛 諛고룷???덉뼱???ъ슜???곗씠?곌? ?쒓났?⑸땲??
     """
     try:
         core, metrics_api = _get_k8s_clients()
         nodes = core.list_node(_request_timeout=10).items
 
-        # metrics-server에서 노드 사용량 조회
+        # metrics-server?먯꽌 ?몃뱶 ?ъ슜??議고쉶
         usage_map = {}
         try:
             raw = metrics_api.list_cluster_custom_object(
@@ -238,23 +346,23 @@ async def get_nodes():
                 mem_ki = int(item["usage"]["memory"].rstrip("Ki"))
                 usage_map[name] = {"cpu_nano": cpu_nano, "mem_ki": mem_ki}
         except Exception as e:
-            logger.warning("metrics-server 조회 실패: %s", e)
+            logger.warning("metrics-server 議고쉶 ?ㅽ뙣: %s", e)
 
         result = []
         for node in nodes:
             name = node.metadata.name
-            # 노드 allocatable 정보
+            # ?몃뱶 allocatable ?뺣낫
             alloc = node.status.allocatable or {}
             cpu_alloc_str = alloc.get("cpu", "0")
             mem_alloc_str = alloc.get("memory", "0Ki")
 
-            # CPU: "6" → 6000m, "6000m" → 6000
+            # CPU: "6" ??6000m, "6000m" ??6000
             if cpu_alloc_str.endswith("m"):
                 cpu_alloc_m = int(cpu_alloc_str[:-1])
             else:
                 cpu_alloc_m = int(float(cpu_alloc_str)) * 1000
 
-            # Memory: "12345678Ki" → bytes
+            # Memory: "12345678Ki" ??bytes
             if mem_alloc_str.endswith("Ki"):
                 mem_alloc_ki = int(mem_alloc_str[:-2])
             else:
@@ -267,7 +375,7 @@ async def get_nodes():
                 cpu_pct = round(u["cpu_nano"] / 1_000_000 / cpu_alloc_m * 100) if cpu_alloc_m else 0
                 mem_pct = round(u["mem_ki"] / mem_alloc_ki * 100) if mem_alloc_ki else 0
 
-            # 내부 IP
+            # ?대? IP
             ip = ""
             for addr in (node.status.addresses or []):
                 if addr.type == "InternalIP":
@@ -286,15 +394,15 @@ async def get_nodes():
         return {"nodes": result}
 
     except Exception as e:
-        logger.error("get_nodes 오류: %s", e)
+        logger.error("get_nodes ?ㅻ쪟: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/pods")
 async def get_pods(namespace: str = "all"):
     """
-    파드 목록 반환. namespace='all'이면 전체 네임스페이스 조회.
-    tutum-app, tutum-data, monitoring 등 주요 ns만 포함.
+    ?뚮뱶 紐⑸줉 諛섑솚. namespace='all'?대㈃ ?꾩껜 ?ㅼ엫?ㅽ럹?댁뒪 議고쉶.
+    tutum-app, tutum-data, monitoring ??二쇱슂 ns留??ы븿.
     """
     TARGET_NAMESPACES = {"tutum-app", "tutum-data", "monitoring", "keda"}
 
@@ -312,9 +420,9 @@ async def get_pods(namespace: str = "all"):
             if namespace == "all" and ns not in TARGET_NAMESPACES:
                 continue
 
-            # 파드 상태
+            # ?뚮뱶 ?곹깭
             phase = pod.status.phase or "Unknown"
-            # CrashLoopBackOff 등 세부 상태
+            # CrashLoopBackOff ???몃? ?곹깭
             container_statuses = pod.status.container_statuses or []
             waiting_reason = None
             for cs in container_statuses:
@@ -323,15 +431,15 @@ async def get_pods(namespace: str = "all"):
                     break
             display_status = waiting_reason if waiting_reason else phase
 
-            # Ready 컨테이너 수
+            # Ready 而⑦뀒?대꼫 ??
             ready_count = sum(1 for cs in container_statuses if cs.ready)
             total_count = len(container_statuses)
 
-            # 기동 시각 (ISO)
+            # 湲곕룞 ?쒓컖 (ISO)
             start_ts = pod.status.start_time or pod.metadata.creation_timestamp
             start_time = start_ts.isoformat() if start_ts else "-"
 
-            # 다운타임 (초): 마지막 재시작 전 죽어있던 시간
+            # ?ㅼ슫???(珥?: 留덉?留??ъ떆????二쎌뼱?덈뜕 ?쒓컙
             downtime_sec = _pod_downtime_sec(container_statuses)
 
             result.append({
@@ -347,13 +455,13 @@ async def get_pods(namespace: str = "all"):
         return {"pods": result}
 
     except Exception as e:
-        logger.error("get_pods 오류: %s", e)
+        logger.error("get_pods ?ㅻ쪟: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/metrics")
 async def get_metrics():
-    """최근 1시간 KPI 메트릭을 Mimir에서 조회한다."""
+    """理쒓렐 1?쒓컙 KPI 硫뷀듃由?쓣 Mimir?먯꽌 議고쉶?쒕떎."""
     step = "5m"
     end = datetime.now(timezone.utc)
     start = end - timedelta(hours=1)
@@ -429,7 +537,7 @@ async def get_metrics():
             ),
         ],
         "error_rate": [
-            # or on() vector(0): 5xx 요청이 없을 때 빈 벡터 대신 0 반환 → N/A 방지
+            # or on() vector(0): 5xx ?붿껌???놁쓣 ??鍮?踰≫꽣 ???0 諛섑솚 ??N/A 諛⑹?
             (
                 '(sum(rate(http_requests_total{namespace="tutum-app",status=~"5.."}[2m])) or on() vector(0)) '
                 '/ sum(rate(http_requests_total{namespace="tutum-app"}[2m])) * 100'
@@ -476,7 +584,7 @@ async def get_metrics():
     }
 
     async def _query_top_endpoints(query: str) -> list[dict]:
-        """handler 레이블별 벡터 결과를 반환한다 (엔드포인트별 에러 집계용)."""
+        """handler ?덉씠釉붾퀎 踰≫꽣 寃곌낵瑜?諛섑솚?쒕떎 (?붾뱶?ъ씤?몃퀎 ?먮윭 吏묎퀎??."""
         data = await _mimir_query(
             "/api/v1/query",
             params={"query": query, "time": end.isoformat()},
@@ -520,7 +628,7 @@ async def get_metrics():
             logger.warning("Mimir query returned no data [%s]", key)
         result[key] = values
 
-    # 엔드포인트별 5xx 에러 Top 5 (지난 1시간)
+    # ?붾뱶?ъ씤?몃퀎 5xx ?먮윭 Top 5 (吏??1?쒓컙)
     top_5xx: list[dict] = []
     for q in [
         'topk(5, sum(increase(http_requests_total{namespace="tutum-app",status=~"5.."}[1h])) by (handler))',
@@ -537,27 +645,25 @@ async def get_metrics():
 @router.get("/logs")
 async def get_logs(namespace: str = "tutum-app", limit: int = 50):
     """
-    Loki에서 실시간 로그 조회 + 최근 1시간 에러 이력 요약.
+    Loki?먯꽌 ?ㅼ떆媛?濡쒓렇 議고쉶 + 理쒓렐 1?쒓컙 ?먮윭 ?대젰 ?붿빟.
     namespace: "tutum-app" | "tutum-data" | "all"
     """
     ns_pattern = "(tutum-app|tutum-data)" if namespace == "all" else namespace
-    base_selector = f'{{job="loki.source.kubernetes.k8s_logs", instance=~"{ns_pattern}/.*"}}'
-    log_query = base_selector  # 실시간 스트림 (최근 10분)
-    error_query = f'{base_selector} |= "ERROR"'  # 에러 이력 (최근 1시간)
+    base_selector = f'{{job="loki.source.kubernetes.pods", namespace=~"{ns_pattern}"}}'
+    log_query = base_selector  # ?ㅼ떆媛??ㅽ듃由?(理쒓렐 10遺?
+    error_query = f'{base_selector} |= "ERROR"'  # ?먮윭 ?대젰 (理쒓렐 1?쒓컙)
 
     end_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
 
     def _parse_streams(result: list, default_level: str = "INFO") -> list[dict]:
-        """Loki query_range result → log entry list."""
+        """Loki query_range result ??log entry list."""
         logs = []
         for stream in result:
             labels = stream["stream"]
-            instance = labels.get("instance", "")
             level = labels.get("level", default_level).upper()
-            ns_pod = instance.split(":")[0]
-            parts = ns_pod.split("/", 1)
-            ns_name = parts[0] if len(parts) == 2 else ""
-            pod_name = parts[1] if len(parts) == 2 else instance
+            # Alloy loki.source.kubernetes ?덉씠釉? namespace, pod 吏곸젒 ?ъ슜
+            ns_name = labels.get("namespace", "")
+            pod_name = labels.get("pod", labels.get("instance", ""))
             for ts_ns, msg in stream.get("values", []):
                 ts = datetime.fromtimestamp(int(ts_ns) / 1_000_000_000, tz=timezone.utc)
                 logs.append({
@@ -571,7 +677,7 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
         return logs
 
     try:
-        # 1) 실시간 스트림 — 최근 10분
+        # 1) ?ㅼ떆媛??ㅽ듃由???理쒓렐 10遺?
         stream_resp, error_resp = await asyncio.gather(
             _HTTP_LOKI.get(
                 f"{LOKI_URL}/loki/api/v1/query_range",
@@ -586,7 +692,7 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
             return_exceptions=True,
         )
 
-        # 실시간 로그 파싱
+        # ?ㅼ떆媛?濡쒓렇 ?뚯떛
         logs: list[dict] = []
         if not isinstance(stream_resp, Exception) and stream_resp.json().get("status") == "success":
             logs = _parse_streams(stream_resp.json()["data"]["result"])
@@ -598,11 +704,11 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
                 seen.add(key)
                 unique.append(log)
 
-        # 에러 이력 집계 (1시간, pod별 ERROR 건수 + 마지막 발생)
+        # ?먮윭 ?대젰 吏묎퀎 (1?쒓컙, pod蹂?ERROR 嫄댁닔 + 留덉?留?諛쒖깮)
         error_summary: list[dict] = []
         if not isinstance(error_resp, Exception) and error_resp.json().get("status") == "success":
             err_logs = _parse_streams(error_resp.json()["data"]["result"], default_level="ERROR")
-            # pod별 집계
+            # pod蹂?吏묎퀎
             pod_stat: dict[str, dict] = {}
             for e in err_logs:
                 pod = e["pod"]
@@ -620,31 +726,31 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
         return {"logs": unique[:limit], "error_summary": error_summary}
 
     except Exception as e:
-        logger.error("get_logs Loki 오류: %s", e)
+        logger.error("get_logs Loki ?ㅻ쪟: %s", e)
         return {"logs": [], "error_summary": []}
 
 
-# ─── AI 진단 ───────────────────────────────────────────────────────────────────
+# ??? AI 吏꾨떒 ???????????????????????????????????????????????????????????????????
 
-_DIAGNOSE_SYSTEM_PROMPT = """당신은 Kubernetes 클러스터 운영 전문가 AI입니다.
-주어진 클러스터 상태 데이터를 분석하여 다음 JSON 형식으로만 응답하세요.
-다른 텍스트나 마크다운 없이 순수 JSON만 반환하세요.
+_DIAGNOSE_SYSTEM_PROMPT = """?뱀떊? Kubernetes ?대윭?ㅽ꽣 ?댁쁺 ?꾨Ц媛 AI?낅땲??
+二쇱뼱吏??대윭?ㅽ꽣 ?곹깭 ?곗씠?곕? 遺꾩꽍?섏뿬 ?ㅼ쓬 JSON ?뺤떇?쇰줈留??묐떟?섏꽭??
+?ㅻⅨ ?띿뒪?몃굹 留덊겕?ㅼ슫 ?놁씠 ?쒖닔 JSON留?諛섑솚?섏꽭??
 
 {
   "severity": "OK" | "WARN" | "CRITICAL",
-  "summary": "한 줄 전체 요약 (한국어, 50자 이내)",
+  "summary": "??以??꾩껜 ?붿빟 (?쒓뎅?? 50???대궡)",
   "issues": [
-    {"level": "WARN" | "ERROR", "title": "이슈 제목", "detail": "상세 설명"}
+    {"level": "WARN" | "ERROR", "title": "?댁뒋 ?쒕ぉ", "detail": "?곸꽭 ?ㅻ챸"}
   ],
   "recommendations": [
-    {"priority": "HIGH" | "MEDIUM" | "LOW", "action": "권장 조치 (한국어)"}
+    {"priority": "HIGH" | "MEDIUM" | "LOW", "action": "沅뚯옣 議곗튂 (?쒓뎅??"}
   ]
 }
 
-severity 기준:
-- OK: 모든 파드 정상, 재시작 없음, 리소스 여유
-- WARN: 일부 파드 이슈 or 재시작 있음 or 리소스 70% 이상
-- CRITICAL: CrashLoopBackOff or 다수 파드 비정상 or 노드 NotReady"""
+severity 湲곗?:
+- OK: 紐⑤뱺 ?뚮뱶 ?뺤긽, ?ъ떆???놁쓬, 由ъ냼???ъ쑀
+- WARN: ?쇰? ?뚮뱶 ?댁뒋 or ?ъ떆???덉쓬 or 由ъ냼??70% ?댁긽
+- CRITICAL: CrashLoopBackOff or ?ㅼ닔 ?뚮뱶 鍮꾩젙??or ?몃뱶 NotReady"""
 
 
 @router.get("/diagnose")
@@ -653,16 +759,16 @@ async def get_diagnose(
     current_user: UserResponse = Depends(get_current_user),
 ):
     """
-    현재 클러스터 상태를 Bedrock Claude로 AI 진단.
-    nodes + pods 데이터를 수집해 이슈/권장조치를 JSON으로 반환.
+    ?꾩옱 ?대윭?ㅽ꽣 ?곹깭瑜?Bedrock Claude濡?AI 吏꾨떒.
+    nodes + pods ?곗씠?곕? ?섏쭛???댁뒋/沅뚯옣議곗튂瑜?JSON?쇰줈 諛섑솚.
     """
-    # 1. 클러스터 현재 상태 수집
+    # 1. ?대윭?ㅽ꽣 ?꾩옱 ?곹깭 ?섏쭛
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
 
     try:
         core, metrics_api = _get_k8s_clients()
 
-        # 노드 수집
+        # ?몃뱶 ?섏쭛
         nodes_raw = core.list_node(_request_timeout=10).items
         usage_map = {}
         try:
@@ -696,7 +802,7 @@ async def get_diagnose(
             role = _node_role(node)
             node_lines.append(f"  - {name} ({role}): {status}, CPU {cpu_pct}%, MEM {mem_pct}%")
 
-        # 파드 수집
+        # ?뚮뱶 ?섏쭛
         TARGET_NS = {"tutum-app", "tutum-data", "monitoring", "keda"}
         pods_raw = core.list_pod_for_all_namespaces(_request_timeout=10).items
         pod_lines = []
@@ -720,27 +826,27 @@ async def get_diagnose(
                 problem_pods.append(line.strip())
 
     except Exception as e:
-        logger.error("diagnose 데이터 수집 오류: %s", e)
-        raise HTTPException(status_code=500, detail=f"클러스터 데이터 수집 실패: {e}")
+        logger.error("diagnose ?곗씠???섏쭛 ?ㅻ쪟: %s", e)
+        raise HTTPException(status_code=500, detail=f"?대윭?ㅽ꽣 ?곗씠???섏쭛 ?ㅽ뙣: {e}")
 
-    # 2. 프롬프트 구성
+    # 2. ?꾨＼?꾪듃 援ъ꽦
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    prompt = f"""클러스터 진단 요청 ({now_str})
+    prompt = f"""?대윭?ㅽ꽣 吏꾨떒 ?붿껌 ({now_str})
 
-[노드 상태 ({len(nodes_raw)}개)]
+[?몃뱶 ?곹깭 ({len(nodes_raw)}媛?]
 {chr(10).join(node_lines)}
 
-[파드 상태 ({len(pod_lines)}개)]
+[?뚮뱶 ?곹깭 ({len(pod_lines)}媛?]
 {chr(10).join(pod_lines)}
 
-[요약]
-- 전체 파드: {len(pod_lines)}개
-- 문제 파드: {len(problem_pods)}개
-{chr(10).join(problem_pods) if problem_pods else "  (없음)"}
+[?붿빟]
+- ?꾩껜 ?뚮뱶: {len(pod_lines)}媛?
+- 臾몄젣 ?뚮뱶: {len(problem_pods)}媛?
+{chr(10).join(problem_pods) if problem_pods else "  (?놁쓬)"}
 
-위 데이터를 분석하여 지정된 JSON 형식으로 진단 결과를 반환하세요."""
+???곗씠?곕? 遺꾩꽍?섏뿬 吏?뺣맂 JSON ?뺤떇?쇰줈 吏꾨떒 寃곌낵瑜?諛섑솚?섏꽭??"""
 
-    # 3. Bedrock 호출
+    # 3. Bedrock ?몄텧
     try:
         bedrock = _get_bedrock_client()
         model_id = os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-6")
@@ -765,7 +871,7 @@ async def get_diagnose(
         raw_body = json.loads(response["body"].read())
         text = raw_body["content"][0]["text"].strip()
 
-        # JSON 파싱 (코드블록 감싸져 있을 경우 제거)
+        # JSON ?뚯떛 (肄붾뱶釉붾줉 媛먯떥???덉쓣 寃쎌슦 ?쒓굅)
         if text.startswith("```"):
             text = text.split("```")[1]
             if text.startswith("json"):
@@ -773,8 +879,8 @@ async def get_diagnose(
         diagnosis = json.loads(text)
 
     except Exception as e:
-        logger.error("Bedrock 진단 호출 오류: %s", e)
-        raise HTTPException(status_code=503, detail=f"AI 진단 서비스 오류: {e}")
+        logger.error("Bedrock 吏꾨떒 ?몄텧 ?ㅻ쪟: %s", e)
+        raise HTTPException(status_code=503, detail=f"AI 吏꾨떒 ?쒕퉬???ㅻ쪟: {e}")
 
     return {
         "diagnosis": diagnosis,
@@ -787,19 +893,19 @@ async def get_diagnose(
     }
 
 
-# ─── 파이프라인 모니터링 ────────────────────────────────────────────────────────
+# ??? ?뚯씠?꾨씪??紐⑤땲?곕쭅 ????????????????????????????????????????????????????????
 
 _NEWS_WORKERS = ["news-producer", "news-consumer", "elastic-consumer"]
 _PRICE_WORKERS = ["price-producer", "price-consumer"]
 _OTHER_WORKERS = ["email-worker", "ocr-worker"]
 _ALL_WORKERS = _NEWS_WORKERS + _PRICE_WORKERS + _OTHER_WORKERS
 
-# 하위 호환성용 (pipeline-diagnose 프롬프트 등)
+# ?섏쐞 ?명솚?깆슜 (pipeline-diagnose ?꾨＼?꾪듃 ??
 _PIPELINE_WORKERS = _ALL_WORKERS
 
 
 async def _collect_pipeline_data() -> dict:
-    """파이프라인 전체 워커 상태 수집 (pipeline / pipeline-diagnose 공용)."""
+    """?뚯씠?꾨씪???꾩껜 ?뚯빱 ?곹깭 ?섏쭛 (pipeline / pipeline-diagnose 怨듭슜)."""
     out: dict = {
         "workers": {
             w: {"status": "Unknown", "start_time": "-", "downtime_sec": 0, "running": False}
@@ -810,7 +916,7 @@ async def _collect_pipeline_data() -> dict:
         "recent_logs": {w: [] for w in _ALL_WORKERS},
     }
 
-    # 1. Worker 파드 상태 (K8s)
+    # 1. Worker ?뚮뱶 ?곹깭 (K8s)
     try:
         core, _ = _get_k8s_clients()
         for label in _ALL_WORKERS:
@@ -842,7 +948,7 @@ async def _collect_pipeline_data() -> dict:
             except Exception:
                 pass
     except Exception as e:
-        logger.warning("pipeline K8s 조회 실패: %s", e)
+        logger.warning("pipeline K8s 議고쉶 ?ㅽ뙣: %s", e)
 
     # 2. MongoDB news count
     try:
@@ -853,7 +959,7 @@ async def _collect_pipeline_data() -> dict:
             recent = await news_col.count_documents({"published_at": {"$gte": one_hour_ago}})
             out["mongodb"] = {"news_total": total, "news_last_1h": recent, "available": True}
     except Exception as e:
-        logger.warning("pipeline MongoDB 조회 실패: %s", e)
+        logger.warning("pipeline MongoDB 議고쉶 ?ㅽ뙣: %s", e)
 
     # 3. Elasticsearch document count
     es_url = os.getenv("ELASTICSEARCH_URL", "http://elasticsearch.tutum-data.svc.cluster.local:9200")
@@ -862,15 +968,15 @@ async def _collect_pipeline_data() -> dict:
         if resp.status_code == 200:
             out["elasticsearch"] = {"news_docs": resp.json().get("count", 0), "available": True}
     except Exception as e:
-        logger.warning("pipeline ES 조회 실패: %s", e)
+        logger.warning("pipeline ES 議고쉶 ?ㅽ뙣: %s", e)
 
-    # 4. Loki 최근 로그 샘플 (최근 5분)
+    # 4. Loki 理쒓렐 濡쒓렇 ?섑뵆 (理쒓렐 5遺?
     end_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
     start_ns = end_ns - 300_000_000_000
     try:
         for worker in _ALL_WORKERS:
             try:
-                query = f'{{job="loki.source.kubernetes.k8s_logs", instance=~"tutum-app/{worker}-.*"}}'
+                query = f'{{job="loki.source.kubernetes.pods", namespace="tutum-app", app=~"{worker}.*"}}'
                 resp = await _HTTP_LOKI.get(
                     f"{LOKI_URL}/loki/api/v1/query_range",
                     params={"query": query, "limit": 5, "start": start_ns, "end": end_ns, "direction": "backward"},
@@ -885,41 +991,41 @@ async def _collect_pipeline_data() -> dict:
             except Exception:
                 pass
     except Exception as e:
-        logger.warning("pipeline Loki 샘플 실패: %s", e)
+        logger.warning("pipeline Loki ?섑뵆 ?ㅽ뙣: %s", e)
 
     return out
 
 
 @router.get("/pipeline")
 async def get_pipeline():
-    """파이프라인 3대 구성요소 실시간 상태 (Worker 파드/MongoDB/ES/Loki 샘플)."""
+    """?뚯씠?꾨씪??3? 援ъ꽦?붿냼 ?ㅼ떆媛??곹깭 (Worker ?뚮뱶/MongoDB/ES/Loki ?섑뵆)."""
     return await _collect_pipeline_data()
 
 
-_PIPELINE_SYSTEM_PROMPT = """당신은 데이터 파이프라인 운영 전문가 AI입니다.
-파이프라인 구성요소들을 분석하여 다음 JSON 형식으로만 응답하세요.
-다른 텍스트나 마크다운 없이 순수 JSON만 반환하세요.
+_PIPELINE_SYSTEM_PROMPT = """?뱀떊? ?곗씠???뚯씠?꾨씪???댁쁺 ?꾨Ц媛 AI?낅땲??
+?뚯씠?꾨씪??援ъ꽦?붿냼?ㅼ쓣 遺꾩꽍?섏뿬 ?ㅼ쓬 JSON ?뺤떇?쇰줈留??묐떟?섏꽭??
+?ㅻⅨ ?띿뒪?몃굹 留덊겕?ㅼ슫 ?놁씠 ?쒖닔 JSON留?諛섑솚?섏꽭??
 
 {
   "overall": "OK" | "WARN" | "CRITICAL",
   "components": [
     {
       "name": "news-producer",
-      "label": "뉴스 수집",
+      "label": "?댁뒪 ?섏쭛",
       "status": "OK" | "WARN" | "ERROR",
-      "summary": "한 줄 요약 (20자 이내)",
-      "issues": [{"title": "이슈 제목", "detail": "상세 설명"}],
-      "actions": [{"priority": "HIGH" | "MEDIUM" | "LOW", "action": "권장 조치"}]
+      "summary": "??以??붿빟 (20???대궡)",
+      "issues": [{"title": "?댁뒋 ?쒕ぉ", "detail": "?곸꽭 ?ㅻ챸"}],
+      "actions": [{"priority": "HIGH" | "MEDIUM" | "LOW", "action": "沅뚯옣 議곗튂"}]
     }
   ]
 }
 
-status 기준:
-- OK: 파드 Running, 처리 정상
-- WARN: 재시작 있음, 처리 지연, 일시 중지/중단 상태
-- ERROR: 파드 없음, CrashLoop, 오류 지속
-워커 그룹: 뉴스(news-producer/consumer/elastic-consumer), 시세(price-producer/consumer), 기타(email-worker/ocr-worker)
-중요: 각 워커의 입력 데이터와 실제 상태를 기반으로 판단하세요."""
+status 湲곗?:
+- OK: ?뚮뱶 Running, 泥섎━ ?뺤긽
+- WARN: ?ъ떆???덉쓬, 泥섎━ 吏?? ?쇱떆 以묒?/以묐떒 ?곹깭
+- ERROR: ?뚮뱶 ?놁쓬, CrashLoop, ?ㅻ쪟 吏??
+?뚯빱 洹몃９: ?댁뒪(news-producer/consumer/elastic-consumer), ?쒖꽭(price-producer/consumer), 湲고?(email-worker/ocr-worker)
+以묒슂: 媛??뚯빱???낅젰 ?곗씠?곗? ?ㅼ젣 ?곹깭瑜?湲곕컲?쇰줈 ?먮떒?섏꽭??"""
 
 
 @router.get("/pipeline-diagnose")
@@ -927,16 +1033,16 @@ async def get_pipeline_diagnose(
     request: Request,
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """파이프라인 3대 구성요소를 Bedrock Claude로 AI 분석."""
-    # 1. 데이터 수집
+    """?뚯씠?꾨씪??3? 援ъ꽦?붿냼瑜?Bedrock Claude濡?AI 遺꾩꽍."""
+    # 1. ?곗씠???섏쭛
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
 
     try:
         data = await _collect_pipeline_data()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"파이프라인 데이터 수집 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"?뚯씠?꾨씪???곗씠???섏쭛 ?ㅽ뙣: {e}")
 
-    # 2. 프롬프트 구성
+    # 2. ?꾨＼?꾪듃 援ъ꽦
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     WORKER_KR = {
         "news-producer": "news collection",
@@ -948,41 +1054,41 @@ async def get_pipeline_diagnose(
         "ocr-worker": "ocr worker",
     }
 
-    lines = [f"파이프라인 진단 요청 ({now_str})", ""]
+    lines = [f"?뚯씠?꾨씪??吏꾨떒 ?붿껌 ({now_str})", ""]
     for w in _PIPELINE_WORKERS:
         wd = data["workers"].get(w, {})
         lines.append(f"[{WORKER_KR[w]}] ({w})")
         status_str = wd.get('status', 'Unknown')
         restarts_str = wd.get('restarts', 0)
         running_str = wd.get('running', False)
-        lines.append(f"  상태: {status_str}, 재시작: {restarts_str}회, Running: {running_str}")
+        lines.append(f"  ?곹깭: {status_str}, ?ъ떆?? {restarts_str}?? Running: {running_str}")
         recent = data["recent_logs"].get(w, [])
         if recent:
-            lines.append(f"  최근 로그: {recent[0][:80]}")
+            lines.append(f"  理쒓렐 濡쒓렇: {recent[0][:80]}")
         lines.append("")
 
     elastic = data["workers"].get("elastic-consumer", {})
     elastic_status = elastic.get("status", "Unknown")
     elastic_running = bool(elastic.get("running", False))
     if elastic_running:
-        elastic_note = "참고: elastic-consumer는 현재 실행 중입니다. 비활성으로 가정하지 말고 실제 인덱싱 상태를 평가하세요."
+        elastic_note = "李멸퀬: elastic-consumer???꾩옱 ?ㅽ뻾 以묒엯?덈떎. 鍮꾪솢?깆쑝濡?媛?뺥븯吏 留먭퀬 ?ㅼ젣 ?몃뜳???곹깭瑜??됯??섏꽭??"
     elif elastic_status == "Stopped":
-        elastic_note = "참고: elastic-consumer 파드가 관찰되지 않습니다(중지 상태)."
+        elastic_note = "李멸퀬: elastic-consumer ?뚮뱶媛 愿李곕릺吏 ?딆뒿?덈떎(以묒? ?곹깭)."
     else:
-        elastic_note = f"참고: elastic-consumer 상태는 {elastic_status} 입니다."
+        elastic_note = f"李멸퀬: elastic-consumer ?곹깭??{elastic_status} ?낅땲??"
 
     lines += [
-        "[데이터 현황]",
-        f"  MongoDB news 전체: {data['mongodb'].get('news_total', 'N/A')}건",
-        f"  MongoDB 최근 1시간 추가: {data['mongodb'].get('news_last_1h', 'N/A')}건",
-        f"  ES 인덱스 문서: {data['elasticsearch'].get('news_docs', 'N/A')}건",
+        "[?곗씠???꾪솴]",
+        f"  MongoDB news ?꾩껜: {data['mongodb'].get('news_total', 'N/A')}嫄?,
+        f"  MongoDB 理쒓렐 1?쒓컙 異붽?: {data['mongodb'].get('news_last_1h', 'N/A')}嫄?,
+        f"  ES ?몃뜳??臾몄꽌: {data['elasticsearch'].get('news_docs', 'N/A')}嫄?,
         "",
         elastic_note,
-        "위 데이터를 기반으로 3개 구성요소 각각의 분석을 JSON으로 반환하세요.",
+        "???곗씠?곕? 湲곕컲?쇰줈 3媛?援ъ꽦?붿냼 媛곴컖??遺꾩꽍??JSON?쇰줈 諛섑솚?섏꽭??",
     ]
     prompt = "\n".join(lines)
 
-    # 3. Bedrock 호출
+    # 3. Bedrock ?몄텧
     try:
         bedrock = _get_bedrock_client()
         model_id = os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-6")
@@ -1012,16 +1118,16 @@ async def get_pipeline_diagnose(
         result = json.loads(text)
 
     except Exception as e:
-        logger.error("pipeline-diagnose Bedrock 오류: %s", e)
-        raise HTTPException(status_code=503, detail=f"AI 분석 실패: {e}")
+        logger.error("pipeline-diagnose Bedrock ?ㅻ쪟: %s", e)
+        raise HTTPException(status_code=503, detail=f"AI 遺꾩꽍 ?ㅽ뙣: {e}")
 
     return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
 
 
-# ─── AI 진단 공통 헬퍼 ─────────────────────────────────────────────────────────
+# ??? AI 吏꾨떒 怨듯넻 ?ы띁 ?????????????????????????????????????????????????????????
 
 async def _call_bedrock_standard(prompt: str, system_prompt: str, max_tokens: int = 1024) -> dict:
-    """Bedrock Claude 공통 호출 + JSON 파싱."""
+    """Bedrock Claude 怨듯넻 ?몄텧 + JSON ?뚯떛."""
     bedrock = _get_bedrock_client()
     model_id = os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-6")
     body = json.dumps({
@@ -1053,7 +1159,7 @@ async def get_infra_diagnose(
     request: Request,
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """인프라(노드/파드) 상태를 Bedrock Claude로 AI 진단."""
+    """?명봽???몃뱶/?뚮뱶) ?곹깭瑜?Bedrock Claude濡?AI 吏꾨떒."""
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
 
     try:
@@ -1108,22 +1214,22 @@ async def get_infra_diagnose(
                 problem_pods.append(line.strip())
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"인프라 데이터 수집 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"?명봽???곗씠???섏쭛 ?ㅽ뙣: {e}")
 
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     prompt = (
-        f"인프라 진단 요청 ({now_str})\n\n"
-        f"[노드 상태 ({len(nodes_raw)}개)]\n" + "\n".join(node_lines) + "\n\n"
-        f"[파드 상태 ({len(pod_lines)}개)]\n" + "\n".join(pod_lines) + "\n\n"
-        f"[요약]\n- 전체 파드: {len(pod_lines)}개\n- 문제 파드: {len(problem_pods)}개\n"
-        + ("\n".join(problem_pods) if problem_pods else "  (없음)") +
-        "\n\n위 인프라 데이터를 분석하여 지정된 JSON 형식으로 진단 결과를 반환하세요."
+        f"?명봽??吏꾨떒 ?붿껌 ({now_str})\n\n"
+        f"[?몃뱶 ?곹깭 ({len(nodes_raw)}媛?]\n" + "\n".join(node_lines) + "\n\n"
+        f"[?뚮뱶 ?곹깭 ({len(pod_lines)}媛?]\n" + "\n".join(pod_lines) + "\n\n"
+        f"[?붿빟]\n- ?꾩껜 ?뚮뱶: {len(pod_lines)}媛?n- 臾몄젣 ?뚮뱶: {len(problem_pods)}媛?n"
+        + ("\n".join(problem_pods) if problem_pods else "  (?놁쓬)") +
+        "\n\n???명봽???곗씠?곕? 遺꾩꽍?섏뿬 吏?뺣맂 JSON ?뺤떇?쇰줈 吏꾨떒 寃곌낵瑜?諛섑솚?섏꽭??"
     )
 
     try:
         result = await _call_bedrock_standard(prompt, _DIAGNOSE_SYSTEM_PROMPT)
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"AI 분석 실패: {e}")
+        raise HTTPException(status_code=503, detail=f"AI 遺꾩꽍 ?ㅽ뙣: {e}")
 
     return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
 
@@ -1133,13 +1239,13 @@ async def get_data_diagnose(
     request: Request,
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """데이터 레이어(ES/Redis/Kafka/MongoDB/Disk) 상태를 AI 진단."""
+    """?곗씠???덉씠??ES/Redis/Kafka/MongoDB/Disk) ?곹깭瑜?AI 吏꾨떒."""
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
 
     try:
         dm = await get_data_metrics()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"데이터 메트릭 수집 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"?곗씠??硫뷀듃由??섏쭛 ?ㅽ뙣: {e}")
 
     es = dm["elasticsearch"]
     redis = dm["redis"]
@@ -1149,34 +1255,34 @@ async def get_data_diagnose(
 
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     prompt = (
-        f"데이터 레이어 진단 요청 ({now_str})\n\n"
+        f"?곗씠???덉씠??吏꾨떒 ?붿껌 ({now_str})\n\n"
         f"[Elasticsearch]\n"
-        f"- 가용: {es['available']}\n"
+        f"- 媛?? {es['available']}\n"
         f"- JVM Heap: {es['jvm_heap_used_gb']}GB / {es['jvm_heap_max_gb']}GB ({es['jvm_heap_pct']}%)\n"
-        f"- 인덱싱: {es['indexing_rate']} docs/s, 저장소: {es['store_gb']}GB\n"
-        f"- 검색 QPS: {es['search_qps']}, 지연: {es['search_latency_ms']}ms\n"
-        f"- 스레드 거부: {es['thread_rejected']}\n\n"
+        f"- ?몃뜳?? {es['indexing_rate']} docs/s, ??μ냼: {es['store_gb']}GB\n"
+        f"- 寃??QPS: {es['search_qps']}, 吏?? {es['search_latency_ms']}ms\n"
+        f"- ?ㅻ젅??嫄곕?: {es['thread_rejected']}\n\n"
         f"[Redis]\n"
-        f"- 가용: {redis['available']}\n"
-        f"- 메모리: {redis['memory_used_gb']}GB / {redis['memory_max_gb']}GB ({redis['memory_pct']}%)\n"
-        f"- 연결: {redis['clients']}개, 히트율: {redis['hit_rate_pct']}%\n\n"
+        f"- 媛?? {redis['available']}\n"
+        f"- 硫붾え由? {redis['memory_used_gb']}GB / {redis['memory_max_gb']}GB ({redis['memory_pct']}%)\n"
+        f"- ?곌껐: {redis['clients']}媛? ?덊듃?? {redis['hit_rate_pct']}%\n\n"
         f"[Kafka]\n"
-        f"- 가용: {kafka['available']}\n"
-        f"- Consumer Lag: {kafka['consumer_lag']}, 처리량: {kafka['throughput_msg_per_min']}msg/min\n\n"
+        f"- 媛?? {kafka['available']}\n"
+        f"- Consumer Lag: {kafka['consumer_lag']}, 泥섎━?? {kafka['throughput_msg_per_min']}msg/min\n\n"
         f"[MongoDB]\n"
-        f"- 가용: {mongo['available']}\n"
-        f"- 연결: {mongo['connections']}개\n"
-        f"- 읽기: {mongo['ops_read_per_sec']}/s, 쓰기: {mongo['ops_write_per_sec']}/s\n\n"
+        f"- 媛?? {mongo['available']}\n"
+        f"- ?곌껐: {mongo['connections']}媛?n"
+        f"- ?쎄린: {mongo['ops_read_per_sec']}/s, ?곌린: {mongo['ops_write_per_sec']}/s\n\n"
         f"[Disk]\n"
-        f"- 전체: {disk['total_gb']}GB, 사용: {disk['used_gb']}GB ({disk['used_pct']}%)\n"
-        f"- 읽기: {disk['read_mbps']}MB/s, 쓰기: {disk['write_mbps']}MB/s\n\n"
-        "위 데이터 레이어 상태를 분석하여 지정된 JSON 형식으로 진단 결과를 반환하세요."
+        f"- ?꾩껜: {disk['total_gb']}GB, ?ъ슜: {disk['used_gb']}GB ({disk['used_pct']}%)\n"
+        f"- ?쎄린: {disk['read_mbps']}MB/s, ?곌린: {disk['write_mbps']}MB/s\n\n"
+        "???곗씠???덉씠???곹깭瑜?遺꾩꽍?섏뿬 吏?뺣맂 JSON ?뺤떇?쇰줈 吏꾨떒 寃곌낵瑜?諛섑솚?섏꽭??"
     )
 
     try:
         result = await _call_bedrock_standard(prompt, _DIAGNOSE_SYSTEM_PROMPT)
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"AI 분석 실패: {e}")
+        raise HTTPException(status_code=503, detail=f"AI 遺꾩꽍 ?ㅽ뙣: {e}")
 
     return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
 
@@ -1186,7 +1292,7 @@ async def get_log_diagnose(
     request: Request,
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """최근 1시간 에러 로그 패턴을 AI 분석."""
+    """理쒓렐 1?쒓컙 ?먮윭 濡쒓렇 ?⑦꽩??AI 遺꾩꽍."""
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
 
     end_ns = int(datetime.now(timezone.utc).timestamp() * 1_000_000_000)
@@ -1196,7 +1302,7 @@ async def get_log_diagnose(
         resp = await _HTTP_LOKI.get(
             f"{LOKI_URL}/loki/api/v1/query_range",
             params={
-                "query": '{job="loki.source.kubernetes.k8s_logs"} |= "ERROR"',
+                "query": '{job="loki.source.kubernetes.pods"} |= "ERROR"',
                 "limit": 50,
                 "start": start_ns,
                 "end": end_ns,
@@ -1212,20 +1318,20 @@ async def get_log_diagnose(
                 for _, msg in stream.get("values", []):
                     error_logs.append(f"[{ns}/{pod}] {msg[:120]}")
     except Exception as e:
-        logger.warning("log-diagnose Loki 조회 실패: %s", e)
+        logger.warning("log-diagnose Loki 議고쉶 ?ㅽ뙣: %s", e)
 
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    log_text = "\n".join(error_logs[:30]) if error_logs else "  (최근 1시간 에러 없음)"
+    log_text = "\n".join(error_logs[:30]) if error_logs else "  (理쒓렐 1?쒓컙 ?먮윭 ?놁쓬)"
     prompt = (
-        f"로그 분석 진단 요청 ({now_str})\n\n"
-        f"[최근 1시간 에러 로그 ({len(error_logs)}건)]\n{log_text}\n\n"
-        "위 로그 패턴을 분석하여 반복 에러·이상 패턴을 파악하고, 지정된 JSON 형식으로 진단 결과를 반환하세요."
+        f"濡쒓렇 遺꾩꽍 吏꾨떒 ?붿껌 ({now_str})\n\n"
+        f"[理쒓렐 1?쒓컙 ?먮윭 濡쒓렇 ({len(error_logs)}嫄?]\n{log_text}\n\n"
+        "??濡쒓렇 ?⑦꽩??遺꾩꽍?섏뿬 諛섎났 ?먮윭쨌?댁긽 ?⑦꽩???뚯븙?섍퀬, 吏?뺣맂 JSON ?뺤떇?쇰줈 吏꾨떒 寃곌낵瑜?諛섑솚?섏꽭??"
     )
 
     try:
         result = await _call_bedrock_standard(prompt, _DIAGNOSE_SYSTEM_PROMPT)
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"AI 분석 실패: {e}")
+        raise HTTPException(status_code=503, detail=f"AI 遺꾩꽍 ?ㅽ뙣: {e}")
 
     return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
 
@@ -1235,7 +1341,7 @@ async def get_trace_diagnose(
     request: Request,
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """최근 1시간 트레이스 에러·지연을 AI 분석."""
+    """理쒓렐 1?쒓컙 ?몃젅?댁뒪 ?먮윭쨌吏?곗쓣 AI 遺꾩꽍."""
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
 
     end_s = int(datetime.now(timezone.utc).timestamp())
@@ -1253,7 +1359,7 @@ async def get_trace_diagnose(
             for t in err_resp.json().get("traces", []):
                 error_lines.append(f"  {t.get('rootTraceName','-')} {t.get('durationMs',0)}ms [5xx]")
     except Exception as e:
-        logger.warning("trace-diagnose error query 실패: %s", e)
+        logger.warning("trace-diagnose error query ?ㅽ뙣: %s", e)
     try:
         slow_resp = await _HTTP_MISC.get(
             f"{TEMPO_URL}/api/search",
@@ -1263,22 +1369,22 @@ async def get_trace_diagnose(
             for t in slow_resp.json().get("traces", []):
                 slow_lines.append(f"  {t.get('rootTraceName','-')} {t.get('durationMs',0)}ms")
     except Exception as e:
-        logger.warning("trace-diagnose slow query 실패: %s", e)
+        logger.warning("trace-diagnose slow query ?ㅽ뙣: %s", e)
 
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     prompt = (
-        f"트레이스 분석 진단 요청 ({now_str})\n\n"
-        f"[5xx 에러 트레이스 ({len(error_lines)}건)]\n"
-        + ("\n".join(error_lines) if error_lines else "  (없음)") + "\n\n"
-        f"[느린 요청 트레이스 >=200ms ({len(slow_lines)}건)]\n"
-        + ("\n".join(slow_lines) if slow_lines else "  (없음)") + "\n\n"
-        "위 트레이스 데이터를 분석하여 에러율·지연 패턴을 파악하고, 지정된 JSON 형식으로 진단 결과를 반환하세요."
+        f"?몃젅?댁뒪 遺꾩꽍 吏꾨떒 ?붿껌 ({now_str})\n\n"
+        f"[5xx ?먮윭 ?몃젅?댁뒪 ({len(error_lines)}嫄?]\n"
+        + ("\n".join(error_lines) if error_lines else "  (?놁쓬)") + "\n\n"
+        f"[?먮┛ ?붿껌 ?몃젅?댁뒪 >=200ms ({len(slow_lines)}嫄?]\n"
+        + ("\n".join(slow_lines) if slow_lines else "  (?놁쓬)") + "\n\n"
+        "???몃젅?댁뒪 ?곗씠?곕? 遺꾩꽍?섏뿬 ?먮윭?㉱룹????⑦꽩???뚯븙?섍퀬, 吏?뺣맂 JSON ?뺤떇?쇰줈 吏꾨떒 寃곌낵瑜?諛섑솚?섏꽭??"
     )
 
     try:
         result = await _call_bedrock_standard(prompt, _DIAGNOSE_SYSTEM_PROMPT)
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"AI 분석 실패: {e}")
+        raise HTTPException(status_code=503, detail=f"AI 遺꾩꽍 ?ㅽ뙣: {e}")
 
     return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
 
@@ -1288,41 +1394,41 @@ async def get_backup_diagnose(
     request: Request,
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """백업 CronJob 상태를 AI 진단."""
+    """諛깆뾽 CronJob ?곹깭瑜?AI 吏꾨떒."""
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
 
     try:
         data = await get_backup_status()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"백업 상태 수집 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"諛깆뾽 ?곹깭 ?섏쭛 ?ㅽ뙣: {e}")
 
     backups = data.get("backups", [])
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    lines = [f"백업 상태 진단 요청 ({now_str})\n"]
+    lines = [f"諛깆뾽 ?곹깭 吏꾨떒 ?붿껌 ({now_str})\n"]
     for b in backups:
         lines.append(
             f"[{b['name']}] ({b['cronjob']}, ns={b['namespace']})\n"
-            f"  상태: {b['status']}, 스케줄: {b['schedule']}\n"
-            f"  마지막 실행: {b['last_run_at']}, 마지막 성공: {b['last_success_at']}\n"
-            f"  에러: {b.get('last_error') or '없음'}"
+            f"  ?곹깭: {b['status']}, ?ㅼ?以? {b['schedule']}\n"
+            f"  留덉?留??ㅽ뻾: {b['last_run_at']}, 留덉?留??깃났: {b['last_success_at']}\n"
+            f"  ?먮윭: {b.get('last_error') or '?놁쓬'}"
         )
-    prompt = "\n".join(lines) + "\n\n위 백업 상태를 분석하여 지정된 JSON 형식으로 진단 결과를 반환하세요."
+    prompt = "\n".join(lines) + "\n\n??諛깆뾽 ?곹깭瑜?遺꾩꽍?섏뿬 吏?뺣맂 JSON ?뺤떇?쇰줈 吏꾨떒 寃곌낵瑜?諛섑솚?섏꽭??"
 
     try:
         result = await _call_bedrock_standard(prompt, _DIAGNOSE_SYSTEM_PROMPT)
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"AI 분석 실패: {e}")
+        raise HTTPException(status_code=503, detail=f"AI 遺꾩꽍 ?ㅽ뙣: {e}")
 
     return {"diagnosis": result, "generated_at": datetime.now(timezone.utc).isoformat()}
 
 
-# ─── 스토리지 (PVC) ────────────────────────────────────────────────────────────
+# ??? ?ㅽ넗由ъ? (PVC) ????????????????????????????????????????????????????????????
 
 @router.get("/storage")
 async def get_storage():
     """
-    K8s PersistentVolumeClaim 목록과 상태 반환.
-    tutum-app, tutum-data, tutum-storage 네임스페이스 대상.
+    K8s PersistentVolumeClaim 紐⑸줉怨??곹깭 諛섑솚.
+    tutum-app, tutum-data, tutum-storage ?ㅼ엫?ㅽ럹?댁뒪 ???
     """
     TARGET_NS = {"tutum-app", "tutum-data", "tutum-storage"}
     try:
@@ -1346,22 +1452,217 @@ async def get_storage():
         result.sort(key=lambda x: (x["namespace"], x["name"]))
         return {"pvcs": result}
     except Exception as e:
-        logger.error("get_storage 오류: %s", e)
+        logger.error("get_storage ?ㅻ쪟: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── 노드 24시간 시계열 ──────────────────────────────────────────────────────────
+# ??? ?몃뱶 24?쒓컙 ?쒓퀎????????????????????????????????????????????????????????????
+
+@router.get("/cost-forecast")
+async def get_cost_forecast():
+    """Estimate hourly and projected 24h cluster cost from active node inventory."""
+    try:
+        core, _ = _get_k8s_clients()
+        nodes = core.list_node(_request_timeout=10).items
+
+        on_demand_rates = _load_rate_map(
+            "ADMIN_COST_INSTANCE_RATES_JSON",
+            DEFAULT_INSTANCE_HOURLY_RATES_USD,
+        )
+        spot_rates = _load_rate_map("ADMIN_COST_SPOT_INSTANCE_RATES_JSON", {})
+        spot_discount_ratio = _env_float("ADMIN_COST_SPOT_DISCOUNT_RATIO", 0.35)
+        control_plane_hourly = _env_float("ADMIN_COST_CONTROL_PLANE_HOURLY_USD", 0.10)
+        nat_gateway_hourly = _env_float("ADMIN_COST_NAT_GATEWAY_HOURLY_USD", 0.045)
+        nat_gateway_count = _env_int("ADMIN_COST_NAT_GATEWAY_COUNT", 0)
+        extra_fixed_hourly = _env_float("ADMIN_COST_EXTRA_FIXED_HOURLY_USD", 0.0)
+
+        node_rows = []
+        by_instance: dict[tuple[str, str], dict] = {}
+        by_nodepool: dict[str, dict] = {}
+        warnings: list[str] = []
+        compute_hourly_total = 0.0
+        priceable_nodes = 0
+        aws_labeled_nodes = 0
+
+        for node in nodes:
+            labels = node.metadata.labels or {}
+            instance_type = _node_label(
+                labels,
+                "node.kubernetes.io/instance-type",
+                "beta.kubernetes.io/instance-type",
+            )
+            nodepool = _node_label(
+                labels,
+                "karpenter.sh/nodepool",
+                "eks.amazonaws.com/nodegroup",
+                "eks.amazonaws.com/nodeclass",
+            ) or "-"
+            zone = _node_label(labels, "topology.kubernetes.io/zone") or "-"
+            capacity_type = _normalize_capacity_type(
+                _node_label(
+                    labels,
+                    "karpenter.sh/capacity-type",
+                    "eks.amazonaws.com/capacityType",
+                    "eks.amazonaws.com/capacity-type",
+                )
+            )
+
+            if instance_type:
+                aws_labeled_nodes += 1
+
+            hourly_rate, price_source = _estimate_hourly_rate(
+                instance_type,
+                capacity_type,
+                on_demand_rates,
+                spot_rates,
+                spot_discount_ratio,
+            )
+            daily_rate = hourly_rate * 24 if hourly_rate is not None else None
+
+            if hourly_rate is not None:
+                compute_hourly_total += hourly_rate
+                priceable_nodes += 1
+            elif instance_type:
+                warnings.append(f"Missing hourly rate for instance type: {instance_type}")
+
+            node_rows.append({
+                "name": node.metadata.name,
+                "role": _node_role(node),
+                "status": _node_status(node),
+                "instance_type": instance_type or None,
+                "capacity_type": capacity_type,
+                "nodepool": nodepool,
+                "zone": zone,
+                "hourly_usd": _safe_round_money(hourly_rate),
+                "daily_usd": _safe_round_money(daily_rate),
+                "price_source": price_source,
+            })
+
+            if hourly_rate is None or not instance_type:
+                continue
+
+            instance_key = (instance_type, capacity_type)
+            instance_bucket = by_instance.setdefault(
+                instance_key,
+                {
+                    "instance_type": instance_type,
+                    "capacity_type": capacity_type,
+                    "nodes": 0,
+                    "hourly_usd": 0.0,
+                    "daily_usd": 0.0,
+                },
+            )
+            instance_bucket["nodes"] += 1
+            instance_bucket["hourly_usd"] += hourly_rate
+            instance_bucket["daily_usd"] += daily_rate or 0.0
+
+            nodepool_bucket = by_nodepool.setdefault(
+                nodepool,
+                {
+                    "nodepool": nodepool,
+                    "nodes": 0,
+                    "hourly_usd": 0.0,
+                    "daily_usd": 0.0,
+                },
+            )
+            nodepool_bucket["nodes"] += 1
+            nodepool_bucket["hourly_usd"] += hourly_rate
+            nodepool_bucket["daily_usd"] += daily_rate or 0.0
+
+        fixed_hourly_total = control_plane_hourly + (nat_gateway_hourly * nat_gateway_count) + extra_fixed_hourly
+        total_hourly = compute_hourly_total + fixed_hourly_total
+        total_daily = total_hourly * 24
+
+        available = aws_labeled_nodes > 0
+        if not available:
+            warnings.append("No AWS instance-type labels found on nodes. This cluster may not be running on EKS workers.")
+
+        unique_warnings = list(dict.fromkeys(warnings))
+
+        return {
+            "available": available,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "currency": "USD",
+            "cluster_name": (
+                os.getenv("EKS_CLUSTER_NAME_PRO")
+                or os.getenv("EKS_CLUSTER_NAME_STG")
+                or os.getenv("CLUSTER_NAME")
+                or "unknown"
+            ),
+            "assumptions": {
+                "pricing_source": "static-rate-card-with-env-overrides",
+                "spot_discount_ratio": spot_discount_ratio,
+                "control_plane_hourly_usd": control_plane_hourly,
+                "nat_gateway_hourly_usd": nat_gateway_hourly,
+                "nat_gateway_count": nat_gateway_count,
+                "extra_fixed_hourly_usd": extra_fixed_hourly,
+                "config_envs": [
+                    "ADMIN_COST_INSTANCE_RATES_JSON",
+                    "ADMIN_COST_SPOT_INSTANCE_RATES_JSON",
+                    "ADMIN_COST_SPOT_DISCOUNT_RATIO",
+                    "ADMIN_COST_CONTROL_PLANE_HOURLY_USD",
+                    "ADMIN_COST_NAT_GATEWAY_HOURLY_USD",
+                    "ADMIN_COST_NAT_GATEWAY_COUNT",
+                    "ADMIN_COST_EXTRA_FIXED_HOURLY_USD",
+                ],
+            },
+            "summary": {
+                "nodes_total": len(nodes),
+                "aws_labeled_nodes": aws_labeled_nodes,
+                "priceable_nodes": priceable_nodes,
+                "unpriced_nodes": max(0, aws_labeled_nodes - priceable_nodes),
+                "compute_hourly_usd": _safe_round_money(compute_hourly_total),
+                "fixed_hourly_usd": _safe_round_money(fixed_hourly_total),
+                "total_hourly_usd": _safe_round_money(total_hourly),
+                "projected_daily_usd": _safe_round_money(total_daily),
+            },
+            "fixed_costs": {
+                "eks_control_plane_hourly_usd": _safe_round_money(control_plane_hourly),
+                "nat_gateways_hourly_usd": _safe_round_money(nat_gateway_hourly * nat_gateway_count),
+                "extra_fixed_hourly_usd": _safe_round_money(extra_fixed_hourly),
+            },
+            "breakdown_by_instance": [
+                {
+                    **bucket,
+                    "hourly_usd": _safe_round_money(bucket["hourly_usd"]),
+                    "daily_usd": _safe_round_money(bucket["daily_usd"]),
+                }
+                for bucket in sorted(
+                    by_instance.values(),
+                    key=lambda item: item["hourly_usd"],
+                    reverse=True,
+                )
+            ],
+            "breakdown_by_nodepool": [
+                {
+                    **bucket,
+                    "hourly_usd": _safe_round_money(bucket["hourly_usd"]),
+                    "daily_usd": _safe_round_money(bucket["daily_usd"]),
+                }
+                for bucket in sorted(
+                    by_nodepool.values(),
+                    key=lambda item: item["hourly_usd"],
+                    reverse=True,
+                )
+            ],
+            "nodes": sorted(node_rows, key=lambda item: (item["hourly_usd"] or 0), reverse=True),
+            "warnings": unique_warnings,
+        }
+    except Exception as e:
+        logger.error("get_cost_forecast error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/node-history")
 async def get_node_history():
     """
-    Mimir에서 노드별 CPU/Memory 24시간 시계열 조회.
-    node-exporter 메트릭(node_memory_MemAvailable_bytes, node_cpu_seconds_total) 사용.
-    instance 레이블: 노드 IP (192.168.0.220~225)
+    Mimir?먯꽌 ?몃뱶蹂?CPU/Memory 24?쒓컙 ?쒓퀎??議고쉶.
+    node-exporter 硫뷀듃由?node_memory_MemAvailable_bytes, node_cpu_seconds_total) ?ъ슜.
+    instance ?덉씠釉? ?몃뱶 IP (192.168.0.220~225)
     """
     end = datetime.now(timezone.utc)
     start = end - timedelta(hours=24)
-    step = "10m"  # 24h / 10m = 144 포인트
+    step = "10m"  # 24h / 10m = 144 ?ъ씤??
 
     NODE_MAP = {
         "192.168.0.220": "cp-1",
@@ -1389,16 +1690,16 @@ async def get_node_history():
             ]
         return out
 
-    # CPU 사용률 %: 100 - (idle %)
+    # CPU ?ъ슜瑜?%: 100 - (idle %)
     cpu_data = await _range(
         '100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)'
     )
-    # Memory 사용률 %: (total - available) / total * 100
+    # Memory ?ъ슜瑜?%: (total - available) / total * 100
     mem_data = await _range(
         '(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100'
     )
 
-    # 타임스탬프를 "HH:mm" 포맷으로 변환 (프론트 표시용)
+    # ??꾩뒪?ы봽瑜?"HH:mm" ?щ㎎?쇰줈 蹂??(?꾨줎???쒖떆??
     def fmt_series(raw: dict[str, list]) -> dict[str, list]:
         result = {}
         for node, points in raw.items():
@@ -1418,7 +1719,7 @@ async def get_node_history():
     }
 
 
-# ─── 데이터 레이어 메트릭 ────────────────────────────────────────────────────────
+# ??? ?곗씠???덉씠??硫뷀듃由?????????????????????????????????????????????????????????
 
 _mongo_io_prev: dict = {}  # {ts: float, opcounters: dict}
 
@@ -1426,8 +1727,8 @@ _mongo_io_prev: dict = {}  # {ts: float, opcounters: dict}
 @router.get("/data-metrics")
 async def get_data_metrics():
     """
-    Mimir에서 Redis/Kafka/ES/Disk 메트릭 조회 + MongoDB serverStatus 직접 조회.
-    kafka-exporter(9308), redis-exporter(9121)가 Alloy에 의해 스크랩된 데이터.
+    Mimir?먯꽌 Redis/Kafka/ES/Disk 硫뷀듃由?議고쉶 + MongoDB serverStatus 吏곸젒 議고쉶.
+    kafka-exporter(9308), redis-exporter(9121)媛 Alloy???섑빐 ?ㅽ겕?⑸맂 ?곗씠??
     """
     now = datetime.now(timezone.utc)
     instant_params = {"time": now.isoformat()}
@@ -1479,7 +1780,7 @@ async def get_data_metrics():
                     raw[key] = float(results[0]["value"][1])
                     break
             except Exception as e:
-                logger.warning("data-metrics Mimir 실패 [%s]: %s", key, e)
+                logger.warning("data-metrics Mimir ?ㅽ뙣 [%s]: %s", key, e)
 
     # Redis hit rate
     hits = raw.get("redis_hits")
@@ -1489,11 +1790,11 @@ async def get_data_metrics():
     else:
         hit_rate = None
 
-    # 메모리 GB 변환
+    # 硫붾え由?GB 蹂??
     def to_gb(v): return round(v / 1024 / 1024 / 1024, 2) if v else None
     def to_pct(used, max_v): return round(used / max_v * 100, 1) if used and max_v else None
 
-    # MongoDB serverStatus (ops/sec delta 계산)
+    # MongoDB serverStatus (ops/sec delta 怨꾩궛)
     global _mongo_io_prev
     mongo_io: dict = {"available": False}
     try:
@@ -1534,11 +1835,11 @@ async def get_data_metrics():
                 "available": True,
             }
     except Exception as e:
-        logger.warning("MongoDB serverStatus 조회 실패: %s", e)
+        logger.warning("MongoDB serverStatus 議고쉶 ?ㅽ뙣: %s", e)
 
     def to_mbps(v): return round(v / 1024 / 1024, 2) if v is not None else None
 
-    # IP → 노드 이름 매핑 (node_uname_info의 nodename 레이블 사용)
+    # IP ???몃뱶 ?대쫫 留ㅽ븨 (node_uname_info??nodename ?덉씠釉??ъ슜)
     node_name_map: dict[str, str] = {}
     try:
         uname_data = await _mimir_query(
@@ -1645,7 +1946,7 @@ async def get_data_metrics():
     }
 
 
-# ─── 백업 상태 ───────────────────────────────────────────────────────────────
+# ??? 諛깆뾽 ?곹깭 ???????????????????????????????????????????????????????????????
 
 _BACKUP_CRONJOBS = [
     {"name": "mongodb-backup", "namespace": "tutum-data", "label": "MongoDB"},
@@ -1675,14 +1976,14 @@ async def _k8s_get(path: str) -> dict | None:
             if resp.status_code == 200:
                 return resp.json()
     except Exception as e:
-        logger.warning("K8s API 조회 실패 [%s]: %s", path, e)
+        logger.warning("K8s API 議고쉶 ?ㅽ뙣 [%s]: %s", path, e)
     return None
 
 
 @router.get("/backup-status")
 async def get_backup_status():
     """
-    CronJob 및 최근 Job 결과로 백업 상태 조회.
+    CronJob 諛?理쒓렐 Job 寃곌낵濡?諛깆뾽 ?곹깭 議고쉶.
     """
     results = []
     for cj in _BACKUP_CRONJOBS:
@@ -1708,7 +2009,7 @@ async def get_backup_status():
             if last_succ:
                 entry["last_success_at"] = last_succ
 
-        # 최근 Job 목록 조회 (owner=CronJob)
+        # 理쒓렐 Job 紐⑸줉 議고쉶 (owner=CronJob)
         jobs_data = await _k8s_get(f"/apis/batch/v1/namespaces/{ns}/jobs")
         if jobs_data:
             owned = [
@@ -1737,7 +2038,7 @@ async def get_backup_status():
             else:
                 entry["status"] = "NO_RUN"
         else:
-            # jobs API 실패 → CronJob 상태만으로 판단
+            # jobs API ?ㅽ뙣 ??CronJob ?곹깭留뚯쑝濡??먮떒
             if entry["last_success_at"]:
                 entry["status"] = "OK"
             elif entry["last_run_at"]:
@@ -1748,17 +2049,17 @@ async def get_backup_status():
     return {"backups": results}
 
 
-# ─── 운영 경고 요약 ───────────────────────────────────────────────────────────
+# ??? ?댁쁺 寃쎄퀬 ?붿빟 ???????????????????????????????????????????????????????????
 
 @router.get("/action-needed")
 async def get_action_needed():
     """
-    임계치 기반 즉시 조치 필요 항목 목록.
-    data-metrics + backup-status를 집계해 경고 생성.
+    ?꾧퀎移?湲곕컲 利됱떆 議곗튂 ?꾩슂 ??ぉ 紐⑸줉.
+    data-metrics + backup-status瑜?吏묎퀎??寃쎄퀬 ?앹꽦.
     """
     alerts = []
 
-    # data-metrics 호출
+    # data-metrics ?몄텧
     try:
         metrics = await get_data_metrics()
 
@@ -1769,15 +2070,15 @@ async def get_action_needed():
                 alerts.append({
                     "level": "CRITICAL",
                     "category": "Disk",
-                    "message": f"클러스터 디스크 사용률 {used_pct}% (임계치: 85%)",
-                    "action": "불필요한 데이터 정리 또는 볼륨 확장",
+                    "message": f"?대윭?ㅽ꽣 ?붿뒪???ъ슜瑜?{used_pct}% (?꾧퀎移? 85%)",
+                    "action": "遺덊븘?뷀븳 ?곗씠???뺣━ ?먮뒗 蹂쇰ⅷ ?뺤옣",
                 })
             elif used_pct >= 70:
                 alerts.append({
                     "level": "WARN",
                     "category": "Disk",
-                    "message": f"클러스터 디스크 사용률 {used_pct}% (임계치: 70%)",
-                    "action": "디스크 사용량 추이 모니터링",
+                    "message": f"?대윭?ㅽ꽣 ?붿뒪???ъ슜瑜?{used_pct}% (?꾧퀎移? 70%)",
+                    "action": "?붿뒪???ъ슜??異붿씠 紐⑤땲?곕쭅",
                 })
 
         es = metrics.get("elasticsearch", {})
@@ -1786,16 +2087,16 @@ async def get_action_needed():
             alerts.append({
                 "level": "CRITICAL" if jvm_pct >= 90 else "WARN",
                 "category": "Elasticsearch",
-                "message": f"ES JVM Heap {jvm_pct}% (임계치: 80%)",
-                "action": "ES 힙 메모리 증설 또는 인덱스 정리",
+                "message": f"ES JVM Heap {jvm_pct}% (?꾧퀎移? 80%)",
+                "action": "ES ??硫붾え由?利앹꽕 ?먮뒗 ?몃뜳???뺣━",
             })
         thread_rej = es.get("thread_rejected")
         if thread_rej and thread_rej > 0:
             alerts.append({
                 "level": "WARN",
                 "category": "Elasticsearch",
-                "message": f"ES write thread pool rejected {thread_rej}건 (5m)",
-                "action": "ES 인덱싱 속도 조절 또는 replicas 확장",
+                "message": f"ES write thread pool rejected {thread_rej}嫄?(5m)",
+                "action": "ES ?몃뜳???띾룄 議곗젅 ?먮뒗 replicas ?뺤옣",
             })
 
         kafka = metrics.get("kafka", {})
@@ -1804,8 +2105,8 @@ async def get_action_needed():
             alerts.append({
                 "level": "CRITICAL" if lag > 5000 else "WARN",
                 "category": "Kafka",
-                "message": f"Kafka consumer lag {lag:,}건",
-                "action": "elastic-consumer 로그 확인 및 replicas 증설",
+                "message": f"Kafka consumer lag {lag:,}嫄?,
+                "action": "elastic-consumer 濡쒓렇 ?뺤씤 諛?replicas 利앹꽕",
             })
 
         mongo = metrics.get("mongodb", {})
@@ -1815,13 +2116,13 @@ async def get_action_needed():
             alerts.append({
                 "level": "WARN",
                 "category": "MongoDB",
-                "message": f"MongoDB 대기 쿼리 {qr + qw}건 (readers={qr}, writers={qw})",
-                "action": "느린 쿼리 확인: db.currentOp()",
+                "message": f"MongoDB ?湲?荑쇰━ {qr + qw}嫄?(readers={qr}, writers={qw})",
+                "action": "?먮┛ 荑쇰━ ?뺤씤: db.currentOp()",
             })
     except Exception as e:
-        logger.warning("action-needed metrics 조회 실패: %s", e)
+        logger.warning("action-needed metrics 議고쉶 ?ㅽ뙣: %s", e)
 
-    # backup-status 호출
+    # backup-status ?몄텧
     try:
         backup = await get_backup_status()
         for b in backup.get("backups", []):
@@ -1829,24 +2130,24 @@ async def get_action_needed():
                 alerts.append({
                     "level": "CRITICAL",
                     "category": "Backup",
-                    "message": f"{b['name']} 백업 실패: {b.get('last_error', '알 수 없음')}",
-                    "action": f"kubectl logs -n {b['namespace']} -l job-name=... 확인",
+                    "message": f"{b['name']} 諛깆뾽 ?ㅽ뙣: {b.get('last_error', '?????놁쓬')}",
+                    "action": f"kubectl logs -n {b['namespace']} -l job-name=... ?뺤씤",
                 })
             elif b["status"] == "NO_RUN":
                 alerts.append({
                     "level": "WARN",
                     "category": "Backup",
-                    "message": f"{b['name']} 백업이 아직 한 번도 실행되지 않음",
-                    "action": "CronJob 스케줄 및 권한 확인",
+                    "message": f"{b['name']} 諛깆뾽???꾩쭅 ??踰덈룄 ?ㅽ뻾?섏? ?딆쓬",
+                    "action": "CronJob ?ㅼ?以?諛?沅뚰븳 ?뺤씤",
                 })
     except Exception as e:
-        logger.warning("action-needed backup 조회 실패: %s", e)
+        logger.warning("action-needed backup 議고쉶 ?ㅽ뙣: %s", e)
 
     alerts.sort(key=lambda a: 0 if a["level"] == "CRITICAL" else 1)
     return {"alerts": alerts, "count": len(alerts)}
 
 
-# ─── 트레이스 (Tempo) ─────────────────────────────────────────────────────────
+# ??? ?몃젅?댁뒪 (Tempo) ?????????????????????????????????????????????????????????
 
 TEMPO_URL = os.getenv("TEMPO_URL", "http://192.168.0.230:3200")
 GRAFANA_URL = os.getenv("GRAFANA_URL", "http://192.168.0.230:3000")
@@ -1855,12 +2156,12 @@ GRAFANA_URL = os.getenv("GRAFANA_URL", "http://192.168.0.230:3000")
 @router.get("/traces")
 async def get_traces(limit: int = 20, min_duration_ms: int = 50):
     """
-    Tempo에서 트레이스 조회.
-    - traces: 느린 요청 (>= min_duration_ms)
-    - error_traces: 5xx 에러가 발생한 트레이스
+    Tempo?먯꽌 ?몃젅?댁뒪 議고쉶.
+    - traces: ?먮┛ ?붿껌 (>= min_duration_ms)
+    - error_traces: 5xx ?먮윭媛 諛쒖깮???몃젅?댁뒪
     """
     end_s = int(datetime.now(timezone.utc).timestamp())
-    start_s = end_s - 3600  # 1시간
+    start_s = end_s - 3600  # 1?쒓컙
 
     def _grafana_url(trace_id: str) -> str:
         return (
@@ -1873,7 +2174,7 @@ async def get_traces(limit: int = 20, min_duration_ms: int = 50):
         duration_ms = round(int(t.get("durationMs", 0)))
         start_time_ms = int(t.get("startTimeUnixNano", 0)) // 1_000_000
         trace_id = t.get("traceID", "")
-        # rootTraceName 예: "GET /api/v1/news" → 경로/메서드 분리
+        # rootTraceName ?? "GET /api/v1/news" ??寃쎈줈/硫붿꽌??遺꾨━
         root_name = t.get("rootTraceName", "-")
         return {
             "traceID":         trace_id,
@@ -1896,11 +2197,11 @@ async def get_traces(limit: int = 20, min_duration_ms: int = 50):
 
     base_params = {"service.name": "tutum-backend", "start": start_s, "end": end_s}
 
-    # 느린 요청 트레이스 (>= min_duration_ms)
+    # ?먮┛ ?붿껌 ?몃젅?댁뒪 (>= min_duration_ms)
     slow_raw = await _search({**base_params, "limit": limit, "minDuration": f"{min_duration_ms}ms"})
-    # 5xx 에러 트레이스 — TraceQL 사용
+    # 5xx ?먮윭 ?몃젅?댁뒪 ??TraceQL ?ъ슜
     error_raw = await _search({**base_params, "q": '{span.http.status_code >= 500}', "limit": 10})
-    # 4xx 클라이언트 에러 트레이스
+    # 4xx ?대씪?댁뼵???먮윭 ?몃젅?댁뒪
     client_error_raw = await _search({
         **base_params,
         "q": '{span.http.status_code >= 400 && span.http.status_code < 500}',
@@ -1922,7 +2223,8 @@ async def get_traces(limit: int = 20, min_duration_ms: int = 50):
 
     return {
         "traces":             traces,
-        "error_traces":       error_traces,       # 5xx — 서버 에러
-        "client_error_traces": client_error_traces,  # 4xx — 클라이언트 에러
+        "error_traces":       error_traces,       # 5xx ???쒕쾭 ?먮윭
+        "client_error_traces": client_error_traces,  # 4xx ???대씪?댁뼵???먮윭
         "available":          True,
     }
+
