@@ -214,6 +214,114 @@ def _node_status(node) -> str:
     return "Unknown"
 
 
+DEFAULT_INSTANCE_HOURLY_RATES_USD = {
+    "c5.large": 0.085,
+    "c5.xlarge": 0.17,
+    "c5a.large": 0.077,
+    "c6g.large": 0.088,
+    "c6i.large": 0.102,
+    "m5.large": 0.096,
+    "m5.xlarge": 0.192,
+    "m5.2xlarge": 0.384,
+    "m6i.large": 0.12,
+    "m6i.xlarge": 0.24,
+    "t3.medium": 0.042,
+    "t3.large": 0.083,
+}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Ignoring invalid float env %s=%s", name, raw)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("Ignoring invalid int env %s=%s", name, raw)
+        return default
+
+
+def _load_rate_map(env_name: str, defaults: dict[str, float]) -> dict[str, float]:
+    raw = os.getenv(env_name, "").strip()
+    if not raw:
+        return dict(defaults)
+
+    merged = dict(defaults)
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("Ignoring invalid JSON env %s", env_name)
+        return merged
+
+    if not isinstance(loaded, dict):
+        logger.warning("Ignoring non-object JSON env %s", env_name)
+        return merged
+
+    for key, value in loaded.items():
+        try:
+            merged[str(key).strip()] = float(value)
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid hourly rate %s=%s in %s", key, value, env_name)
+    return merged
+
+
+def _node_label(labels: dict, *keys: str) -> str:
+    for key in keys:
+        value = labels.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _normalize_capacity_type(raw_value: str) -> str:
+    normalized = (raw_value or "").strip().lower().replace("_", "-")
+    if normalized in {"spot", "on-demand"}:
+        return normalized
+    if normalized in {"ondemand", "on demand"}:
+        return "on-demand"
+    return "on-demand"
+
+
+def _estimate_hourly_rate(
+    instance_type: str,
+    capacity_type: str,
+    on_demand_rates: dict[str, float],
+    spot_rates: dict[str, float],
+    spot_discount_ratio: float,
+) -> tuple[float | None, str]:
+    if not instance_type:
+        return None, "missing-instance-type"
+
+    if capacity_type == "spot" and instance_type in spot_rates:
+        return round(spot_rates[instance_type], 4), "spot-explicit"
+
+    base_rate = on_demand_rates.get(instance_type)
+    if base_rate is None:
+        return None, "missing-rate"
+
+    if capacity_type == "spot":
+        return round(base_rate * spot_discount_ratio, 4), "spot-ratio"
+
+    return round(base_rate, 4), "on-demand"
+
+
+def _safe_round_money(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return round(value, 2)
+
+
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/nodes")
@@ -1351,6 +1459,201 @@ async def get_storage():
 
 
 # ─── 노드 24시간 시계열 ──────────────────────────────────────────────────────────
+
+@router.get("/cost-forecast")
+async def get_cost_forecast():
+    """Estimate hourly and projected 24h cluster cost from active node inventory."""
+    try:
+        core, _ = _get_k8s_clients()
+        nodes = core.list_node(_request_timeout=10).items
+
+        on_demand_rates = _load_rate_map(
+            "ADMIN_COST_INSTANCE_RATES_JSON",
+            DEFAULT_INSTANCE_HOURLY_RATES_USD,
+        )
+        spot_rates = _load_rate_map("ADMIN_COST_SPOT_INSTANCE_RATES_JSON", {})
+        spot_discount_ratio = _env_float("ADMIN_COST_SPOT_DISCOUNT_RATIO", 0.35)
+        control_plane_hourly = _env_float("ADMIN_COST_CONTROL_PLANE_HOURLY_USD", 0.10)
+        nat_gateway_hourly = _env_float("ADMIN_COST_NAT_GATEWAY_HOURLY_USD", 0.045)
+        nat_gateway_count = _env_int("ADMIN_COST_NAT_GATEWAY_COUNT", 0)
+        extra_fixed_hourly = _env_float("ADMIN_COST_EXTRA_FIXED_HOURLY_USD", 0.0)
+
+        node_rows = []
+        by_instance: dict[tuple[str, str], dict] = {}
+        by_nodepool: dict[str, dict] = {}
+        warnings: list[str] = []
+        compute_hourly_total = 0.0
+        priceable_nodes = 0
+        aws_labeled_nodes = 0
+
+        for node in nodes:
+            labels = node.metadata.labels or {}
+            instance_type = _node_label(
+                labels,
+                "node.kubernetes.io/instance-type",
+                "beta.kubernetes.io/instance-type",
+            )
+            nodepool = _node_label(
+                labels,
+                "karpenter.sh/nodepool",
+                "eks.amazonaws.com/nodegroup",
+                "eks.amazonaws.com/nodeclass",
+            ) or "-"
+            zone = _node_label(labels, "topology.kubernetes.io/zone") or "-"
+            capacity_type = _normalize_capacity_type(
+                _node_label(
+                    labels,
+                    "karpenter.sh/capacity-type",
+                    "eks.amazonaws.com/capacityType",
+                    "eks.amazonaws.com/capacity-type",
+                )
+            )
+
+            if instance_type:
+                aws_labeled_nodes += 1
+
+            hourly_rate, price_source = _estimate_hourly_rate(
+                instance_type,
+                capacity_type,
+                on_demand_rates,
+                spot_rates,
+                spot_discount_ratio,
+            )
+            daily_rate = hourly_rate * 24 if hourly_rate is not None else None
+
+            if hourly_rate is not None:
+                compute_hourly_total += hourly_rate
+                priceable_nodes += 1
+            elif instance_type:
+                warnings.append(f"Missing hourly rate for instance type: {instance_type}")
+
+            node_rows.append({
+                "name": node.metadata.name,
+                "role": _node_role(node),
+                "status": _node_status(node),
+                "instance_type": instance_type or None,
+                "capacity_type": capacity_type,
+                "nodepool": nodepool,
+                "zone": zone,
+                "hourly_usd": _safe_round_money(hourly_rate),
+                "daily_usd": _safe_round_money(daily_rate),
+                "price_source": price_source,
+            })
+
+            if hourly_rate is None or not instance_type:
+                continue
+
+            instance_key = (instance_type, capacity_type)
+            instance_bucket = by_instance.setdefault(
+                instance_key,
+                {
+                    "instance_type": instance_type,
+                    "capacity_type": capacity_type,
+                    "nodes": 0,
+                    "hourly_usd": 0.0,
+                    "daily_usd": 0.0,
+                },
+            )
+            instance_bucket["nodes"] += 1
+            instance_bucket["hourly_usd"] += hourly_rate
+            instance_bucket["daily_usd"] += daily_rate or 0.0
+
+            nodepool_bucket = by_nodepool.setdefault(
+                nodepool,
+                {
+                    "nodepool": nodepool,
+                    "nodes": 0,
+                    "hourly_usd": 0.0,
+                    "daily_usd": 0.0,
+                },
+            )
+            nodepool_bucket["nodes"] += 1
+            nodepool_bucket["hourly_usd"] += hourly_rate
+            nodepool_bucket["daily_usd"] += daily_rate or 0.0
+
+        fixed_hourly_total = control_plane_hourly + (nat_gateway_hourly * nat_gateway_count) + extra_fixed_hourly
+        total_hourly = compute_hourly_total + fixed_hourly_total
+        total_daily = total_hourly * 24
+
+        available = aws_labeled_nodes > 0
+        if not available:
+            warnings.append("No AWS instance-type labels found on nodes. This cluster may not be running on EKS workers.")
+
+        unique_warnings = list(dict.fromkeys(warnings))
+
+        return {
+            "available": available,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "currency": "USD",
+            "cluster_name": (
+                os.getenv("EKS_CLUSTER_NAME_PRO")
+                or os.getenv("EKS_CLUSTER_NAME_STG")
+                or os.getenv("CLUSTER_NAME")
+                or "unknown"
+            ),
+            "assumptions": {
+                "pricing_source": "static-rate-card-with-env-overrides",
+                "spot_discount_ratio": spot_discount_ratio,
+                "control_plane_hourly_usd": control_plane_hourly,
+                "nat_gateway_hourly_usd": nat_gateway_hourly,
+                "nat_gateway_count": nat_gateway_count,
+                "extra_fixed_hourly_usd": extra_fixed_hourly,
+                "config_envs": [
+                    "ADMIN_COST_INSTANCE_RATES_JSON",
+                    "ADMIN_COST_SPOT_INSTANCE_RATES_JSON",
+                    "ADMIN_COST_SPOT_DISCOUNT_RATIO",
+                    "ADMIN_COST_CONTROL_PLANE_HOURLY_USD",
+                    "ADMIN_COST_NAT_GATEWAY_HOURLY_USD",
+                    "ADMIN_COST_NAT_GATEWAY_COUNT",
+                    "ADMIN_COST_EXTRA_FIXED_HOURLY_USD",
+                ],
+            },
+            "summary": {
+                "nodes_total": len(nodes),
+                "aws_labeled_nodes": aws_labeled_nodes,
+                "priceable_nodes": priceable_nodes,
+                "unpriced_nodes": max(0, aws_labeled_nodes - priceable_nodes),
+                "compute_hourly_usd": _safe_round_money(compute_hourly_total),
+                "fixed_hourly_usd": _safe_round_money(fixed_hourly_total),
+                "total_hourly_usd": _safe_round_money(total_hourly),
+                "projected_daily_usd": _safe_round_money(total_daily),
+            },
+            "fixed_costs": {
+                "eks_control_plane_hourly_usd": _safe_round_money(control_plane_hourly),
+                "nat_gateways_hourly_usd": _safe_round_money(nat_gateway_hourly * nat_gateway_count),
+                "extra_fixed_hourly_usd": _safe_round_money(extra_fixed_hourly),
+            },
+            "breakdown_by_instance": [
+                {
+                    **bucket,
+                    "hourly_usd": _safe_round_money(bucket["hourly_usd"]),
+                    "daily_usd": _safe_round_money(bucket["daily_usd"]),
+                }
+                for bucket in sorted(
+                    by_instance.values(),
+                    key=lambda item: item["hourly_usd"],
+                    reverse=True,
+                )
+            ],
+            "breakdown_by_nodepool": [
+                {
+                    **bucket,
+                    "hourly_usd": _safe_round_money(bucket["hourly_usd"]),
+                    "daily_usd": _safe_round_money(bucket["daily_usd"]),
+                }
+                for bucket in sorted(
+                    by_nodepool.values(),
+                    key=lambda item: item["hourly_usd"],
+                    reverse=True,
+                )
+            ],
+            "nodes": sorted(node_rows, key=lambda item: (item["hourly_usd"] or 0), reverse=True),
+            "warnings": unique_warnings,
+        }
+    except Exception as e:
+        logger.error("get_cost_forecast error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/node-history")
 async def get_node_history():
