@@ -1514,7 +1514,11 @@ async def get_storage():
 
 @router.get("/cost-forecast")
 async def get_cost_forecast():
-    """Estimate hourly and projected 24h cluster cost from active node inventory."""
+    """Estimate hourly and projected 24h cluster cost from active node inventory.
+
+    Kept as a backend-served forecast so the admin dashboard can render cost
+    signals even when direct AWS Billing access is unavailable to the team.
+    """
     try:
         core, _ = _get_k8s_clients()
         nodes = core.list_node(_request_timeout=10).items
