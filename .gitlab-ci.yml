@@ -525,7 +525,7 @@ deploy:production:
     cd /tmp/manifests
     git config user.email ci@tutum.dev
     git config user.name "GitLab CI"
-    git checkout main
+    git checkout develop
 
     echo "0" > /tmp/manifest_changed
     kustomization_file="${PRODUCTION_MANIFEST}"
@@ -551,11 +551,11 @@ deploy:production:
 
     git add "${kustomization_file}"
     git diff --cached --quiet || git commit -m "deploy(prod): backend+workers ${CI_COMMIT_SHORT_SHA} [skip ci]"
-    git push origin main
+    git push origin develop
   environment:
     name: production
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
       when: manual
       changes:
         - backend/**/*
