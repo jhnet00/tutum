@@ -35,6 +35,28 @@ HEADERS = {
     "Connection": "keep-alive",
 }
 
+GENERIC_ARTICLE_BODY_SELECTORS = (
+    "[itemprop='articleBody']",
+    "#articleBody",
+    "#article-view-content-div",
+    "#newsct_article",
+    "#dic_area",
+    ".article_body",
+    ".article-body",
+    ".articleBody",
+    ".article-content",
+    ".article_content",
+    ".post-content",
+    ".entry-content",
+    ".news-content",
+    ".news_text",
+    ".article_txt",
+    ".view_cont",
+    ".view_conts",
+    "main article",
+    "article",
+)
+
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 TOPIC = os.getenv("KAFKA_TOPIC", "news.raw")
 
@@ -202,10 +224,19 @@ def save_seen(seen: set[str], max_keep: int = 5000) -> None:
         pass
 
 
+def make_soup(markup: str | bytes, parser: str = "lxml", **kwargs) -> BeautifulSoup:
+    try:
+        return BeautifulSoup(markup, parser, **kwargs)
+    except Exception:
+        fallback_kwargs = dict(kwargs)
+        fallback_kwargs.pop("from_encoding", None)
+        return BeautifulSoup(markup, "html.parser", **fallback_kwargs)
+
+
 def get_finance_soup(url: str, timeout: int = 10) -> BeautifulSoup:
     res = session.get(url, timeout=timeout)
     res.raise_for_status()
-    return BeautifulSoup(res.content, "lxml", from_encoding="euc-kr")
+    return make_soup(res.content, "lxml", from_encoding="euc-kr")
 
 
 def safe_get_text(url: str, timeout: int = 10) -> str:
@@ -309,7 +340,7 @@ def crawl_naver_coin_items_multi_pages(keywords: list[str], pages: int) -> list[
                 print(f"[debug] coin fallback list fetch fail: kw={kw} page={page} err={e!r}")
                 continue
 
-            soup = BeautifulSoup(html, "lxml")
+            soup = make_soup(html, "lxml")
             nodes = soup.select("a.news_tit[href], a[href*='n.news.naver.com/mnews/article/']")
             print(f"[debug] coin fallback kw={kw} page={page} nodes={len(nodes)}")
 
@@ -453,6 +484,129 @@ def parse_json_ld_article(soup: BeautifulSoup) -> dict:
     return {}
 
 
+def _meta_content(soup: BeautifulSoup, attr: str, value: str) -> str | None:
+    node = soup.select_one(f'meta[{attr}="{value}"]')
+    if not node:
+        return None
+    content = node.get("content")
+    if not isinstance(content, str):
+        return None
+    text = " ".join(content.split()).strip()
+    return text or None
+
+
+def _normalize_lines(text: str | None) -> str | None:
+    if not text:
+        return None
+
+    lines: list[str] = []
+    blank_pending = False
+    seen_paragraphs: set[str] = set()
+    for raw in text.replace("\r", "\n").split("\n"):
+        line = " ".join(raw.split()).strip()
+        if not line:
+            blank_pending = True
+            continue
+        if line in seen_paragraphs:
+            continue
+        if blank_pending and lines:
+            lines.append("")
+        blank_pending = False
+        lines.append(line)
+        seen_paragraphs.add(line)
+
+    cleaned = "\n".join(lines).strip()
+    return cleaned or None
+
+
+def _text_from_node(node: BeautifulSoup) -> str | None:
+    paragraph_nodes = node.select("p")
+    paragraphs: list[str] = []
+    for paragraph in paragraph_nodes:
+        text = " ".join(paragraph.get_text(" ", strip=True).split()).strip()
+        if len(text) >= 20:
+            paragraphs.append(text)
+
+    if paragraphs:
+        joined = _normalize_lines("\n\n".join(paragraphs))
+        if joined and len(joined) >= 120:
+            return joined
+
+    return _normalize_lines(node.get_text("\n", strip=True))
+
+
+def _looks_like_full_article(body: str | None, summary: str | None = None, title: str | None = None) -> bool:
+    body_text = (body or "").strip()
+    if len(body_text) >= 240:
+        return True
+    baseline = max(len((summary or "").strip()), len((title or "").strip()))
+    return len(body_text) >= max(120, baseline + 60)
+
+
+def crawl_generic_article_detail(url: str) -> dict | None:
+    html = safe_get_text(url)
+    soup = make_soup(html, "lxml")
+    json_ld = parse_json_ld_article(soup)
+
+    title = (
+        _meta_content(soup, "property", "og:title")
+        or _meta_content(soup, "name", "twitter:title")
+        or (soup.select_one("h1").get_text(" ", strip=True) if soup.select_one("h1") else None)
+        or (soup.title.get_text(" ", strip=True) if soup.title else None)
+        or json_ld.get("title")
+    )
+
+    published_at = (
+        _meta_content(soup, "property", "article:published_time")
+        or _meta_content(soup, "name", "article:published_time")
+        or _meta_content(soup, "property", "og:article:published_time")
+        or (soup.select_one("time[datetime]").get("datetime") if soup.select_one("time[datetime]") else None)
+        or json_ld.get("published_at")
+    )
+
+    body = None
+    for selector in GENERIC_ARTICLE_BODY_SELECTORS:
+        node = soup.select_one(selector)
+        if not node:
+            continue
+        text = _text_from_node(node)
+        if text and len(text) > 80:
+            body = text
+            break
+
+    if not body:
+        best_candidate = ""
+        for node in soup.select("article, main, section, div[id], div[class]")[:250]:
+            text = _text_from_node(node)
+            if text and len(text) > len(best_candidate):
+                best_candidate = text
+        body = best_candidate or json_ld.get("body")
+
+    body = _normalize_lines(body)
+    title = _normalize_lines(title)
+
+    if not title or not body:
+        return None
+
+    return {
+        "title": title,
+        "published_at": published_at,
+        "body": body,
+    }
+
+
+def crawl_article_detail(url: str) -> dict | None:
+    hostname = (urlparse(url).hostname or "").lower()
+
+    if "naver.com" in hostname:
+        return crawl_mobile_article_detail(to_mobile_news_url(url))
+    if hostname.endswith("coinness.com"):
+        return crawl_coinness_article_detail(url)
+    if hostname.endswith("einfomax.co.kr"):
+        return crawl_einfomax_article_detail(url)
+    return crawl_generic_article_detail(url)
+
+
 def crawl_coinness_items_multi_pages(pages: int) -> list[dict]:
     api_url = f"{COINNESS_API_BASE}/feed/v1/articles"
     items: list[dict] = []
@@ -549,7 +703,7 @@ def crawl_coinness_items_multi_pages(pages: int) -> list[dict]:
             failed_pages += 1
             print(f"[debug] coinness list fetch fail: {url} err={e!r}")
             continue
-        soup = BeautifulSoup(html, "lxml")
+        soup = make_soup(html, "lxml")
         nodes = soup.select("a[href]")
         print(f"[debug] coinness list={url} nodes={len(nodes)}")
         for a in nodes:
@@ -597,7 +751,7 @@ def crawl_coinness_items_from_sitemap(limit: int) -> list[dict]:
             print(f"[debug] coinness sitemap fetch fail: {sitemap_url} err={e!r}")
             continue
 
-        soup = BeautifulSoup(xml_text, "xml")
+        soup = make_soup(xml_text, "xml")
 
         index_nodes = soup.select("sitemap > loc")
         if index_nodes:
@@ -631,7 +785,7 @@ def crawl_coinness_items_from_sitemap(limit: int) -> list[dict]:
 
 def crawl_mobile_article_detail(url: str) -> dict | None:
     html = safe_get_text(url)
-    soup = BeautifulSoup(html, "lxml")
+    soup = make_soup(html, "lxml")
 
     title_tag = soup.select_one("h2#title_area")
     body_tag = soup.select_one("div#newsct_article")
@@ -649,7 +803,7 @@ def crawl_mobile_article_detail(url: str) -> dict | None:
 
 def crawl_coinness_article_detail(url: str) -> dict | None:
     html = safe_get_text(url)
-    soup = BeautifulSoup(html, "lxml")
+    soup = make_soup(html, "lxml")
 
     json_ld = parse_json_ld_article(soup)
 
@@ -711,7 +865,7 @@ def crawl_einfomax_items_multi_pages(query: str, pages: int) -> list[dict]:
             print(f"[debug] einfomax list fetch fail: page={page} err={e!r}")
             continue
 
-        soup = BeautifulSoup(html, "lxml")
+        soup = make_soup(html, "lxml")
         nodes = soup.select("#section-list ul.type2 > li")
         print(f"[debug] einfomax query={query} page={page} nodes={len(nodes)}")
 
@@ -763,7 +917,7 @@ def crawl_einfomax_items_multi_pages(query: str, pages: int) -> list[dict]:
 
 def crawl_einfomax_article_detail(url: str) -> dict | None:
     html = safe_get_text(url)
-    soup = BeautifulSoup(html, "lxml")
+    soup = make_soup(html, "lxml")
 
     title = (
         (soup.select_one("meta[property='og:title']") or {}).get("content")
@@ -852,21 +1006,44 @@ def run_once() -> tuple[int, dict[str, int]]:
 
             print("fetch:", link)
             detail = None
-            if it.get("title") and (it.get("body_hint") or it.get("summary")):
+
+            try:
+                detail = crawl_article_detail(link)
+            except Exception as e:
+                print(f"  warn: coinness origin detail fetch fail err={e!r}")
+
+            if (
+                not detail
+                or not _looks_like_full_article(
+                    detail.get("body"),
+                    it.get("summary"),
+                    it.get("title"),
+                )
+            ):
+                coinness_article_id = it.get("coinness_id")
+                if coinness_article_id is not None:
+                    coinness_detail_url = f"{COINNESS_BASE}/article/{coinness_article_id}"
+                    try:
+                        coinness_detail = crawl_coinness_article_detail(coinness_detail_url)
+                        if coinness_detail and _looks_like_full_article(
+                            coinness_detail.get("body"),
+                            it.get("summary"),
+                            it.get("title"),
+                        ):
+                            detail = coinness_detail
+                    except Exception as e:
+                        print(f"  warn: coinness detail page fetch fail err={e!r}")
+
+            if not detail:
+                fallback_body = it.get("body_hint") or it.get("summary") or it.get("title")
+                if not fallback_body:
+                    print("  skip: no title/body")
+                    continue
                 detail = {
                     "title": it.get("title"),
                     "published_at": it.get("published_at"),
-                    "body": it.get("body_hint") or it.get("summary") or it.get("title"),
+                    "body": fallback_body,
                 }
-            else:
-                try:
-                    detail = crawl_coinness_article_detail(link)
-                except Exception as e:
-                    print(f"  skip: coinness detail fetch fail err={e!r}")
-                    continue
-                if not detail:
-                    print("  skip: no title/body")
-                    continue
 
             event = {
                 "source": "coinness",
@@ -874,7 +1051,7 @@ def run_once() -> tuple[int, dict[str, int]]:
                 "source_list_url": it.get("source_list_url"),
                 "url": link,
                 "link": link,  # legacy alias
-                "title": detail["title"],
+                "title": detail.get("title") or it.get("title"),
                 "published_at": detail.get("published_at") or it.get("published_at"),
                 "content": detail["body"],
                 "body": detail["body"],  # legacy alias
