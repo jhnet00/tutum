@@ -54,7 +54,13 @@ spec:
               if "import base64" not in source:
                   source = source.replace(
                       "import secrets\n",
-                      "import secrets\nimport base64\nfrom urllib.parse import parse_qs, urlparse\n",
+                      "import secrets\nimport base64\nfrom urllib.parse import parse_qs, unquote, urlparse\n",
+                      1,
+                  )
+              elif "from urllib.parse import parse_qs, urlparse" in source and "unquote" not in source:
+                  source = source.replace(
+                      "from urllib.parse import parse_qs, urlparse\n",
+                      "from urllib.parse import parse_qs, unquote, urlparse\n",
                       1,
                   )
 
@@ -67,7 +73,7 @@ spec:
               def _sanitize_callback_path(callback_url: str | None) -> str | None:
                   if not callback_url:
                       return None
-                  callback_url = callback_url.strip()
+                  callback_url = unquote(callback_url).strip()
                   if not callback_url.startswith("/") or callback_url.startswith("//"):
                       return None
                   return callback_url
