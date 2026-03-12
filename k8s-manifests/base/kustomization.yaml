@@ -38,6 +38,7 @@ resources:
   - security/eso/secret-store.yaml
   - monitoring/alloy-config.yaml
   - monitoring/alloy.yaml
+  - monitoring/node-exporter.yaml
   - backup/mongodb-backup.yaml
   - backup/elasticsearch-backup.yaml
   - infra/cloudflared.yaml

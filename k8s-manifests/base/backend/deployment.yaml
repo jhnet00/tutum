@@ -52,9 +52,93 @@ spec:
               except FileNotFoundError:
                   raise SystemExit(0)
 
+              helper_block = '''
+              def _cpu_usage_to_nano(raw: str) -> int:
+                  raw = (raw or "").strip()
+                  if not raw:
+                      return 0
+                  if raw.endswith("n"):
+                      return int(float(raw[:-1] or 0))
+                  if raw.endswith("u"):
+                      return int(float(raw[:-1]) * 1_000)
+                  if raw.endswith("m"):
+                      return int(float(raw[:-1]) * 1_000_000)
+                  return int(float(raw) * 1_000_000_000)
+
+
+              def _cpu_capacity_to_millicores(raw: str) -> int:
+                  raw = (raw or "").strip()
+                  if not raw:
+                      return 0
+                  if raw.endswith("n"):
+                      return int(float(raw[:-1]) / 1_000_000)
+                  if raw.endswith("u"):
+                      return int(float(raw[:-1]) / 1_000)
+                  if raw.endswith("m"):
+                      return int(float(raw[:-1]))
+                  return int(float(raw) * 1000)
+
+
+              def _memory_quantity_to_ki(raw: str) -> int:
+                  raw = (raw or "").strip()
+                  if not raw:
+                      return 0
+
+                  binary_units = {
+                      "Ki": 1,
+                      "Mi": 1024,
+                      "Gi": 1024 ** 2,
+                      "Ti": 1024 ** 3,
+                      "Pi": 1024 ** 4,
+                      "Ei": 1024 ** 5,
+                  }
+                  decimal_units = {
+                      "K": 1000 / 1024,
+                      "M": 1000 ** 2 / 1024,
+                      "G": 1000 ** 3 / 1024,
+                      "T": 1000 ** 4 / 1024,
+                      "P": 1000 ** 5 / 1024,
+                      "E": 1000 ** 6 / 1024,
+                  }
+
+                  for suffix, multiplier in binary_units.items():
+                      if raw.endswith(suffix):
+                          return int(float(raw[:-len(suffix)] or 0) * multiplier)
+
+                  for suffix, multiplier in decimal_units.items():
+                      if raw.endswith(suffix):
+                          return int(float(raw[:-len(suffix)] or 0) * multiplier)
+
+                  return int(float(raw) / 1024)
+              '''.strip()
+
+              anchor = '''def _node_status(node) -> str:
+                  for cond in (node.status.conditions or []):
+                      if cond.type == "Ready":
+                          return "Ready" if cond.status == "True" else "NotReady"
+                  return "Unknown"
+              '''
+
+              if "_memory_quantity_to_ki(" not in source and anchor in source:
+                  source = source.replace(anchor, anchor + "\\n\\n" + helper_block + "\\n")
+
               replacements = {
                   '_HTTP_MIMIR = httpx.AsyncClient(timeout=5.0)': '_HTTP_MIMIR = httpx.AsyncClient(timeout=5.0, headers={"X-Scope-OrgID": "tutum"})',
                   '_HTTP_LOKI = httpx.AsyncClient(timeout=8.0)': '_HTTP_LOKI = httpx.AsyncClient(timeout=8.0, headers={"X-Scope-OrgID": "tutum"})',
+                  "base_selector = f'{job=\"loki.source.kubernetes.k8s_logs\", instance=~\"{ns_pattern}/.*\"}'": "base_selector = f'{job=\"loki.source.kubernetes.pods\", namespace=~\"{ns_pattern}\"}'",
+                  "instance = labels.get(\"instance\", \"\")\\n            level = labels.get(\"level\", default_level).upper()\\n            ns_pod = instance.split(\":\")[0]\\n            parts = ns_pod.split(\"/\", 1)\\n            ns_name = parts[0] if len(parts) == 2 else \"\"\\n            pod_name = parts[1] if len(parts) == 2 else instance": "level = labels.get(\"level\", labels.get(\"detected_level\", default_level)).upper()\\n            ns_name = labels.get(\"namespace\", \"\")\\n            pod_name = labels.get(\"pod\", labels.get(\"instance\", \"\"))",
+                  "query = f'{job=\"loki.source.kubernetes.k8s_logs\", instance=~\"tutum-app/{worker}-.*\"}'": "query = f'{job=\"loki.source.kubernetes.pods\", namespace=\"tutum-app\", app=~\"{worker}.*\"}'",
+                  "\"query\": '{job=\"loki.source.kubernetes.k8s_logs\"} |= \"ERROR\"',": "\"query\": '{job=\"loki.source.kubernetes.pods\"} |= \"ERROR\"',",
+                  'level = labels.get("level", default_level).upper()': 'level = labels.get("level", labels.get("detected_level", default_level)).upper()',
+                  'cpu_nano = int(item[\"usage\"][\"cpu\"].rstrip(\"n\"))': 'cpu_nano = _cpu_usage_to_nano(item[\"usage\"][\"cpu\"])',
+                  'mem_ki = int(item[\"usage\"][\"memory\"].rstrip(\"Ki\"))': 'mem_ki = _memory_quantity_to_ki(item[\"usage\"][\"memory\"])',
+                  'cpu_m = int(float(cpu_str)) * 1000 if not cpu_str.endswith(\"m\") else int(cpu_str[:-1])': 'cpu_m = _cpu_capacity_to_millicores(cpu_str)',
+                  'mem_ki = int(mem_str[:-2]) if mem_str.endswith(\"Ki\") else int(mem_str) // 1024': 'mem_ki = _memory_quantity_to_ki(mem_str)',
+                  'sum(node_filesystem_size_bytes{mountpoint="/"})': 'sum(max by (instance) (node_filesystem_size_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"}))',
+                  'sum(node_filesystem_avail_bytes{mountpoint="/"})': 'sum(max by (instance) (node_filesystem_avail_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"}))',
+                  'node_filesystem_size_bytes{mountpoint="/"}': 'max by (instance) (node_filesystem_size_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"})',
+                  'node_filesystem_avail_bytes{mountpoint="/"}': 'max by (instance) (node_filesystem_avail_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"})',
+                  '"available":      raw.get("disk_read_bps") is not None,': '"available":      (raw.get("disk_total_bytes") is not None or raw.get("disk_avail_bytes") is not None or bool(disk_nodes)),',
               }
 
               updated = source

@@ -60,7 +60,7 @@ data:
     discovery.kubernetes "pods" {
       role = "pod"
       namespaces {
-        names = ["tutum-app", "tutum-data"]
+        names = ["tutum-app", "tutum-data", "monitoring"]
       }
       selectors {
         role  = "pod"

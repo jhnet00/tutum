@@ -214,6 +214,65 @@ def _node_status(node) -> str:
     return "Unknown"
 
 
+def _cpu_usage_to_nano(raw: str) -> int:
+    raw = (raw or "").strip()
+    if not raw:
+        return 0
+    if raw.endswith("n"):
+        return int(float(raw[:-1] or 0))
+    if raw.endswith("u"):
+        return int(float(raw[:-1]) * 1_000)
+    if raw.endswith("m"):
+        return int(float(raw[:-1]) * 1_000_000)
+    return int(float(raw) * 1_000_000_000)
+
+
+def _cpu_capacity_to_millicores(raw: str) -> int:
+    raw = (raw or "").strip()
+    if not raw:
+        return 0
+    if raw.endswith("n"):
+        return int(float(raw[:-1]) / 1_000_000)
+    if raw.endswith("u"):
+        return int(float(raw[:-1]) / 1_000)
+    if raw.endswith("m"):
+        return int(float(raw[:-1]))
+    return int(float(raw) * 1000)
+
+
+def _memory_quantity_to_ki(raw: str) -> int:
+    raw = (raw or "").strip()
+    if not raw:
+        return 0
+
+    binary_units = {
+        "Ki": 1,
+        "Mi": 1024,
+        "Gi": 1024 ** 2,
+        "Ti": 1024 ** 3,
+        "Pi": 1024 ** 4,
+        "Ei": 1024 ** 5,
+    }
+    decimal_units = {
+        "K": 1000 / 1024,
+        "M": 1000 ** 2 / 1024,
+        "G": 1000 ** 3 / 1024,
+        "T": 1000 ** 4 / 1024,
+        "P": 1000 ** 5 / 1024,
+        "E": 1000 ** 6 / 1024,
+    }
+
+    for suffix, multiplier in binary_units.items():
+        if raw.endswith(suffix):
+            return int(float(raw[:-len(suffix)] or 0) * multiplier)
+
+    for suffix, multiplier in decimal_units.items():
+        if raw.endswith(suffix):
+            return int(float(raw[:-len(suffix)] or 0) * multiplier)
+
+    return int(float(raw) / 1024)
+
+
 DEFAULT_INSTANCE_HOURLY_RATES_USD = {
     "c5.large": 0.085,
     "c5.xlarge": 0.17,
@@ -342,8 +401,8 @@ async def get_nodes():
             )
             for item in raw.get("items", []):
                 name = item["metadata"]["name"]
-                cpu_nano = int(item["usage"]["cpu"].rstrip("n"))
-                mem_ki = int(item["usage"]["memory"].rstrip("Ki"))
+                cpu_nano = _cpu_usage_to_nano(item["usage"]["cpu"])
+                mem_ki = _memory_quantity_to_ki(item["usage"]["memory"])
                 usage_map[name] = {"cpu_nano": cpu_nano, "mem_ki": mem_ki}
         except Exception as e:
             logger.warning("metrics-server 조회 실패: %s", e)
@@ -356,17 +415,8 @@ async def get_nodes():
             cpu_alloc_str = alloc.get("cpu", "0")
             mem_alloc_str = alloc.get("memory", "0Ki")
 
-            # CPU: "6" → 6000m, "6000m" → 6000
-            if cpu_alloc_str.endswith("m"):
-                cpu_alloc_m = int(cpu_alloc_str[:-1])
-            else:
-                cpu_alloc_m = int(float(cpu_alloc_str)) * 1000
-
-            # Memory: "12345678Ki" → bytes
-            if mem_alloc_str.endswith("Ki"):
-                mem_alloc_ki = int(mem_alloc_str[:-2])
-            else:
-                mem_alloc_ki = int(mem_alloc_str) // 1024
+            cpu_alloc_m = _cpu_capacity_to_millicores(cpu_alloc_str)
+            mem_alloc_ki = _memory_quantity_to_ki(mem_alloc_str)
 
             cpu_pct = 0
             mem_pct = 0
@@ -660,7 +710,7 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
         logs = []
         for stream in result:
             labels = stream["stream"]
-            level = labels.get("level", default_level).upper()
+            level = labels.get("level", labels.get("detected_level", default_level)).upper()
             # Alloy loki.source.kubernetes 레이블: namespace, pod 직접 사용
             ns_name = labels.get("namespace", "")
             pod_name = labels.get("pod", labels.get("instance", ""))
@@ -777,8 +827,8 @@ async def get_diagnose(
             )
             for item in raw.get("items", []):
                 name = item["metadata"]["name"]
-                cpu_nano = int(item["usage"]["cpu"].rstrip("n"))
-                mem_ki = int(item["usage"]["memory"].rstrip("Ki"))
+                cpu_nano = _cpu_usage_to_nano(item["usage"]["cpu"])
+                mem_ki = _memory_quantity_to_ki(item["usage"]["memory"])
                 usage_map[name] = {"cpu_nano": cpu_nano, "mem_ki": mem_ki}
         except Exception:
             pass
@@ -789,8 +839,8 @@ async def get_diagnose(
             alloc = node.status.allocatable or {}
             cpu_str = alloc.get("cpu", "0")
             mem_str = alloc.get("memory", "0Ki")
-            cpu_m = int(float(cpu_str)) * 1000 if not cpu_str.endswith("m") else int(cpu_str[:-1])
-            mem_ki = int(mem_str[:-2]) if mem_str.endswith("Ki") else int(mem_str) // 1024
+            cpu_m = _cpu_capacity_to_millicores(cpu_str)
+            mem_ki = _memory_quantity_to_ki(mem_str)
 
             cpu_pct = mem_pct = 0
             if name in usage_map:
@@ -1172,8 +1222,8 @@ async def get_infra_diagnose(
             )
             for item in raw.get("items", []):
                 name = item["metadata"]["name"]
-                cpu_nano = int(item["usage"]["cpu"].rstrip("n"))
-                mem_ki = int(item["usage"]["memory"].rstrip("Ki"))
+                cpu_nano = _cpu_usage_to_nano(item["usage"]["cpu"])
+                mem_ki = _memory_quantity_to_ki(item["usage"]["memory"])
                 usage_map[name] = {"cpu_nano": cpu_nano, "mem_ki": mem_ki}
         except Exception:
             pass
@@ -1184,8 +1234,8 @@ async def get_infra_diagnose(
             alloc = node.status.allocatable or {}
             cpu_str = alloc.get("cpu", "0")
             mem_str = alloc.get("memory", "0Ki")
-            cpu_m = int(float(cpu_str)) * 1000 if not cpu_str.endswith("m") else int(cpu_str[:-1])
-            mem_ki = int(mem_str[:-2]) if mem_str.endswith("Ki") else int(mem_str) // 1024
+            cpu_m = _cpu_capacity_to_millicores(cpu_str)
+            mem_ki = _memory_quantity_to_ki(mem_str)
             cpu_pct = mem_pct = 0
             if name in usage_map:
                 u = usage_map[name]
@@ -1750,8 +1800,12 @@ async def get_data_metrics():
         "es_jvm_heap_max": ['sum(elasticsearch_jvm_memory_max_bytes{area="heap"})'],
         "disk_read_bps": ["sum(rate(node_disk_read_bytes_total[5m]))"],
         "disk_write_bps": ["sum(rate(node_disk_written_bytes_total[5m]))"],
-        "disk_total_bytes": ['sum(node_filesystem_size_bytes{mountpoint="/"})'],
-        "disk_avail_bytes": ['sum(node_filesystem_avail_bytes{mountpoint="/"})'],
+        "disk_total_bytes": [
+            'sum(max by (instance) (node_filesystem_size_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"}))'
+        ],
+        "disk_avail_bytes": [
+            'sum(max by (instance) (node_filesystem_avail_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"}))'
+        ],
         "es_search_qps": ["sum(rate(elasticsearch_indices_search_query_total[5m]))"],
         "es_search_time": ["sum(rate(elasticsearch_indices_search_query_time_seconds[5m]))"],
         "es_index_time": ["sum(rate(elasticsearch_indices_indexing_index_time_seconds_total[5m]))"],
@@ -1836,6 +1890,20 @@ async def get_data_metrics():
             }
     except Exception as e:
         logger.warning("MongoDB serverStatus 조회 실패: %s", e)
+        try:
+            db = get_database()
+            if db is not None:
+                ping = await db.command("ping")
+                db_stats = await db.command("dbStats")
+                mongo_io = {
+                    "collections": db_stats.get("collections"),
+                    "objects": db_stats.get("objects"),
+                    "storage_size_gb": round(db_stats.get("storageSize", 0) / 1024 / 1024 / 1024, 3),
+                    "data_size_gb": round(db_stats.get("dataSize", 0) / 1024 / 1024 / 1024, 3),
+                    "available": bool(ping.get("ok")),
+                }
+        except Exception as fallback_error:
+            logger.warning("MongoDB fallback 조회 실패: %s", fallback_error)
 
     def to_mbps(v): return round(v / 1024 / 1024, 2) if v is not None else None
 
@@ -1860,11 +1928,17 @@ async def get_data_metrics():
     try:
         size_data = await _mimir_query(
             "/api/v1/query",
-            params={"query": 'node_filesystem_size_bytes{mountpoint="/"}', **instant_params},
+            params={
+                "query": 'max by (instance) (node_filesystem_size_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"})',
+                **instant_params,
+            },
         )
         avail_data = await _mimir_query(
             "/api/v1/query",
-            params={"query": 'node_filesystem_avail_bytes{mountpoint="/"}', **instant_params},
+            params={
+                "query": 'max by (instance) (node_filesystem_avail_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"})',
+                **instant_params,
+            },
         )
         if size_data and avail_data:
             size_results = size_data.get("data", {}).get("result", [])
@@ -1939,7 +2013,11 @@ async def get_data_metrics():
                 if raw.get("disk_total_bytes") and raw.get("disk_avail_bytes")
                 else None
             ),
-            "available":      raw.get("disk_read_bps") is not None,
+            "available":      (
+                raw.get("disk_total_bytes") is not None
+                or raw.get("disk_avail_bytes") is not None
+                or bool(disk_nodes)
+            ),
             "nodes":          disk_nodes,
         },
         "mongodb": mongo_io,
