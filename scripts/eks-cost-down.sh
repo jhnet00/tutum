@@ -1,109 +1,70 @@
 #!/bin/bash
-# ============================================================
-#  eks-cost-down.sh — 퇴근 시 EKS 비용 절감 스크립트
-#  실행 위치: cp-2 (kubectl + aws CLI 모두 준비됨)
-#  사용법: bash scripts/eks-cost-down.sh
-#
-#  대상 컴포넌트 전체:
-#  [EKS Karpenter 노드]
-#    tutum-app   : backend, frontend, auth, elastic-consumer,
-#                  news-consumer, news-producer, price-consumer,
-#                  price-producer, email-worker, ocr
-#    tutum-data  : mongodb(StatefulSet), kafka(StatefulSet),
-#                  redis(StatefulSet), elasticsearch(StatefulSet),
-#                  kafka-exporter, redis-exporter, elasticsearch-exporter
-#    tutum-storage: minio(StatefulSet)
-#    gitlab-runner: gitlab-runner
-#    kyverno     : kyverno
-#    istio-system: istio-ingressgateway
-#    argocd      : argocd-server, repo-server, application-controller, etc.
-#    monitoring  : alloy(DaemonSet) → 노드 제거 시 자동 소멸
-#  [EC2 Docker Compose — i-0a8cab5d5ce1cac60]
-#    Grafana, Loki, Tempo, Mimir, InfluxDB, SonarQube
-# ============================================================
 set -euo pipefail
 
-GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
 log()  { echo -e "${GREEN}[$(date +%H:%M:%S)]${NC} $*"; }
 warn() { echo -e "${YELLOW}[$(date +%H:%M:%S)]${NC} $*"; }
 
-# ─────────────────────────────────────────
-# STEP 1: ArgoCD 먼저 내리기 (selfHeal 차단)
-#   → ArgoCD가 없으면 이후 스케일다운을 되돌리지 못함
-# ─────────────────────────────────────────
-log "[1/5] ArgoCD 컴포넌트 스케일 다운 (selfHeal 차단)"
+scale_namespace_zero() {
+  local namespace="$1"
 
-kubectl scale deployment argocd-server              -n argocd --replicas=0
-kubectl scale deployment argocd-repo-server         -n argocd --replicas=0
-kubectl scale deployment argocd-applicationset-controller -n argocd --replicas=0
-kubectl scale deployment argocd-notifications-controller  -n argocd --replicas=0
-kubectl scale deployment argocd-dex-server          -n argocd --replicas=0
-kubectl scale deployment argocd-redis               -n argocd --replicas=0
-kubectl scale statefulset argocd-application-controller   -n argocd --replicas=0
+  if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+    warn "namespace ${namespace} does not exist; skipping"
+    return
+  fi
 
-# ─────────────────────────────────────────
-# STEP 2: 애플리케이션 + 데이터 레이어 전체 0으로
-#   tutum-app   : backend/frontend/auth/workers (Deployment)
-#   tutum-data  : mongodb/kafka/redis/elasticsearch (StatefulSet) +
-#                 각종 exporter (Deployment)
-#   tutum-storage: minio (StatefulSet)
-# ─────────────────────────────────────────
-log "[2/6] KEDA ScaledObjects 일시 중지 (재스케일 방지)"
-# KEDA가 scale=0 이후 minReplicas 기준으로 복구하는 것을 막음
-for so in $(kubectl get scaledobject -n tutum-app -o name 2>/dev/null); do
-  kubectl annotate "$so" -n tutum-app autoscaling.keda.sh/paused=true --overwrite
+  warn "  namespace: ${namespace}"
+  kubectl scale deployment --all -n "${namespace}" --replicas=0 2>/dev/null || true
+  kubectl scale statefulset --all -n "${namespace}" --replicas=0 2>/dev/null || true
+}
+
+log "[1/5] Scale down ArgoCD core components"
+kubectl scale deployment argocd-server -n argocd --replicas=0 2>/dev/null || true
+kubectl scale deployment argocd-repo-server -n argocd --replicas=0 2>/dev/null || true
+kubectl scale deployment argocd-applicationset-controller -n argocd --replicas=0 2>/dev/null || true
+kubectl scale deployment argocd-notifications-controller -n argocd --replicas=0 2>/dev/null || true
+kubectl scale deployment argocd-dex-server -n argocd --replicas=0 2>/dev/null || true
+kubectl scale deployment argocd-redis -n argocd --replicas=0 2>/dev/null || true
+kubectl scale statefulset argocd-application-controller -n argocd --replicas=0 2>/dev/null || true
+
+log "[2/5] Pause KEDA scaled objects"
+for so in $(kubectl get scaledobject -n tutum-app -o name 2>/dev/null || true); do
+  kubectl annotate "${so}" -n tutum-app autoscaling.keda.sh/paused=true --overwrite >/dev/null
 done
 
-log "[3/6] 애플리케이션·데이터·스토리지 워크로드 스케일 다운"
-
-for ns in tutum-app tutum-data tutum-storage; do
-  warn "  → namespace: $ns"
-  kubectl scale deployment   --all -n "$ns" --replicas=0 2>/dev/null || true
-  kubectl scale statefulset  --all -n "$ns" --replicas=0 2>/dev/null || true
+log "[3/5] Scale application and data workloads to zero"
+for namespace in tutum-app tutum-data; do
+  scale_namespace_zero "${namespace}"
 done
 
-# ─────────────────────────────────────────
-# STEP 3: 기타 네임스페이스
-#   gitlab-runner, kyverno, istio-ingressgateway
-#   monitoring(alloy)은 DaemonSet → 직접 scale 불가,
-#   노드가 제거되면 자동 소멸
-# ─────────────────────────────────────────
-log "[4/6] gitlab-runner / kyverno / istio 스케일 다운"
+log "[4/5] Scale ancillary workloads to zero"
+scale_namespace_zero gitlab-runner
+scale_namespace_zero kyverno
 
-kubectl scale deployment --all -n gitlab-runner --replicas=0 2>/dev/null || true
-kubectl scale deployment --all -n kyverno       --replicas=0 2>/dev/null || true
-kubectl scale statefulset --all -n kyverno      --replicas=0 2>/dev/null || true
+if kubectl get deployment istio-ingressgateway -n istio-system >/dev/null 2>&1; then
+  kubectl scale deployment istio-ingressgateway -n istio-system --replicas=0 2>/dev/null || true
+fi
 
-# Istio ingress gateway (외부 노출 불필요)
-kubectl scale deployment istio-ingressgateway -n istio-system --replicas=0 2>/dev/null || true
-
-# ─────────────────────────────────────────
-# STEP 4: 모니터링 EC2 중지
-#   i-0a8cab5d5ce1cac60 에서 Docker Compose로 운영 중:
-#   Grafana(:3000), Loki(:3100), Tempo(:3200),
-#   Mimir(:9009), InfluxDB(:8086), SonarQube(:9000)
-# ─────────────────────────────────────────
-log "[5/6] 모니터링 EC2 인스턴스 중지 (i-0a8cab5d5ce1cac60)"
-log "       포함: Grafana / Loki / Tempo / Mimir / InfluxDB / SonarQube"
+log "[5/5] Stop monitoring EC2 (i-0a8cab5d5ce1cac60)"
 aws ec2 stop-instances \
   --instance-ids i-0a8cab5d5ce1cac60 \
   --region ap-northeast-2 \
-  --output text --query 'StoppingInstances[0].CurrentState.Name' \
-  2>/dev/null && log "  → EC2 중지 요청 완료" || warn "  → EC2 중지 실패 (AWS CLI 권한 확인)"
+  --output text \
+  --query 'StoppingInstances[0].CurrentState.Name' \
+  >/dev/null 2>&1 \
+  && log "monitoring EC2 stop requested" \
+  || warn "failed to stop monitoring EC2; check AWS CLI credentials"
 
-# ─────────────────────────────────────────
-# STEP 5: 완료 안내
-# ─────────────────────────────────────────
-log "[6/6] 완료"
-echo ""
-echo "✅ 스케일다운 완료. Karpenter가 5~10분 내로 빈 노드를 자동 제거합니다."
-echo "   (Alloy DaemonSet은 노드 제거 시 자동 소멸)"
-echo ""
-echo "  남아있는 고정 비용 (막을 수 없음):"
-echo "    - EKS 컨트롤 플레인: \$0.10/hr  (~\$1.4 / 14시간)"
-echo "    - NAT Gateway 기본료: ~\$0.045/hr/AZ"
-echo "    - EBS PVC: GB 기준 (변동 없음)"
-echo "    - kube-system 최소 노드: Karpenter system NodePool 유지"
-echo ""
-echo "  노드 제거 확인: kubectl get nodes --watch"
-echo "  아침에 복구:    bash scripts/eks-cost-up.sh"
+echo
+echo "Cost-down sequence completed."
+echo "Remaining baseline cost still includes EKS control plane, NAT Gateway, and EBS volumes."
+echo
+echo "Recommended checks:"
+echo "  kubectl get nodes --watch"
+echo "  kubectl get pods -A | grep -v Running"
+echo
+echo "Restore command:"
+echo "  bash scripts/eks-cost-up.sh"

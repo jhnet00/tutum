@@ -6,7 +6,7 @@ spec:
   disruption:
     budgets:
       - nodes: 10%
-    consolidateAfter: 30s
+    consolidateAfter: 5m
     consolidationPolicy: WhenEmptyOrUnderutilized
   limits:
     cpu: 32
