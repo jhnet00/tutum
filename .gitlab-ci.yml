@@ -70,6 +70,24 @@ lint:backend:
       changes:
         - backend/**/*
 
+lint:shell-scripts:
+  stage: lint
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/alpine:3.20
+  before_script:
+    - apk add --no-cache bash
+  script:
+    - |
+      set -e
+      find scripts -type f -name '*.sh' -print0 | while IFS= read -r -d '' file; do
+        echo "Checking ${file}"
+        bash -n "${file}"
+      done
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+      changes:
+        - scripts/**/*
+        - .gitlab-ci.yml
+
 test:backend:
   stage: test
   image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/python:3.11-slim
@@ -97,6 +115,28 @@ test:backend:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
       changes:
         - backend/**/*
+
+test:kustomize:
+  stage: test
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/amazon/aws-cli:2.15.0
+  script:
+    - |
+      set -e
+      KUBECTL_VERSION="v1.31.6"
+      curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+      chmod +x /usr/local/bin/kubectl
+
+      kubectl kustomize k8s-manifests/apps/argocd >/dev/null
+      kubectl kustomize k8s-manifests/overlays/staging >/dev/null
+      kubectl kustomize k8s-manifests/overlays/production >/dev/null
+      kubectl create --dry-run=client -f k8s-manifests/argocd/argocd-config-app.yaml >/dev/null
+      kubectl create --dry-run=client -f k8s-manifests/argocd/staging-app.yaml >/dev/null
+      kubectl create --dry-run=client -f k8s-manifests/argocd/production-app.yaml >/dev/null
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+      changes:
+        - k8s-manifests/**/*
+        - .gitlab-ci.yml
 
 aws:precheck:
   stage: test

@@ -12,7 +12,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://gitlab.com/tutum-project/tutum-app/backend.git
+    repoURL: https://gitlab.com/tutum-project/tutum-app/tutum-backend.git
     targetRevision: main
     path: k8s-manifests/overlays/production
   destination:

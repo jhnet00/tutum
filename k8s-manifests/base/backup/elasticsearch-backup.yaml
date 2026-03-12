@@ -15,6 +15,9 @@ spec:
     spec:
       backoffLimit: 2
       template:
+        metadata:
+          annotations:
+            sidecar.istio.io/inject: "false"
         spec:
           restartPolicy: OnFailure
           containers:
@@ -29,6 +32,9 @@ spec:
                   SNAPSHOT="snap-${DATE}"
                   ES_URL="http://${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}"
                   REPO_NAME="s3_backup"
+                  REPO_PAYLOAD="/tmp/repo.json"
+                  SNAPSHOT_PAYLOAD="/tmp/snapshot.json"
+                  RESPONSE_FILE="/tmp/elasticsearch-backup-response.json"
 
                   echo "[$(date)] starting Elasticsearch backup for ${DATE}"
 
@@ -37,26 +43,44 @@ spec:
 
                   if [ "${REPO_EXISTS}" != "200" ]; then
                     echo "[$(date)] registering snapshot repository ${REPO_NAME}"
-                    curl -sf -X PUT "${ES_URL}/_snapshot/${REPO_NAME}" \
+                    cat > "${REPO_PAYLOAD}" <<EOF
+                    {
+                      "type": "s3",
+                      "settings": {
+                        "bucket": "${S3_BUCKET_NAME}",
+                        "region": "${AWS_REGION}",
+                        "base_path": "backups/elasticsearch"
+                      }
+                    }
+                    EOF
+                    REGISTER_STATUS="$(curl -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
+                      -X PUT "${ES_URL}/_snapshot/${REPO_NAME}" \
                       -H 'Content-Type: application/json' \
-                      -d "{
-                        \"type\": \"s3\",
-                        \"settings\": {
-                          \"bucket\": \"${S3_BUCKET_NAME}\",
-                          \"region\": \"${AWS_REGION}\",
-                          \"base_path\": \"backups/elasticsearch\"
-                        }
-                      }"
+                      --data-binary @"${REPO_PAYLOAD}" || true)"
+                    if [ "${REGISTER_STATUS}" != "200" ] && [ "${REGISTER_STATUS}" != "201" ]; then
+                      echo "[ERROR] repository registration failed with HTTP ${REGISTER_STATUS}"
+                      cat "${RESPONSE_FILE}" || true
+                      exit 1
+                    fi
                   fi
 
-                  RESULT="$(curl -sf -X PUT \
-                    "${ES_URL}/_snapshot/${REPO_NAME}/${SNAPSHOT}?wait_for_completion=true" \
+                  printf '%s' '{"include_global_state":false}' > "${SNAPSHOT_PAYLOAD}"
+                  SNAPSHOT_STATUS="$(curl -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
+                    -X PUT "${ES_URL}/_snapshot/${REPO_NAME}/${SNAPSHOT}?wait_for_completion=true" \
                     -H 'Content-Type: application/json' \
-                    -d '{\"include_global_state\": false}')"
+                    --data-binary @"${SNAPSHOT_PAYLOAD}" || true)"
+                  if [ "${SNAPSHOT_STATUS}" != "200" ] && [ "${SNAPSHOT_STATUS}" != "201" ]; then
+                    echo "[ERROR] snapshot request failed with HTTP ${SNAPSHOT_STATUS}"
+                    cat "${RESPONSE_FILE}" || true
+                    exit 1
+                  fi
+
+                  RESULT="$(cat "${RESPONSE_FILE}")"
 
                   STATE="$(echo "${RESULT}" | grep -o '\"state\":\"[^\"]*\"' | head -1 | cut -d'\"' -f4)"
                   if [ "${STATE}" != "SUCCESS" ]; then
                     echo "[ERROR] snapshot finished with state=${STATE}"
+                    echo "${RESULT}"
                     exit 1
                   fi
 

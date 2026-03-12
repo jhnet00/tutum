@@ -13,7 +13,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://gitlab.com/tutum-project/tutum-app/backend.git
+    repoURL: https://gitlab.com/tutum-project/tutum-app/tutum-backend.git
     targetRevision: develop
     path: k8s-manifests/apps/argocd
   destination:
