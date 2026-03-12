@@ -36,15 +36,17 @@
 - 검증 결과: runner controller와 job pod template 모두 `karpenter.sh/nodepool=private-ci` 기준으로 반영한다.
 - 검증 항목: live Karpenter NodePool 확인
 - 검증 결과: `private-ci` NodePool이 실제로 생성됐고 `m8i-flex.large` spot 노드 1대가 올라와 runner controller가 `1/1 Running`으로 수렴했다.
+- 검증 항목: GitLab pipeline 확인
+- 검증 결과: `8fa630e` 커밋의 pipeline `2380338339`가 `success`로 완료됐고, `guard:commit-policy`, `test:kustomize`, `notify:slack_on_success`가 정상 처리됐다. `aws:*` job은 설계대로 `manual` 상태다.
 - 검증 항목: `git rev-list --left-right --count HEAD...origin/develop`
-- 검증 결과: 커밋/푸시 후 로컬 `develop`과 `origin/develop` 일치 여부를 확인한다.
+- 검증 결과: push 후 로컬 `develop`과 `origin/develop`이 `0 0`으로 일치했다.
 
 ## 5. 커밋 로그
 ```bash
 git log --oneline --since="2026-03-12 00:00:00" --until="2026-03-12 23:59:59"
 ```
 
-- 커밋 후 업데이트
+- `8fa630e feat(ci): isolate gitlab runner on private ci nodes`
 
 ## 6. 후속 작업/리스크
 - 이 변경은 GitLab Runner가 전용 CI 노드풀로 빠지도록 만드는 것이 목적이며, 장기적으로는 `helm upgrade gitlab-runner ... -f k8s-manifests/base/runner/gitlab-runner-values.yaml`로 관리 경로를 다시 맞추는 것이 바람직하다.
