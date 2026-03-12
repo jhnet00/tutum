@@ -46,6 +46,8 @@ spec:
                 const protectedRouteReplacement = 'if(n&&!r){let r=new URL("/login",e.url);r.searchParams.set("callbackUrl",t);let n=Y.redirect(r);return n.cookies.set("login_callback",t,{path:"/",sameSite:"lax",httpOnly:!0,maxAge:600}),n}';
                 const middlewareTarget = 'return i&&r?Y.redirect(new URL("/portfolio/asset",e.url)):Y.next()';
                 const middlewareReplacement = 'if(i&&r){let n=e.nextUrl.searchParams.get("callbackUrl");return n&&n.startsWith("/")?Y.redirect(new URL(n,e.url)):Y.redirect(new URL("/portfolio/asset",e.url))}return Y.next()';
+                const assetBounceTarget = 'if(i&&r){let n=e.nextUrl.searchParams.get("callbackUrl");return n&&n.startsWith("/")?Y.redirect(new URL(n,e.url)):Y.redirect(new URL("/portfolio/asset",e.url))}return Y.next()';
+                const assetBounceReplacement = 'if(i&&r){let n=e.nextUrl.searchParams.get("callbackUrl");return n&&n.startsWith("/")?Y.redirect(new URL(n,e.url)):Y.redirect(new URL("/portfolio/asset",e.url))}let o=e.cookies.get("login_callback")?.value;if(r&&o&&o.startsWith("/")&&!o.startsWith("//")&&t.startsWith("/portfolio/asset")){let n=Y.redirect(new URL(o,e.url));return n.cookies.set("login_callback","",{path:"/",maxAge:0}),n}return Y.next()';
                 if (!middlewareSource.includes('login_callback')) {
                   if (!middlewareSource.includes(protectedRouteTarget)) {
                     throw new Error("frontend middleware protected route patch target not found");
@@ -57,6 +59,12 @@ spec:
                     throw new Error("frontend middleware auth redirect patch target not found");
                   }
                   middlewareSource = middlewareSource.replace(middlewareTarget, middlewareReplacement);
+                }
+                if (!middlewareSource.includes('t.startsWith("/portfolio/asset")')) {
+                  if (!middlewareSource.includes(assetBounceTarget)) {
+                    throw new Error("frontend middleware asset callback patch target not found");
+                  }
+                  middlewareSource = middlewareSource.replace(assetBounceTarget, assetBounceReplacement);
                 }
                 fs.writeFileSync(middlewarePath, middlewareSource);
               }
