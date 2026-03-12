@@ -21,6 +21,8 @@ spec:
         prometheus.io/path: "/metrics"
         sidecar.istio.io/inject: "false"
     spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
       hostPID: true
       hostIPC: true
       hostNetwork: true

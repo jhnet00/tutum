@@ -18,6 +18,8 @@ spec:
         prometheus.io/port: "9100"
         prometheus.io/path: "/metrics"
     spec:
+      nodeSelector:
+        kubernetes.io/arch: amd64
       hostPID: true
       hostIPC: true
       hostNetwork: true
