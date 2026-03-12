@@ -23,7 +23,7 @@
 - `k8s-manifests/argocd/argocd-config-app.yaml`
 - `k8s-manifests/argocd/staging-app.yaml`
 - `k8s-manifests/argocd/production-app.yaml`
-  - ArgoCD Application의 `repoURL`을 기존 `backend.git` redirect 주소에서 실제 저장소 `tutum-backend.git`로 정리했다.
+  - ArgoCD Application의 `repoURL` 정리도 검토했지만, live ArgoCD repo-server에는 `tutum-backend.git` 직접 접근용 인증이 없어 현재는 기존 `backend.git` redirect 주소를 유지하는 것이 맞다는 점을 확인했다.
 
 ## 3. 작업 중 발생 이슈 및 대응
 - 이슈: GitLab push pipeline이 성공으로 표시되는데, `k8s-manifests`나 `scripts`만 바뀐 커밋에는 실제 lint/test/build/deploy job이 거의 돌지 않았다.
@@ -44,6 +44,10 @@
 - 대응:
   - 현재 시점의 repo-server 로그에서는 새 revision manifest generate가 정상 동작하는 것을 확인했다.
   - stale `operationState` 오류로 판단하고, 현재는 `Synced` 상태를 기준으로 후속 sync 검증을 진행했다.
+- 이슈: live ArgoCD Application의 `repoURL`을 `tutum-backend.git`로 바꾸면 `failed to list refs: authentication required` 비교 오류가 발생했다.
+- 대응:
+  - ArgoCD repo-server에는 해당 URL용 GitLab 인증이 아직 등록되지 않은 상태임을 확인했다.
+  - staging 안정화 기준으로는 기존 `backend.git` redirect URL을 유지하는 것이 안전하다고 판단하고 그 기준으로 정리했다.
 
 ## 4. 결과
 - 검증 항목: GitLab API로 `3df832f` 커밋 pipeline/job status 조회
@@ -67,4 +71,5 @@ git log --oneline --since="2026-03-12 00:00:00" --until="2026-03-12 23:59:59"
 ## 6. 후속 작업/리스크
 - `elasticsearch-backup` CronJob은 로컬 매니페스트 수정이 완료됐지만, 실제 live CronJob이 새 스크립트로 sync된 뒤 수동 Job 재검증을 한 번 더 완료해야 한다.
 - ArgoCD Application들의 `repoURL`은 문서/매니페스트 기준으로 새 저장소로 정리했으므로, 실제 클러스터에도 sync 반영 여부를 확인해야 한다.
+- ArgoCD repo URL을 `tutum-backend.git`로 직접 전환하려면 먼저 repo credential 또는 PAT 기반 repository 등록을 추가해야 한다.
 - 현재 GitLab pipeline은 manifest/script 정적 검증까지는 보강됐지만, 실제 `kubectl apply`는 여전히 ArgoCD GitOps 흐름에 의존한다.
