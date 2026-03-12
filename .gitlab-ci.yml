@@ -66,9 +66,9 @@ lint:backend:
     - flake8 backend/app --max-line-length=120
     - flake8 backend/workers --max-line-length=120
   rules:
-    - changes:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+      changes:
         - backend/**/*
-    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 test:backend:
   stage: test
@@ -94,9 +94,9 @@ test:backend:
       run_pytest_if_exists app/ocr-api/tests
       run_pytest_if_exists workers/tests
   rules:
-    - changes:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+      changes:
         - backend/**/*
-    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 aws:precheck:
   stage: test
@@ -290,7 +290,8 @@ sonar:backend:
         -Dsonar.token=${SONAR_TOKEN}
   allow_failure: true
   rules:
-    - changes:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+      changes:
         - backend/**/*
 
 .build_retry_registry: &build_retry_registry
@@ -322,10 +323,9 @@ build:backend:
       --destination "${BACKEND_IMAGE}:latest"
       --compressed-caching=false
   rules:
-    - changes:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+      changes:
         - backend/**/*
-    - if: '$CI_PIPELINE_SOURCE == "api"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
 
 build:workers:
   <<: *build_retry_registry
@@ -347,10 +347,9 @@ build:workers:
       --destination "${WORKERS_IMAGE}:latest"
       --compressed-caching=false
   rules:
-    - changes:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+      changes:
         - backend/**/*
-    - if: '$CI_PIPELINE_SOURCE == "api"'
-    - if: '$CI_PIPELINE_SOURCE == "web"'
 
 security:backend:
   stage: security
@@ -370,9 +369,9 @@ security:backend:
     - job: build:backend
       optional: true
   rules:
-    - changes:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+      changes:
         - backend/**/*
-    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 security:workers:
   stage: security
@@ -392,9 +391,9 @@ security:workers:
     - job: build:workers
       optional: true
   rules:
-    - changes:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+      changes:
         - backend/**/*
-    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 sign:backend:
   stage: sign
@@ -417,9 +416,9 @@ sign:backend:
     - job: security:backend
       optional: true
   rules:
-    - changes:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+      changes:
         - backend/**/*
-    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 sign:workers:
   stage: sign
@@ -442,9 +441,9 @@ sign:workers:
     - job: security:workers
       optional: true
   rules:
-    - changes:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"'
+      changes:
         - backend/**/*
-    - if: '$CI_PIPELINE_SOURCE == "api"'
 
 deploy:staging:
   stage: deploy
@@ -582,3 +581,4 @@ notify:slack_on_success:
       --data "{\"text\":\"[CI OK] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\\n${CI_PIPELINE_URL}\"}" \
       "${SLACK_WEBHOOK_URL}"
   when: on_success
+
