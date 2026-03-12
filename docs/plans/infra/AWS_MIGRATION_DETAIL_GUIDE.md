@@ -1,4 +1,4 @@
-# AWS Migration 세부 기술 가이드 — 온프레미스 K8s → EKS 이전
+﻿# AWS Migration 세부 기술 가이드 — 온프레미스 K8s → EKS 이전
 
 작성일: `2026-03-05`
 참조: `AWS_MIGRATION_PLAN_2026-03-03.md`
@@ -2091,3 +2091,159 @@ kubectl logs -n tutum-app -l app=price-consumer --tail=20 | grep -E "kafka|conne
 ---
 
 ## Phase E (D+19 ~ D+24): 트래픽 컷오버 + 온프레미스 철수
+
+### E-1. 2026-03-12 기준 컷오버 판정
+
+2026-03-10 ~ 2026-03-12 작업을 기준으로 보면, Phase E의 핵심은 "새 인프라를 더 만드는 것"이 아니라
+"AWS 경로가 실제 정본인지 검증하고, 온프레미스 잔존 의존성을 종료 가능한 상태로 정리하는 것"이다.
+
+| 항목 | 현재 상태 | 판정 | 근거 |
+|---|---|---|---|
+| `tutum.my` 메인 서비스 응답 | ALB + EKS staging 기준 응답 확인 | 대부분 완료 | `2026-03-12_monitoring_admin_proxy_and_lgtm_validation.md` |
+| OAuth callback | Google / Naver / Kakao AWS 기준으로 정리 | 완료 | 관련 dev log, 운영 검증 기록 |
+| MariaDB | RDS 정본 사용 중 | 완료 | D-5 |
+| MongoDB 앱 정본 | EKS ReplicaSet 정본 전환 완료 | 완료 | D-9 |
+| Object storage 경로 | S3 기준 매니페스트/secret 정리 완료 | 부분 완료 | D-1 runtime 검증 필요 |
+| Monitoring / LGTM | monitoring EC2 기준 경로 복구 | 부분 완료 | traces / Kafka lag 후속 필요 |
+| On-prem monitoring / Mongo VM | shutdown 조건은 정리됐으나 실제 종료는 미실행 | 부분 완료 | D-11 |
+| Terraform IaC | 코드화 미실행 | 미완료 | D-8 |
+| Kafka EC2 이전 | 장기 과제, 현재 EKS Kafka 정상 | 보류 가능 | D-10 |
+
+**판정 기준**
+- 아래 조건을 만족하면 AWS migration은 "서비스 경로 기준 종료", Terraform/Kafka EC2는 후속 hardening backlog로 분리할 수 있다.
+  1. `tutum.my` 핵심 사용자 경로가 AWS EKS/RDS/S3 기준으로 정상 동작한다.
+  2. monitoring EC2의 LGTM / Sonar readiness가 확인된다.
+  3. S3 backup runtime 검증이 끝난다.
+  4. legacy Mongo / old monitoring / Cloudflare / MinIO 잔존 의존성의 종료 조건이 문서화된다.
+
+### E-2. 오늘 바로 닫아야 하는 실행 항목
+
+#### 1) D-1 runtime 검증
+
+목표:
+- `s3-backup-secret` 생성 확인
+- `mongodb-backup` / `elasticsearch-backup` CronJob 실행 확인
+- Elasticsearch `_snapshot/s3_backup` repository 응답 확인
+- 실제 S3 업로드 산출물 확인
+
+```bash
+# secret / cronjob
+kubectl --context tutum-stg-eks -n tutum-data get externalsecret,secret | egrep "s3-backup-secret|backend-secret"
+kubectl --context tutum-stg-eks -n tutum-data get cronjob
+kubectl --context tutum-stg-eks -n tutum-data get jobs --sort-by=.metadata.creationTimestamp
+
+# CronJob 1회 수동 실행
+kubectl --context tutum-stg-eks -n tutum-data create job --from=cronjob/mongodb-backup mongodb-backup-manual-$(date +%H%M%S)
+kubectl --context tutum-stg-eks -n tutum-data create job --from=cronjob/elasticsearch-backup elasticsearch-backup-manual-$(date +%H%M%S)
+
+# Elasticsearch snapshot repository 확인
+kubectl --context tutum-stg-eks -n tutum-data exec statefulset/elasticsearch -- \
+  curl -s http://localhost:9200/_snapshot/s3_backup?pretty
+
+# S3 산출물 확인
+aws s3 ls s3://tutum-prod-storage/backups/ --recursive --profile ruby --region ap-northeast-2
+```
+
+#### 2) D-5 monitoring EC2 / Sonar readiness 재확인
+
+`tutum-monitoring` 인스턴스가 `m5.large`로 변경된 뒤 재기동되었으므로, LGTM + Sonar를 다시 확인해야 한다.
+
+```bash
+aws ec2 describe-instance-status \
+  --region ap-northeast-2 \
+  --instance-ids i-0a8cab5d5ce1cac60 \
+  --include-all-instances \
+  --profile ruby
+
+# monitoring VM 내부
+hostname
+free -h
+df -h
+sudo systemctl status docker --no-pager
+cd /opt/monitoring
+docker compose ps
+curl -s http://localhost:3000/api/health
+curl -s http://localhost:3100/ready
+curl -s http://localhost:3200/ready
+curl -s http://localhost:9009/ready
+curl -s http://localhost:9000/api/system/status
+```
+
+#### 3) D-9-V traces / Kafka lag 후속 확인
+
+목표:
+- traces export timeout 원인 확인
+- Kafka lag metric이 Mimir에 적재되는지 확인
+
+```bash
+# Alloy / OTLP export 로그
+kubectl --context tutum-stg-eks -n monitoring logs -l app.kubernetes.io/name=alloy --tail=200 | egrep "tempo|4317|error|warn"
+
+# Tempo / Mimir readiness
+curl -s http://localhost:3200/ready
+curl -s http://localhost:9009/ready
+
+# Grafana Explore 기준 확인 쿼리
+# Mimir:
+#   up{namespace="tutum-app"}
+#   kafka_consumergroup_lag
+# Tempo:
+#   service.name="backend"
+```
+
+#### 4) D-11 on-prem 철수 조건 점검
+
+현재는 "shutdown 실행"보다 "shutdown 가능한지"를 닫는 것이 우선이다.
+
+```bash
+# legacy Mongo / monitoring 참조 확인
+ssh mongo 'mongosh --quiet --eval "db.runCommand({ ping: 1 })"'
+ssh mon 'docker ps'
+
+# cloudflared / minio / on-prem runner 잔존 확인
+ssh cp1 'kubectl get pods -A -o wide | egrep "cloudflared|minio|gitlab-runner|sonarqube"'
+ssh cp1 'kubectl get svc -A'
+```
+
+#### 5) Phase E 최종 E2E 검증
+
+최소 사용자 경로:
+- 메인 페이지 로드
+- 일반 로그인
+- OAuth 로그인
+- 시세 / 뉴스
+- OCR 업로드
+- `/admin` Overview / Logs / Cost
+
+기록 예시:
+```text
+2026-03-12 E2E
+- /: 200
+- /login: 정상
+- /api/v1/market/prices/stocks: 200
+- /api/v1/news: 200
+- OCR 업로드: 성공/실패 사유 기록
+- /admin: Overview/Logs/Cost 확인
+```
+
+### E-3. Post-migration backlog로 분리할 항목
+
+아래는 중요하지만 "서비스 migration 종료"의 직접 블로커로 보지 않는다.
+
+| 항목 | 처리 방향 |
+|---|---|
+| D-8 Terraform IaC | 별도 hardening / infra-as-code 스프린트로 분리 |
+| D-10 Kafka EC2 이전 | 현재 EKS Kafka가 정상인 동안 보류 가능 |
+| prod cost optimization / nodepool role separation | staging 기반 migration 종료와 분리 |
+
+### E-4. 최종 종료 판정 체크리스트
+
+- [ ] `tutum.my` 핵심 사용자 경로가 AWS 기준으로 정상 동작
+- [ ] RDS / EKS Mongo / EKS Redis / EKS Kafka / EKS Elasticsearch / S3가 실제 서비스 정본 경로로 확인
+- [ ] monitoring EC2 LGTM / Sonar readiness 확인
+- [ ] `mongodb-backup`, `elasticsearch-backup` S3 runtime 검증 완료
+- [ ] traces / Kafka lag 후속 이슈는 원인과 보류 사유가 문서화됨
+- [ ] on-prem `mongodb`, `monitoring`, `cloudflared`, `minio` 종료 조건이 확정됨
+- [ ] D-8 / D-10은 backlog로 분리됨
+
+> 위 7개를 만족하면 2026-03-12 기준 AWS migration은 "서비스 운영 경로 기준 완료, 잔여 항목은 hardening/backlog"로 판정한다.
