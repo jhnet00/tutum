@@ -62,7 +62,7 @@ spec:
                     "${ES_URL}/_snapshot/${REPO_NAME}/${SNAPSHOT}" || true)"
                   if [ "${SNAP_EXISTS}" = "200" ]; then
                     RESULT="$(cat "${RESPONSE_FILE}")"
-                    STATE="$(echo "${RESULT}" | grep -o '\"state\":\"[^\"]*\"' | head -1 | cut -d'\"' -f4)"
+                    STATE="$(echo "${RESULT}" | grep -o '\"state\":\"[^\"]*\"' | head -1 | cut -d: -f2 | tr -d '\"')"
                     if [ "${STATE}" = "SUCCESS" ]; then
                       echo "[$(date)] snapshot ${SNAPSHOT} already exists and is successful"
                     else
@@ -86,7 +86,7 @@ spec:
                     RESULT="$(cat "${RESPONSE_FILE}")"
                   fi
 
-                  STATE="$(echo "${RESULT}" | grep -o '\"state\":\"[^\"]*\"' | head -1 | cut -d'\"' -f4)"
+                  STATE="$(echo "${RESULT}" | grep -o '\"state\":\"[^\"]*\"' | head -1 | cut -d: -f2 | tr -d '\"')"
                   if [ "${STATE}" != "SUCCESS" ]; then
                     echo "[ERROR] snapshot finished with state=${STATE}"
                     echo "${RESULT}"
