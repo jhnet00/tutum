@@ -1,7 +1,7 @@
 apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
-  name: private-general
+  name: private-app
 spec:
   disruption:
     budgets:
@@ -23,24 +23,69 @@ spec:
         - key: karpenter.sh/capacity-type
           operator: In
           values:
-            - spot        # 우선 시도 (on-demand 대비 ~70% 절감)
-            - on-demand   # spot 가용 인스턴스 없을 때 fallback
+            - spot
+            - on-demand
         - key: eks.amazonaws.com/instance-category
           operator: In
           values:
-            - c
             - m
-            - r
         - key: eks.amazonaws.com/instance-generation
           operator: Gt
           values:
-            - "4"
+            - "6"
         - key: eks.amazonaws.com/instance-size
           operator: In
           values:
-            - small
-            - medium
-            - large       # xl/2xl/4xl 이상 차단 (비용 runaway 방지)
+            - large
+            - xlarge
+        - key: kubernetes.io/arch
+          operator: In
+          values:
+            - amd64
+        - key: kubernetes.io/os
+          operator: In
+          values:
+            - linux
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: private-data
+spec:
+  disruption:
+    budgets:
+      - nodes: 10%
+    consolidateAfter: 10m
+    consolidationPolicy: WhenEmpty
+  limits:
+    cpu: 24
+    memory: 64Gi
+  template:
+    metadata: {}
+    spec:
+      expireAfter: 336h
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: private-only
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values:
+            - on-demand
+        - key: eks.amazonaws.com/instance-category
+          operator: In
+          values:
+            - m
+        - key: eks.amazonaws.com/instance-generation
+          operator: Gt
+          values:
+            - "6"
+        - key: eks.amazonaws.com/instance-size
+          operator: In
+          values:
+            - large
+            - xlarge
         - key: kubernetes.io/arch
           operator: In
           values:

@@ -10,8 +10,9 @@ resources:
 
 patches:
   - path: replicas-patch.yaml
+  - path: resource-tuning-patch.yaml
   - path: remove-nodeselector-patch.yaml
-  - path: private-general-nodepool-patch.yaml
+  - path: workload-nodepool-patch.yaml
   - path: kafka-startup-probe-patch.yaml
 
 images:

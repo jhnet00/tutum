@@ -1,0 +1,215 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: price-producer
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: price-consumer
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: news-producer
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: news-consumer
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elastic-consumer
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: email-worker
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ocr
+  namespace: tutum-app
+spec:
+  template:
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-exporter
+  namespace: tutum-data
+spec:
+  template:
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-data
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elasticsearch-exporter
+  namespace: tutum-data
+spec:
+  template:
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-data
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: tutum-data
+spec:
+  template:
+    metadata:
+      annotations:
+        karpenter.sh/do-not-disrupt: "true"
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-data
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: tutum-data
+spec:
+  template:
+    metadata:
+      annotations:
+        karpenter.sh/do-not-disrupt: "true"
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-data
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: elasticsearch-backup
+  namespace: tutum-data
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          nodeSelector:
+            eks.amazonaws.com/nodeclass: private-only
+            karpenter.sh/nodepool: private-data
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mongodb-backup
+  namespace: tutum-data
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          nodeSelector:
+            eks.amazonaws.com/nodeclass: private-only
+            karpenter.sh/nodepool: private-data
