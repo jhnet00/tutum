@@ -1740,16 +1740,18 @@ kubectl port-forward svc/kiali 20001:20001 -n istio-system
 
 **배경**: 수동 AWS CLI/Console로 생성된 인프라를 Terraform으로 import → GitOps로 인프라 변경 이력 관리.
 
-**State Backend**: S3 버킷 + DynamoDB (별도 생성 필요)
+> **현재 상태 (2026-03-12)**
+> - `terraform/` 루트와 `modules/networking|security|compute|database|dns` 구조를 작성했다.
+> - S3 backend `tutum-terraform-state-903913341620` + DynamoDB lock table `tutum-terraform-locks`는 이미 생성되어 있고, `terraform init`으로 연결을 확인했다.
+> - `terraform apply`로 VPC, Subnet, IGW, NAT, Route Table, VPC Endpoint, SG, monitoring EC2, RDS, Route53 zone, ACM cert 총 31개 리소스를 import했다.
+> - import 후 `terraform plan` 결과가 `No changes`로 수렴했다.
+> - EKS cluster는 guide 원칙대로 `data "aws_eks_cluster"`로만 참조하고 import 대상에서 제외했다.
+> - GuardDuty managed endpoint(`vpce-00bac47c533d6cc9d`)는 서비스 관리 리소스라 D-8 범위에서 제외했다.
+
+**State Backend**: S3 버킷 + DynamoDB
 ```bash
-aws s3api create-bucket --bucket tutum-terraform-state-903913341620 \
-  --region ap-northeast-2 --create-bucket-configuration LocationConstraint=ap-northeast-2
-aws s3api put-bucket-versioning --bucket tutum-terraform-state-903913341620 \
-  --versioning-configuration Status=Enabled
-aws dynamodb create-table --table-name tutum-terraform-locks \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST --region ap-northeast-2
+aws s3api head-bucket --bucket tutum-terraform-state-903913341620
+aws dynamodb describe-table --table-name tutum-terraform-locks --region ap-northeast-2
 ```
 
 **Import 대상 리소스**:
@@ -1764,14 +1766,14 @@ aws dynamodb create-table --table-name tutum-terraform-locks \
 | RDS | tutum-mariadb |
 | Route53 | Z04669402IT42VPHL8CRP (tutum.my) |
 | ACM | cc8731ed-... (*.tutum.my) |
-| VPC Endpoints ×4 | S3, ECR DKR, ECR API, Secrets Manager |
+| VPC Endpoints ×5 | S3, ECR DKR, ECR API, Secrets Manager, STS |
 
 **EKS**: `data "aws_eks_cluster"` 로만 참조 (Auto Mode + Karpenter 관리 복잡성으로 직접 import 제외)
 
 **디렉토리 구조**:
 ```
 terraform/
-├── versions.tf / backend.tf / variables.tf / main.tf / outputs.tf
+├── versions.tf / backend.tf / provider.tf / variables.tf / locals.tf / main.tf / imports.tf / outputs.tf
 ├── terraform.tfvars.example
 └── modules/
     ├── networking/   # VPC, subnets, IGW, NAT, route tables, VPC endpoints
@@ -1781,13 +1783,27 @@ terraform/
     └── dns/          # Route53 zone, ACM cert
 ```
 
+**검증 결과 (2026-03-12)**:
+```bash
+terraform init
+# Success! Terraform has been successfully initialized!
+
+terraform apply -auto-approve
+# Apply complete! Resources: 31 imported, 0 added, 0 changed, 0 destroyed.
+
+terraform plan
+# No changes. Your infrastructure matches the configuration.
+```
+
 **체크리스트**:
-- [ ] State Backend S3 + DynamoDB 생성
-- [ ] terraform/ 디렉토리 및 모든 모듈 파일 작성
-- [ ] `terraform init` 성공 (S3 backend 연결)
-- [ ] 전체 리소스 `terraform import` 완료
-- [ ] `terraform plan` → "No changes" 확인
-- [ ] `.gitignore`에 `terraform/terraform.tfvars` 추가 (RDS 비밀번호 보호)
+- [x] State Backend S3 + DynamoDB 생성
+- [x] terraform/ 디렉토리 및 모든 모듈 파일 작성
+- [x] `terraform init` 성공 (S3 backend 연결)
+- [x] 전체 리소스 `terraform import` 완료
+- [x] `terraform plan` → "No changes" 확인
+- [x] `.gitignore`에 `terraform/terraform.tfvars` 추가 (RDS 비밀번호 보호)
+- [ ] GuardDuty managed endpoint / ALB managed SG를 Terraform 범위에 포함할지 별도 결정
+- [ ] prod 계정/리소스용 별도 Terraform stack 확장
 
 ---
 
@@ -2106,11 +2122,11 @@ kubectl logs -n tutum-app -l app=price-consumer --tail=20 | grep -E "kafka|conne
 | Object storage 경로 | S3 기준 매니페스트/secret 정리 완료 | 부분 완료 | D-1 runtime 검증 필요 |
 | Monitoring / LGTM | monitoring EC2 기준 경로 복구 | 부분 완료 | traces / Kafka lag 후속 필요 |
 | On-prem monitoring / Mongo VM | shutdown 조건은 정리됐으나 실제 종료는 미실행 | 부분 완료 | D-11 |
-| Terraform IaC | 코드화 미실행 | 미완료 | D-8 |
+| Terraform IaC | staging AWS core infra import 및 `No changes` plan 검증 완료 | 완료 | D-8 |
 | Kafka EC2 이전 | 장기 과제, 현재 EKS Kafka 정상 | 보류 가능 | D-10 |
 
 **판정 기준**
-- 아래 조건을 만족하면 AWS migration은 "서비스 경로 기준 종료", Terraform/Kafka EC2는 후속 hardening backlog로 분리할 수 있다.
+- 아래 조건을 만족하면 AWS migration은 "서비스 경로 기준 종료"로 판정할 수 있고, Kafka EC2 이전과 비용 최적화는 후속 hardening backlog로 분리할 수 있다.
   1. `tutum.my` 핵심 사용자 경로가 AWS EKS/RDS/S3 기준으로 정상 동작한다.
   2. monitoring EC2의 LGTM / Sonar readiness가 확인된다.
   3. S3 backup runtime 검증이 끝난다.
@@ -2232,7 +2248,6 @@ ssh cp1 'kubectl get svc -A'
 
 | 항목 | 처리 방향 |
 |---|---|
-| D-8 Terraform IaC | 별도 hardening / infra-as-code 스프린트로 분리 |
 | D-10 Kafka EC2 이전 | 현재 EKS Kafka가 정상인 동안 보류 가능 |
 | prod cost optimization / nodepool role separation | staging 기반 migration 종료와 분리 |
 
@@ -2244,6 +2259,6 @@ ssh cp1 'kubectl get svc -A'
 - [ ] `mongodb-backup`, `elasticsearch-backup` S3 runtime 검증 완료
 - [ ] traces / Kafka lag 후속 이슈는 원인과 보류 사유가 문서화됨
 - [ ] on-prem `mongodb`, `monitoring`, `cloudflared`, `minio` 종료 조건이 확정됨
-- [ ] D-8 / D-10은 backlog로 분리됨
+- [x] D-8은 완료되었고, D-10만 backlog로 분리됨
 
 > 위 7개를 만족하면 2026-03-12 기준 AWS migration은 "서비스 운영 경로 기준 완료, 잔여 항목은 hardening/backlog"로 판정한다.

@@ -1,0 +1,9 @@
+variable "vpc_id" { type = string }
+variable "eks_cluster_name" { type = string }
+variable "eks_cluster_description" { type = string }
+variable "eks_cluster_tags" { type = map(string) }
+variable "rds_name" { type = string }
+variable "rds_description" { type = string }
+variable "monitoring_name" { type = string }
+variable "monitoring_description" { type = string }
+variable "load_balancer_sg_ids" { type = list(string) }

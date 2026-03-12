@@ -36,3 +36,10 @@ docs/MariaDB.md
 # Claude/Agentic info
 .claude/
 .gemini/
+
+# Terraform
+.tools/
+terraform/.terraform/
+terraform/terraform.tfvars
+terraform/*.tfplan
+terraform/terraform_plan*.txt
