@@ -210,6 +210,20 @@ spec:
                   optional: true
             - name: GOOGLE_REDIRECT_URI
               value: "https://tutum.my/api/v1/auth/google/callback"
+            - name: KAKAO_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: KAKAO_CLIENT_ID
+                  optional: true
+            - name: KAKAO_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: KAKAO_CLIENT_SECRET
+                  optional: true
+            - name: KAKAO_REDIRECT_URI
+              value: "https://tutum.my/api/v1/auth/kakao/callback"
             - name: NAVER_CLIENT_ID
               valueFrom:
                 secretKeyRef:
