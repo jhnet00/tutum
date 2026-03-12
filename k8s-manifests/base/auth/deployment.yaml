@@ -64,6 +64,12 @@ spec:
                       1,
                   )
 
+              source = source.replace(
+                  "def _sanitize_callback_path(callback_url: str | None) -> str | None:\n    if not callback_url:\n        return None\n    callback_url = callback_url.strip()\n    if not callback_url.startswith(\"/\") or callback_url.startswith(\"//\"):\n        return None\n    return callback_url\n",
+                  "def _sanitize_callback_path(callback_url: str | None) -> str | None:\n    if not callback_url:\n        return None\n    callback_url = unquote(callback_url).strip()\n    if not callback_url.startswith(\"/\") or callback_url.startswith(\"//\"):\n        return None\n    return callback_url\n",
+                  1,
+              )
+
               helper_anchor = 'def _oauth_state_cookie_key(provider: str) -> str:\n    return f"oauth_state_{provider}"\n'
               helper_block = '''
               def _oauth_callback_cookie_key(provider: str) -> str:
