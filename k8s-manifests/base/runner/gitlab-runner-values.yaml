@@ -1,7 +1,7 @@
-# GitLab Runner — EKS (tutum-stg-eks)
-# runnerToken은 Helm install 시 --set runnerToken=<token> 으로 주입
+# GitLab Runner on EKS (tutum-stg-eks)
+# Inject runnerToken during helm install/upgrade with --set runnerToken=<token>.
 # chart: gitlab/gitlab-runner v0.86.0
-# ECR 미러 이미지 사용 (registry.gitlab.com EKS private subnet에서 접근 불가)
+# Images are mirrored to ECR for private subnet pulls.
 
 gitlabUrl: "https://gitlab.com/"
 runnerToken: ""
@@ -26,9 +26,9 @@ runners:
         privileged = true
         pull_policy = ["if-not-present", "always"]
         helper_image = "903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/gitlab-org/gitlab-runner-helper:x86_64-v18.9.0"
-        # job pod을 private-only 노드(NAT GW 있음)에 스케줄 → 외부 레지스트리 pull 가능
         [runners.kubernetes.node_selector]
           "eks.amazonaws.com/nodeclass" = "private-only"
+          "karpenter.sh/nodepool" = "private-ci"
         [[runners.kubernetes.volumes.empty_dir]]
           name = "docker-certs"
           mount_path = "/certs/client"
@@ -37,6 +37,7 @@ runners:
 rbac:
   create: true
 
-# private subnet 노드에만 스케줄 (NAT GW 통해 gitlab.com 접근 가능)
+# Keep the runner controller on the dedicated CI pool to isolate CI spikes.
 nodeSelector:
   eks.amazonaws.com/nodeclass: private-only
+  karpenter.sh/nodepool: private-ci
