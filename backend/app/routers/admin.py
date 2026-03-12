@@ -23,6 +23,7 @@ from datetime import datetime, timezone, timedelta
 
 import boto3
 import httpx
+from bson import ObjectId
 from botocore.config import Config
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -1006,7 +1007,10 @@ async def _collect_pipeline_data() -> dict:
         if news_col is not None:
             total = await news_col.count_documents({})
             one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
-            recent = await news_col.count_documents({"published_at": {"$gte": one_hour_ago}})
+            # "Added in 1h" should reflect ingestion time, not article publication time.
+            recent = await news_col.count_documents(
+                {"_id": {"$gte": ObjectId.from_datetime(one_hour_ago.replace(tzinfo=None))}}
+            )
             out["mongodb"] = {"news_total": total, "news_last_1h": recent, "available": True}
     except Exception as e:
         logger.warning("pipeline MongoDB 조회 실패: %s", e)

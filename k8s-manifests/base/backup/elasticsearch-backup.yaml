@@ -57,7 +57,8 @@ spec:
 
                   printf '%s' '{"include_global_state":false}' > "${SNAPSHOT_PAYLOAD}"
                   SNAPSHOT_STATUS="$(curl -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
-                    -X PUT "${ES_URL}/_snapshot/${REPO_NAME}/${SNAPSHOT}?wait_for_completion=true" \
+                    "${ES_URL}/_snapshot/${REPO_NAME}/${SNAPSHOT}?wait_for_completion=true" \
+                    -X PUT \
                     -H 'Content-Type: application/json' \
                     --data-binary @"${SNAPSHOT_PAYLOAD}" || true)"
                   if [ "${SNAPSHOT_STATUS}" != "200" ] && [ "${SNAPSHOT_STATUS}" != "201" ]; then
@@ -75,16 +76,26 @@ spec:
                     exit 1
                   fi
 
-                  CUTOFF="$(date -u -d '14 days ago' +%Y-%m-%d 2>/dev/null || date -u -v-14d +%Y-%m-%d)"
-                  SNAPSHOTS="$(curl -sf "${ES_URL}/_snapshot/${REPO_NAME}/_all" | \
-                    grep -o '\"snapshot\":\"snap-[^\"]*\"' | cut -d'\"' -f4 || true)"
+                  CUTOFF=""
+                  if CUTOFF="$(date -u -d '14 days ago' +%Y-%m-%d 2>/dev/null)"; then
+                    :
+                  elif CUTOFF="$(date -u -v-14d +%Y-%m-%d 2>/dev/null)"; then
+                    :
+                  else
+                    echo "[$(date)] snapshot retention cleanup skipped: unsupported date arithmetic"
+                  fi
 
-                  for SNAP in ${SNAPSHOTS}; do
-                    SNAP_DATE="$(echo "${SNAP}" | sed 's/snap-//')"
-                    if [ "${SNAP_DATE}" \< "${CUTOFF}" ]; then
-                      curl -sf -X DELETE "${ES_URL}/_snapshot/${REPO_NAME}/${SNAP}" >/dev/null || true
-                    fi
-                  done
+                  if [ -n "${CUTOFF}" ]; then
+                    SNAPSHOTS="$(curl -sf "${ES_URL}/_snapshot/${REPO_NAME}/_all" | \
+                      grep -o '\"snapshot\":\"snap-[^\"]*\"' | cut -d'\"' -f4 || true)"
+
+                    for SNAP in ${SNAPSHOTS}; do
+                      SNAP_DATE="$(echo "${SNAP}" | sed 's/snap-//')"
+                      if [ "${SNAP_DATE}" \< "${CUTOFF}" ]; then
+                        curl -sf -X DELETE "${ES_URL}/_snapshot/${REPO_NAME}/${SNAP}" >/dev/null || true
+                      fi
+                    done
+                  fi
 
                   echo "[$(date)] Elasticsearch backup complete"
               env:

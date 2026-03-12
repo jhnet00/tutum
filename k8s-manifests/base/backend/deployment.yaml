@@ -52,6 +52,12 @@ spec:
               except FileNotFoundError:
                   raise SystemExit(0)
 
+              if "from bson import ObjectId" not in source and "from botocore.config import Config" in source:
+                  source = source.replace(
+                      "from botocore.config import Config",
+                      "from botocore.config import Config\nfrom bson import ObjectId",
+                  )
+
               helper_block = '''
               def _cpu_usage_to_nano(raw: str) -> int:
                   raw = (raw or "").strip()
@@ -144,6 +150,15 @@ spec:
               updated = source
               for old, new in replacements.items():
                   updated = updated.replace(old, new)
+
+              updated = updated.replace(
+                  '            recent = await news_col.count_documents({"published_at": {"$gte": one_hour_ago}})',
+                  '            recent = await news_col.count_documents({"_id": {"$gte": ObjectId.from_datetime(one_hour_ago.replace(tzinfo=None))}})',
+              )
+              updated = updated.replace(
+                  '    {"name": "etcd-backup", "namespace": "kube-system", "label": "etcd"},\\n',
+                  "",
+              )
 
               if updated != source:
                   path.write_text(updated, encoding="utf-8")
