@@ -955,6 +955,46 @@ _ALL_WORKERS = _NEWS_WORKERS + _PRICE_WORKERS + _OTHER_WORKERS
 _PIPELINE_WORKERS = _ALL_WORKERS
 
 
+async def _count_distinct_indexable_news(news_col) -> int:
+    """Count Mongo news by business key(url/link), not by raw document rows."""
+    rows = await news_col.aggregate([
+        {
+            "$match": {
+                "title": {"$exists": True, "$type": "string", "$ne": ""},
+                "$or": [
+                    {"content": {"$exists": True, "$type": "string", "$ne": ""}},
+                    {"body": {"$exists": True, "$type": "string", "$ne": ""}},
+                ],
+            }
+        },
+        {"$project": {"key": {"$ifNull": ["$url", "$link"]}}},
+        {"$match": {"key": {"$exists": True, "$type": "string", "$ne": ""}}},
+        {"$group": {"_id": "$key"}},
+        {"$count": "count"},
+    ]).to_list(length=1)
+    return int(rows[0]["count"]) if rows else 0
+
+
+async def _count_distinct_es_news_urls(es_url: str) -> int | None:
+    """Count Elasticsearch docs by distinct business key(url)."""
+    try:
+        resp = await _HTTP_MISC.post(
+            f"{es_url}/news/_search?size=0",
+            json={
+                "aggs": {
+                    "distinct_urls": {
+                        "cardinality": {"field": "url", "precision_threshold": 40000}
+                    }
+                }
+            },
+        )
+        if resp.status_code == 200:
+            return int(resp.json().get("aggregations", {}).get("distinct_urls", {}).get("value", 0))
+    except Exception:
+        return None
+    return None
+
+
 async def _collect_pipeline_data() -> dict:
     """파이프라인 전체 워커 상태 수집 (pipeline / pipeline-diagnose 공용)."""
     out: dict = {
@@ -1005,7 +1045,7 @@ async def _collect_pipeline_data() -> dict:
     try:
         news_col = get_news_collection()
         if news_col is not None:
-            total = await news_col.count_documents({})
+            total = await _count_distinct_indexable_news(news_col)
             one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
             # "Added in 1h" should reflect ingestion time, not article publication time.
             recent = await news_col.count_documents(
@@ -1018,9 +1058,13 @@ async def _collect_pipeline_data() -> dict:
     # 3. Elasticsearch document count
     es_url = os.getenv("ELASTICSEARCH_URL", "http://elasticsearch.tutum-data.svc.cluster.local:9200")
     try:
-        resp = await _HTTP_MISC.get(f"{es_url}/news/_count")
-        if resp.status_code == 200:
-            out["elasticsearch"] = {"news_docs": resp.json().get("count", 0), "available": True}
+        distinct_count = await _count_distinct_es_news_urls(es_url)
+        if distinct_count is not None:
+            out["elasticsearch"] = {"news_docs": distinct_count, "available": True}
+        else:
+            resp = await _HTTP_MISC.get(f"{es_url}/news/_count")
+            if resp.status_code == 200:
+                out["elasticsearch"] = {"news_docs": resp.json().get("count", 0), "available": True}
     except Exception as e:
         logger.warning("pipeline ES 조회 실패: %s", e)
 
@@ -1206,6 +1250,103 @@ async def _call_bedrock_standard(prompt: str, system_prompt: str, max_tokens: in
         if text.startswith("json"):
             text = text[4:]
     return json.loads(text)
+
+
+_AI_SUMMARY_SYSTEM_PROMPT = """You are Tutum's SRE-focused admin AI.
+Analyze the given JSON payload and return JSON only.
+Do not include markdown, commentary, or any fields outside the required schema.
+
+Required response schema:
+{
+  "overall": {
+    "severity": "OK" | "WARN" | "CRITICAL",
+    "summary": "short summary",
+    "issues": [
+      {"level": "WARN" | "ERROR", "title": "issue title", "detail": "issue detail"}
+    ],
+    "recommendations": [
+      {"priority": "HIGH" | "MEDIUM" | "LOW", "action": "recommended action"}
+    ]
+  },
+  "sections": [
+    {
+      "key": "infra",
+      "label": "Infra",
+      "diagnosis": {
+        "severity": "OK" | "WARN" | "CRITICAL",
+        "summary": "short summary",
+        "issues": [
+          {"level": "WARN" | "ERROR", "title": "issue title", "detail": "issue detail"}
+        ],
+        "recommendations": [
+          {"priority": "HIGH" | "MEDIUM" | "LOW", "action": "recommended action"}
+        ]
+      }
+    }
+  ]
+}
+
+The sections array must contain exactly these six keys:
+- infra
+- pipeline
+- data
+- backup
+- logs
+- traces
+
+Severity guidance:
+- OK: healthy, low risk, no immediate action needed
+- WARN: degraded, partial failure, elevated error rate, missing data, or capacity risk
+- CRITICAL: user impact, hard failures, broken pipeline, or urgent operational action needed
+
+Keep summaries concrete and actionable."""
+
+
+def _normalize_ai_card(value: dict | None, default_summary: str) -> dict:
+    issues = []
+    recommendations = []
+
+    if isinstance(value, dict):
+        raw_issues = value.get("issues") or []
+        raw_recommendations = value.get("recommendations") or []
+
+        if isinstance(raw_issues, list):
+            for item in raw_issues[:5]:
+                if not isinstance(item, dict):
+                    continue
+                issues.append({
+                    "level": item.get("level", "WARN") if item.get("level") in {"WARN", "ERROR"} else "WARN",
+                    "title": str(item.get("title") or "Issue"),
+                    "detail": str(item.get("detail") or ""),
+                })
+
+        if isinstance(raw_recommendations, list):
+            for item in raw_recommendations[:5]:
+                if not isinstance(item, dict):
+                    continue
+                recommendations.append({
+                    "priority": (
+                        item.get("priority", "MEDIUM")
+                        if item.get("priority") in {"HIGH", "MEDIUM", "LOW"}
+                        else "MEDIUM"
+                    ),
+                    "action": str(item.get("action") or ""),
+                })
+
+        severity = value.get("severity", "WARN")
+        return {
+            "severity": severity if severity in {"OK", "WARN", "CRITICAL"} else "WARN",
+            "summary": str(value.get("summary") or default_summary),
+            "issues": issues,
+            "recommendations": recommendations,
+        }
+
+    return {
+        "severity": "WARN",
+        "summary": default_summary,
+        "issues": [],
+        "recommendations": [],
+    }
 
 
 @router.get("/infra-diagnose")
@@ -1477,6 +1618,152 @@ async def get_backup_diagnose(
 
 
 # ─── 스토리지 (PVC) ────────────────────────────────────────────────────────────
+
+
+
+@router.get("/ai-summary")
+async def get_ai_summary(
+    request: Request,
+    current_user: UserResponse = Depends(get_current_user),
+):
+    """Run one-shot AI analysis across all admin sectors."""
+    await check_rate_limit(request, "admin_ai", user_id=current_user.id)
+
+    try:
+        nodes_data, pods_data, metrics_data, pipeline_data, data_metrics, backup_data, logs_data, traces_data, alerts_data = await asyncio.gather(
+            get_nodes(),
+            get_pods("all"),
+            get_metrics(),
+            _collect_pipeline_data(),
+            get_data_metrics(),
+            get_backup_status(),
+            get_logs(namespace="all", limit=50),
+            get_traces(limit=20, min_duration_ms=50),
+            get_action_needed(),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI summary data collection failed: {e}")
+
+    nodes = nodes_data.get("nodes", [])
+    pods = pods_data.get("pods", [])
+    problem_nodes = [
+        n for n in nodes
+        if n.get("status") != "Ready"
+        or (n.get("cpu_percent") or 0) >= 85
+        or (n.get("memory_percent") or 0) >= 85
+    ]
+
+    def _pod_needs_attention(pod: dict) -> bool:
+        if pod.get("status") not in ("Running", "Succeeded"):
+            return True
+
+        ready = str(pod.get("ready") or "").strip()
+        if not ready or ready == "0/0" or "/" not in ready:
+            return False
+
+        try:
+            ready_count, total_count = ready.split("/", 1)
+            return int(ready_count) < int(total_count)
+        except ValueError:
+            return False
+
+    problem_pods = [p for p in pods if _pod_needs_attention(p)]
+
+    logs = logs_data.get("logs", [])
+    error_summary = logs_data.get("error_summary", [])
+    traces = traces_data.get("traces", [])
+    payload = {
+        "overview": {
+            "rps_latest": (metrics_data.get("rps") or [None])[-1],
+            "latency_p95_latest": (metrics_data.get("latency_p95") or [None])[-1],
+            "error_rate_latest": (metrics_data.get("error_rate") or [None])[-1],
+            "kafka_lag_latest": (metrics_data.get("kafka_lag") or [None])[-1],
+            "top_5xx_endpoints": metrics_data.get("top_5xx_endpoints", []),
+            "action_needed": alerts_data.get("alerts", [])[:10],
+        },
+        "infra": {
+            "nodes_total": len(nodes),
+            "problem_nodes": problem_nodes[:10],
+            "pods_total": len(pods),
+            "problem_pods": problem_pods[:15],
+        },
+        "pipeline": {
+            "workers": pipeline_data.get("workers", {}),
+            "mongodb": pipeline_data.get("mongodb", {}),
+            "elasticsearch": pipeline_data.get("elasticsearch", {}),
+        },
+        "data": data_metrics,
+        "backup": {
+            "backups": backup_data.get("backups", []),
+        },
+        "logs": {
+            "error_summary": error_summary[:10],
+            "samples": [
+                {
+                    "time": item.get("time"),
+                    "namespace": item.get("namespace"),
+                    "pod": item.get("pod"),
+                    "level": item.get("level"),
+                    "msg": str(item.get("msg") or "")[:160],
+                }
+                for item in logs[:20]
+            ],
+        },
+        "traces": {
+            "available": traces_data.get("available", False),
+            "error_traces": traces_data.get("error_traces", [])[:5],
+            "client_error_traces": traces_data.get("client_error_traces", [])[:5],
+            "slow_traces": traces[:10],
+        },
+    }
+
+    prompt = (
+        f"Tutum admin AI summary request ({datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')})\n\n"
+        "Analyze the following JSON payload and return the required JSON only.\n\n"
+        + json.dumps(payload, ensure_ascii=False)
+    )
+
+    try:
+        result = await _call_bedrock_standard(prompt, _AI_SUMMARY_SYSTEM_PROMPT, max_tokens=2600)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"AI summary generation failed: {e}")
+
+    overall = _normalize_ai_card(
+        result.get("overall") if isinstance(result, dict) else None,
+        "Overall diagnosis is not available.",
+    )
+    raw_sections = result.get("sections") if isinstance(result, dict) else []
+    section_map = {}
+    if isinstance(raw_sections, list):
+        for item in raw_sections:
+            if isinstance(item, dict) and item.get("key"):
+                section_map[str(item.get("key"))] = item
+
+    sections = []
+    for key, label in [
+        ("infra", "Infra"),
+        ("pipeline", "Pipeline"),
+        ("data", "Data"),
+        ("backup", "Backup"),
+        ("logs", "Logs"),
+        ("traces", "Traces"),
+    ]:
+        raw_item = section_map.get(key, {})
+        diagnosis = raw_item.get("diagnosis") if isinstance(raw_item, dict) else None
+        sections.append({
+            "key": key,
+            "label": str(raw_item.get("label") or label) if isinstance(raw_item, dict) else label,
+            "diagnosis": _normalize_ai_card(diagnosis, f"{label} diagnosis is not available."),
+        })
+
+    return {
+        "diagnosis": {
+            "overall": overall,
+            "sections": sections,
+        },
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
 
 @router.get("/storage")
 async def get_storage():

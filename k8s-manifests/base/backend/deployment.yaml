@@ -118,6 +118,50 @@ spec:
                   return int(float(raw) / 1024)
               '''.strip()
 
+              pipeline_helper_block = '''
+              async def _count_distinct_indexable_news(news_col) -> int:
+                  rows = await news_col.aggregate([
+                      {
+                          "$match": {
+                              "title": {"$exists": True, "$type": "string", "$ne": ""},
+                              "$or": [
+                                  {"content": {"$exists": True, "$type": "string", "$ne": ""}},
+                                  {"body": {"$exists": True, "$type": "string", "$ne": ""}},
+                              ],
+                          }
+                      },
+                      {"$project": {"key": {"$ifNull": ["$url", "$link"]}}},
+                      {"$match": {"key": {"$exists": True, "$type": "string", "$ne": ""}}},
+                      {"$group": {"_id": "$key"}},
+                      {"$count": "count"},
+                  ]).to_list(length=1)
+                  return int(rows[0]["count"]) if rows else 0
+
+
+              async def _count_distinct_es_news_urls(es_url: str) -> int | None:
+                  try:
+                      resp = await _HTTP_MISC.post(
+                          f"{es_url}/news/_search?size=0",
+                          json={
+                              "aggs": {
+                                  "distinct_urls": {
+                                      "cardinality": {"field": "url", "precision_threshold": 40000}
+                                  }
+                              }
+                          },
+                      )
+                      if resp.status_code == 200:
+                          return int(
+                              resp.json()
+                              .get("aggregations", {})
+                              .get("distinct_urls", {})
+                              .get("value", 0)
+                          )
+                  except Exception:
+                      return None
+                  return None
+              '''.strip()
+
               anchor = '''def _node_status(node) -> str:
                   for cond in (node.status.conditions or []):
                       if cond.type == "Ready":
@@ -127,6 +171,14 @@ spec:
 
               if "_memory_quantity_to_ki(" not in source and anchor in source:
                   source = source.replace(anchor, anchor + "\n\n" + helper_block + "\n")
+
+              pipeline_anchor = "_PIPELINE_WORKERS = _ALL_WORKERS"
+              if "_count_distinct_indexable_news(" not in source and pipeline_anchor in source:
+                  source = source.replace(
+                      pipeline_anchor,
+                      pipeline_anchor + "\n\n" + pipeline_helper_block,
+                      1,
+                  )
 
               replacements = {
                   '_HTTP_MIMIR = httpx.AsyncClient(timeout=5.0)': '_HTTP_MIMIR = httpx.AsyncClient(timeout=5.0, headers={"X-Scope-OrgID": "tutum"})',
@@ -151,6 +203,14 @@ spec:
               for old, new in replacements.items():
                   updated = updated.replace(old, new)
 
+              updated = updated.replace(
+                  '            total = await news_col.count_documents({})',
+                  '            total = await _count_distinct_indexable_news(news_col)',
+              )
+              updated = updated.replace(
+                  '        resp = await _HTTP_MISC.get(f"{es_url}/news/_count")\n        if resp.status_code == 200:\n            out["elasticsearch"] = {"news_docs": resp.json().get("count", 0), "available": True}',
+                  '        distinct_count = await _count_distinct_es_news_urls(es_url)\n        if distinct_count is not None:\n            out["elasticsearch"] = {"news_docs": distinct_count, "available": True}\n        else:\n            resp = await _HTTP_MISC.get(f"{es_url}/news/_count")\n            if resp.status_code == 200:\n                out["elasticsearch"] = {"news_docs": resp.json().get("count", 0), "available": True}',
+              )
               updated = updated.replace(
                   '            recent = await news_col.count_documents({"published_at": {"$gte": one_hour_ago}})',
                   '            recent = await news_col.count_documents({"_id": {"$gte": ObjectId.from_datetime(one_hour_ago.replace(tzinfo=None))}})',
