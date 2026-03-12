@@ -120,7 +120,7 @@ spec:
               '''
 
               if "_memory_quantity_to_ki(" not in source and anchor in source:
-                  source = source.replace(anchor, anchor + "\\n\\n" + helper_block + "\\n")
+                  source = source.replace(anchor, anchor + "\n\n" + helper_block + "\n")
 
               replacements = {
                   '_HTTP_MIMIR = httpx.AsyncClient(timeout=5.0)': '_HTTP_MIMIR = httpx.AsyncClient(timeout=5.0, headers={"X-Scope-OrgID": "tutum"})',
