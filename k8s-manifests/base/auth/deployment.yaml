@@ -51,6 +51,20 @@ spec:
               except FileNotFoundError:
                   raise SystemExit(0)
 
+              if "import base64" not in source:
+                  source = source.replace(
+                      "import secrets\n",
+                      "import secrets\nimport base64\nfrom urllib.parse import parse_qs, urlparse\n",
+                      1,
+                  )
+
+              if "import base64" not in source:
+                  source = source.replace(
+                      "import secrets\n",
+                      "import secrets\nimport base64\nfrom urllib.parse import parse_qs, urlparse\n",
+                      1,
+                  )
+
               helper_anchor = 'def _oauth_state_cookie_key(provider: str) -> str:\n    return f"oauth_state_{provider}"\n'
               helper_block = '''
               def _oauth_callback_cookie_key(provider: str) -> str:
@@ -104,6 +118,120 @@ spec:
               if "_oauth_callback_cookie_key(" not in source and helper_anchor in source:
                   source = source.replace(helper_anchor, helper_anchor + "\n\n" + helper_block + "\n", 1)
 
+              extra_helper_anchor = "\n\nclass UserCreate(BaseModel):"
+              extra_helper_block = '''
+def _extract_oauth_callback_from_referer(request: Request) -> str | None:
+    referer = request.headers.get("referer")
+    if not referer:
+        return None
+
+    try:
+        parsed = urlparse(referer)
+        values = parse_qs(parsed.query).get("callbackUrl") or []
+        return _sanitize_callback_path(values[0]) if values else None
+    except Exception:
+        return None
+
+
+def _encode_oauth_state(state: str, callback_url: str | None) -> str:
+    callback_path = _sanitize_callback_path(callback_url)
+    if not callback_path:
+        return state
+
+    encoded = base64.urlsafe_b64encode(callback_path.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"{state}~{encoded}"
+
+
+def _extract_oauth_callback_from_state(state: str | None) -> str | None:
+    if not state or "~" not in state:
+        return None
+
+    encoded = state.split("~", 1)[1]
+    if not encoded:
+        return None
+
+    padding = "=" * (-len(encoded) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode("utf-8")
+    except Exception:
+        return None
+    return _sanitize_callback_path(decoded)
+
+
+def _resolve_oauth_callback(
+    request: Request, provider: str, state: str | None = None
+) -> str | None:
+    return (
+        _sanitize_callback_path(request.query_params.get("callbackUrl"))
+        or _get_oauth_callback_cookie(request, provider)
+        or _extract_oauth_callback_from_state(state)
+        or _extract_oauth_callback_from_referer(request)
+    )
+'''.strip()
+              if "_encode_oauth_state(" not in source and extra_helper_anchor in source:
+                  source = source.replace(
+                      extra_helper_anchor,
+                      "\n\n" + extra_helper_block + extra_helper_anchor,
+                      1,
+                  )
+
+              extra_helper_anchor = "\n\nclass UserCreate(BaseModel):"
+              extra_helper_block = '''
+              def _extract_oauth_callback_from_referer(request: Request) -> str | None:
+                  referer = request.headers.get("referer")
+                  if not referer:
+                      return None
+
+                  try:
+                      parsed = urlparse(referer)
+                      values = parse_qs(parsed.query).get("callbackUrl") or []
+                      return _sanitize_callback_path(values[0]) if values else None
+                  except Exception:
+                      return None
+
+
+              def _encode_oauth_state(state: str, callback_url: str | None) -> str:
+                  callback_path = _sanitize_callback_path(callback_url)
+                  if not callback_path:
+                      return state
+
+                  encoded = base64.urlsafe_b64encode(callback_path.encode("utf-8")).decode("ascii").rstrip("=")
+                  return f"{state}~{encoded}"
+
+
+              def _extract_oauth_callback_from_state(state: str | None) -> str | None:
+                  if not state or "~" not in state:
+                      return None
+
+                  encoded = state.split("~", 1)[1]
+                  if not encoded:
+                      return None
+
+                  padding = "=" * (-len(encoded) % 4)
+                  try:
+                      decoded = base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode("utf-8")
+                  except Exception:
+                      return None
+                  return _sanitize_callback_path(decoded)
+
+
+              def _resolve_oauth_callback(
+                  request: Request, provider: str, state: str | None = None
+              ) -> str | None:
+                  return (
+                      _sanitize_callback_path(request.query_params.get("callbackUrl"))
+                      or _get_oauth_callback_cookie(request, provider)
+                      or _extract_oauth_callback_from_state(state)
+                      or _extract_oauth_callback_from_referer(request)
+                  )
+              '''.strip()
+              if "_encode_oauth_state(" not in source and extra_helper_anchor in source:
+                  source = source.replace(
+                      extra_helper_anchor,
+                      "\n\n" + extra_helper_block + extra_helper_anchor,
+                      1,
+                  )
+
               source = source.replace(
                   "async def _oauth_issue_token_and_redirect(user_id: str, email: str) -> RedirectResponse:",
                   "async def _oauth_issue_token_and_redirect(\n    user_id: str, email: str, callback_path: str | None = None\n) -> RedirectResponse:",
@@ -119,11 +247,11 @@ spec:
               )
               source = source.replace(
                   '    response = RedirectResponse(google_auth_url)\n    _set_oauth_state_cookie(response, "google", oauth_state)\n    await _remember_oauth_state("google", oauth_state)\n    return response',
-                  '    response = RedirectResponse(google_auth_url)\n    _set_oauth_state_cookie(response, "google", oauth_state)\n    _set_oauth_callback_cookie(response, "google", request.query_params.get("callbackUrl"))\n    await _remember_oauth_state("google", oauth_state)\n    return response',
+                  '    callback_path = _sanitize_callback_path(request.query_params.get("callbackUrl")) or _extract_oauth_callback_from_referer(request)\n    oauth_state = _encode_oauth_state(state or secrets.token_urlsafe(24), callback_path)\n    google_auth_url = (\n        f"https://accounts.google.com/o/oauth2/v2/auth"\n        f"?client_id={settings.GOOGLE_CLIENT_ID}"\n        f"&response_type=code"\n        f"&redirect_uri={settings.GOOGLE_REDIRECT_URI}"\n        f"&scope=openid email profile"\n        f"&access_type=offline"\n        f"&prompt=select_account"\n        f"&state={oauth_state}"\n    )\n    response = RedirectResponse(google_auth_url)\n    _set_oauth_state_cookie(response, "google", oauth_state)\n    _set_oauth_callback_cookie(response, "google", callback_path)\n    await _remember_oauth_state("google", oauth_state)\n    return response',
               )
               source = source.replace(
                   '    # 4. JWT  + ???\n    response = await _oauth_issue_token_and_redirect(user_id, email)\n    _clear_oauth_state_cookie(response, "google")\n    await _clear_oauth_state_cache("google", state)\n    return response',
-                  '    # 4. JWT  + ???\n    callback_path = _get_oauth_callback_cookie(request, "google")\n    response = await _oauth_issue_token_and_redirect(user_id, email, callback_path)\n    _clear_oauth_state_cookie(response, "google")\n    _clear_oauth_callback_cookie(response, "google")\n    await _clear_oauth_state_cache("google", state)\n    return response',
+                  '    # 4. JWT  + ???\n    callback_path = _resolve_oauth_callback(request, "google", state)\n    response = await _oauth_issue_token_and_redirect(user_id, email, callback_path)\n    _clear_oauth_state_cookie(response, "google")\n    _clear_oauth_callback_cookie(response, "google")\n    await _clear_oauth_state_cache("google", state)\n    return response',
               )
 
               source = source.replace(
@@ -132,11 +260,11 @@ spec:
               )
               source = source.replace(
                   '    response = RedirectResponse(kakao_auth_url)\n    _set_oauth_state_cookie(response, "kakao", oauth_state)\n    await _remember_oauth_state("kakao", oauth_state)\n    return response',
-                  '    response = RedirectResponse(kakao_auth_url)\n    _set_oauth_state_cookie(response, "kakao", oauth_state)\n    _set_oauth_callback_cookie(response, "kakao", request.query_params.get("callbackUrl"))\n    await _remember_oauth_state("kakao", oauth_state)\n    return response',
+                  '    callback_path = _sanitize_callback_path(request.query_params.get("callbackUrl")) or _extract_oauth_callback_from_referer(request)\n    oauth_state = _encode_oauth_state(state or secrets.token_urlsafe(24), callback_path)\n    kakao_auth_url = (\n        f"https://kauth.kakao.com/oauth/authorize"\n        f"?client_id={settings.KAKAO_CLIENT_ID}"\n        f"&redirect_uri={settings.KAKAO_REDIRECT_URI}"\n        f"&response_type=code"\n        f"&prompt=select_account"\n        f"&state={oauth_state}"\n    )\n    response = RedirectResponse(kakao_auth_url)\n    _set_oauth_state_cookie(response, "kakao", oauth_state)\n    _set_oauth_callback_cookie(response, "kakao", callback_path)\n    await _remember_oauth_state("kakao", oauth_state)\n    return response',
               )
               source = source.replace(
                   '    # 4. JWT  + ???\n    response = await _oauth_issue_token_and_redirect(user_id, email)\n    _clear_oauth_state_cookie(response, "kakao")\n    await _clear_oauth_state_cache("kakao", state)\n    return response',
-                  '    # 4. JWT  + ???\n    callback_path = _get_oauth_callback_cookie(request, "kakao")\n    response = await _oauth_issue_token_and_redirect(user_id, email, callback_path)\n    _clear_oauth_state_cookie(response, "kakao")\n    _clear_oauth_callback_cookie(response, "kakao")\n    await _clear_oauth_state_cache("kakao", state)\n    return response',
+                  '    # 4. JWT  + ???\n    callback_path = _resolve_oauth_callback(request, "kakao", state)\n    response = await _oauth_issue_token_and_redirect(user_id, email, callback_path)\n    _clear_oauth_state_cookie(response, "kakao")\n    _clear_oauth_callback_cookie(response, "kakao")\n    await _clear_oauth_state_cache("kakao", state)\n    return response',
               )
 
               source = source.replace(
@@ -145,11 +273,11 @@ spec:
               )
               source = source.replace(
                   '    response = RedirectResponse(naver_auth_url)\n    _set_oauth_state_cookie(response, "naver", oauth_state)\n    await _remember_oauth_state("naver", oauth_state)\n    return response',
-                  '    response = RedirectResponse(naver_auth_url)\n    _set_oauth_state_cookie(response, "naver", oauth_state)\n    _set_oauth_callback_cookie(response, "naver", request.query_params.get("callbackUrl"))\n    await _remember_oauth_state("naver", oauth_state)\n    return response',
+                  '    callback_path = _sanitize_callback_path(request.query_params.get("callbackUrl")) or _extract_oauth_callback_from_referer(request)\n    oauth_state = _encode_oauth_state(state or secrets.token_urlsafe(24), callback_path)\n\n    naver_auth_url = (\n        f"https://nid.naver.com/oauth2.0/authorize"\n        f"?response_type=code"\n        f"&client_id={settings.NAVER_CLIENT_ID}"\n        f"&redirect_uri={settings.NAVER_REDIRECT_URI}"\n        f"&state={oauth_state}"\n        f"&auth_type=reauthenticate"\n    )\n    response = RedirectResponse(naver_auth_url)\n    _set_oauth_state_cookie(response, "naver", oauth_state)\n    _set_oauth_callback_cookie(response, "naver", callback_path)\n    await _remember_oauth_state("naver", oauth_state)\n    return response',
               )
               source = source.replace(
                   '    # 4. JWT  + ???\n    response = await _oauth_issue_token_and_redirect(user_id, email)\n    _clear_oauth_state_cookie(response, "naver")\n    await _clear_oauth_state_cache("naver", state)\n    return response',
-                  '    # 4. JWT  + ???\n    callback_path = _get_oauth_callback_cookie(request, "naver")\n    response = await _oauth_issue_token_and_redirect(user_id, email, callback_path)\n    _clear_oauth_state_cookie(response, "naver")\n    _clear_oauth_callback_cookie(response, "naver")\n    await _clear_oauth_state_cache("naver", state)\n    return response',
+                  '    # 4. JWT  + ???\n    callback_path = _resolve_oauth_callback(request, "naver", state)\n    response = await _oauth_issue_token_and_redirect(user_id, email, callback_path)\n    _clear_oauth_state_cookie(response, "naver")\n    _clear_oauth_callback_cookie(response, "naver")\n    await _clear_oauth_state_cache("naver", state)\n    return response',
               )
 
               path.write_text(source, encoding="utf-8")
