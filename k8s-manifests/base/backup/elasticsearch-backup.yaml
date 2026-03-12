@@ -20,7 +20,7 @@ spec:
             sidecar.istio.io/inject: "true"
             proxy.istio.io/config: '{"holdApplicationUntilProxyStarts": true}'
         spec:
-          restartPolicy: OnFailure
+          restartPolicy: Never
           containers:
             - name: elasticsearch-backup
               image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/curlimages/curl:8.7.1
