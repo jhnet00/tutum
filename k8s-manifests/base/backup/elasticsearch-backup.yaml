@@ -115,6 +115,7 @@ spec:
                   fi
 
                   echo "[$(date)] Elasticsearch backup complete"
+                  sleep 10
               env:
                 - name: ELASTICSEARCH_HOST
                   value: "elasticsearch.tutum-data.svc.cluster.local"
