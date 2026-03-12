@@ -134,6 +134,10 @@ producer = KafkaProducer(
 KST = timezone(timedelta(hours=9))
 
 
+def is_http_status(exc: Exception, status_code: int) -> bool:
+    return isinstance(exc, requests.HTTPError) and getattr(exc.response, "status_code", None) == status_code
+
+
 def parse_published_at(value):
     if not value:
         return None
@@ -964,7 +968,15 @@ def run_once() -> tuple[int, dict[str, int]]:
                 continue
 
             print("fetch:", link)
-            detail = crawl_mobile_article_detail(link)
+            try:
+                detail = crawl_mobile_article_detail(link)
+            except Exception as e:
+                if is_http_status(e, 429):
+                    print(f"  warn: naver detail rate-limited, skip: {link}")
+                    time.sleep(1.5 + random.random() * 1.5)
+                else:
+                    print(f"  warn: naver detail fetch fail err={e!r}")
+                continue
             if not detail:
                 print("  skip: no title/body")
                 continue
@@ -1129,7 +1141,15 @@ def run_once() -> tuple[int, dict[str, int]]:
                 continue
 
             print("fetch:", link)
-            detail = crawl_mobile_article_detail(link)
+            try:
+                detail = crawl_mobile_article_detail(link)
+            except Exception as e:
+                if is_http_status(e, 429):
+                    print(f"  warn: naver coin fallback rate-limited, skip: {link}")
+                    time.sleep(1.5 + random.random() * 1.5)
+                else:
+                    print(f"  warn: naver coin fallback detail fail err={e!r}")
+                continue
             if not detail:
                 print("  skip: no title/body")
                 continue
