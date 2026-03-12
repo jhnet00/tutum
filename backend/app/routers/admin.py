@@ -1627,13 +1627,20 @@ async def get_cost_forecast():
             nodepool_bucket["hourly_usd"] += hourly_rate
             nodepool_bucket["daily_usd"] += daily_rate or 0.0
 
-        fixed_hourly_total = control_plane_hourly + (nat_gateway_hourly * nat_gateway_count) + extra_fixed_hourly
+        fixed_hourly_total = (
+            control_plane_hourly
+            + (nat_gateway_hourly * nat_gateway_count)
+            + extra_fixed_hourly
+        )
         total_hourly = compute_hourly_total + fixed_hourly_total
         total_daily = total_hourly * 24
 
         available = aws_labeled_nodes > 0
         if not available:
-            warnings.append("No AWS instance-type labels found on nodes. This cluster may not be running on EKS workers.")
+            warnings.append(
+                "No AWS instance-type labels found on nodes. "
+                "This cluster may not be running on EKS workers."
+            )
 
         unique_warnings = list(dict.fromkeys(warnings))
 
@@ -1809,16 +1816,20 @@ async def get_data_metrics():
         "disk_read_bps": ["sum(rate(node_disk_read_bytes_total[5m]))"],
         "disk_write_bps": ["sum(rate(node_disk_written_bytes_total[5m]))"],
         "disk_total_bytes": [
-            'sum(max by (instance) (node_filesystem_size_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"}))'
+            "sum(max by (instance) "
+            '(node_filesystem_size_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"}))'
         ],
         "disk_avail_bytes": [
-            'sum(max by (instance) (node_filesystem_avail_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"}))'
+            "sum(max by (instance) "
+            '(node_filesystem_avail_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"}))'
         ],
         "es_search_qps": ["sum(rate(elasticsearch_indices_search_query_total[5m]))"],
         "es_search_time": ["sum(rate(elasticsearch_indices_search_query_time_seconds[5m]))"],
         "es_index_time": ["sum(rate(elasticsearch_indices_indexing_index_time_seconds_total[5m]))"],
         "es_index_total": ["sum(rate(elasticsearch_indices_indexing_index_total[5m]))"],
-        "es_thread_rejected": ['sum(increase(elasticsearch_thread_pool_rejected_count{type="write"}[5m]))'],
+        "es_thread_rejected": [
+            'sum(increase(elasticsearch_thread_pool_rejected_count{type="write"}[5m]))'
+        ],
         "es_store_bytes": [
             "sum(elasticsearch_indices_store_size_bytes_total)",
             "sum(elasticsearch_indices_store_size_bytes)",
@@ -1937,14 +1948,20 @@ async def get_data_metrics():
         size_data = await _mimir_query(
             "/api/v1/query",
             params={
-                "query": 'max by (instance) (node_filesystem_size_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"})',
+                "query": (
+                    'max by (instance) '
+                    '(node_filesystem_size_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"})'
+                ),
                 **instant_params,
             },
         )
         avail_data = await _mimir_query(
             "/api/v1/query",
             params={
-                "query": 'max by (instance) (node_filesystem_avail_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"})',
+                "query": (
+                    'max by (instance) '
+                    '(node_filesystem_avail_bytes{mountpoint=~"/var|/local|/mnt|/opt",fstype!~"tmpfs|erofs"})'
+                ),
                 **instant_params,
             },
         )
