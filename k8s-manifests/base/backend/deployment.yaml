@@ -24,6 +24,8 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: backend-sa
+      nodeSelector:
+        workload: app
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -36,6 +38,36 @@ spec:
       containers:
         - name: backend
           image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/backend:latest
+          command:
+            - /bin/sh
+            - -lc
+          args:
+            - |
+              python <<'PY'
+              from pathlib import Path
+
+              path = Path("/app/app/routers/admin.py")
+              try:
+                  source = path.read_text(encoding="utf-8")
+              except FileNotFoundError:
+                  raise SystemExit(0)
+
+              replacements = {
+                  '_HTTP_MIMIR = httpx.AsyncClient(timeout=5.0)': '_HTTP_MIMIR = httpx.AsyncClient(timeout=5.0, headers={"X-Scope-OrgID": "tutum"})',
+                  '_HTTP_LOKI = httpx.AsyncClient(timeout=8.0)': '_HTTP_LOKI = httpx.AsyncClient(timeout=8.0, headers={"X-Scope-OrgID": "tutum"})',
+              }
+
+              updated = source
+              for old, new in replacements.items():
+                  updated = updated.replace(old, new)
+
+              if updated != source:
+                  path.write_text(updated, encoding="utf-8")
+                  print("[BackendPatch] admin.py monitoring headers injected")
+              else:
+                  print("[BackendPatch] admin.py already patched")
+              PY
+              exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
           ports:
             - containerPort: 8000
               name: http
