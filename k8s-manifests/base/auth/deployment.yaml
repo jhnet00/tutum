@@ -244,6 +244,10 @@ spec:
                   '    # 4. JWT  + ???\n    response = await _oauth_issue_token_and_redirect(user_id, email)\n    _clear_oauth_state_cookie(response, "naver")\n    await _clear_oauth_state_cache("naver", state)\n    return response',
                   '    # 4. JWT  + ???\n    callback_path = _resolve_oauth_callback(request, "naver", state)\n    response = await _oauth_issue_token_and_redirect(user_id, email, callback_path)\n    _clear_oauth_state_cookie(response, "naver")\n    _clear_oauth_callback_cookie(response, "naver")\n    _clear_frontend_login_callback_cookie(response)\n    await _clear_oauth_state_cache("naver", state)\n    return response',
               )
+              source = source.replace(
+                  'callback_path = _sanitize_callback_path(request.query_params.get("callbackUrl")) or _extract_oauth_callback_from_referer(request)',
+                  'callback_path = _sanitize_callback_path(request.query_params.get("callbackUrl")) or _sanitize_callback_path(request.cookies.get("login_callback")) or _extract_oauth_callback_from_referer(request)',
+              )
 
               path.write_text(source, encoding="utf-8")
               PY
