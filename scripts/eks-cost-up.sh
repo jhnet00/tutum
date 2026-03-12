@@ -5,7 +5,8 @@
 #  사용법: bash scripts/eks-cost-up.sh
 #
 #  원리: ArgoCD를 올리면 git 상태(selfHeal: true)로 전부 자동 복구
-#        직접 개별 서비스 replicas를 건드릴 필요 없음
+#        단, ArgoCD는 ignoreDifferences: /spec/replicas 설정으로
+#        비KEDA deployment replicas를 복구하지 않으므로 수동 복구 필요
 # ============================================================
 set -euo pipefail
 
@@ -55,11 +56,39 @@ for so in $(kubectl get scaledobject -n tutum-app -o name 2>/dev/null); do
 done
 
 # ─────────────────────────────────────────
-# STEP 5: 완료 안내
+# STEP 5: 비KEDA Deployment 수동 복구
+#   ArgoCD ignoreDifferences: /spec/replicas 로 인해
+#   아래 서비스는 selfHeal이 replicas를 복구하지 않음
 # ─────────────────────────────────────────
-log "[5/5] 완료"
+log "[5/6] 비KEDA Deployment 수동 복구"
+
+# tutum-app: KEDA 없는 워크로드
+kubectl scale deployment auth         -n tutum-app --replicas=2 2>/dev/null || true
+kubectl scale deployment email-worker -n tutum-app --replicas=1 2>/dev/null || true
+kubectl scale deployment news-producer  -n tutum-app --replicas=1 2>/dev/null || true
+kubectl scale deployment price-producer -n tutum-app --replicas=1 2>/dev/null || true
+kubectl scale deployment ocr          -n tutum-app --replicas=1 2>/dev/null || true
+
+# tutum-data: 모니터링 exporter
+kubectl scale deployment elasticsearch-exporter -n tutum-data --replicas=1 2>/dev/null || true
+kubectl scale deployment kafka-exporter         -n tutum-data --replicas=1 2>/dev/null || true
+kubectl scale deployment redis-exporter         -n tutum-data --replicas=1 2>/dev/null || true
+
+# kyverno
+kubectl scale deployment kyverno-admission-controller  -n kyverno --replicas=1 2>/dev/null || true
+kubectl scale deployment kyverno-background-controller -n kyverno --replicas=1 2>/dev/null || true
+kubectl scale deployment kyverno-cleanup-controller    -n kyverno --replicas=1 2>/dev/null || true
+kubectl scale deployment kyverno-reports-controller    -n kyverno --replicas=1 2>/dev/null || true
+
+# gitlab-runner
+kubectl scale deployment --all -n gitlab-runner --replicas=1 2>/dev/null || true
+
+# ─────────────────────────────────────────
+# STEP 6: 완료 안내
+# ─────────────────────────────────────────
+log "[6/6] 완료"
 echo ""
-echo "✅ ArgoCD 복구 완료. git 상태(selfHeal: true) 기준으로 자동 복구 시작됩니다."
+echo "✅ 복구 완료. KEDA 서비스는 자동, 비KEDA 서비스는 수동 복구 완료."
 echo ""
 info "  진행 상황 확인:"
 echo "    kubectl get applications -n argocd          # Synced/Healthy 대기"
