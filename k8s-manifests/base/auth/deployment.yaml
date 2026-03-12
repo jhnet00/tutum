@@ -36,6 +36,125 @@ spec:
       containers:
         - name: auth
           image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/auth:latest
+          command:
+            - /bin/sh
+            - -lc
+          args:
+            - |
+              set -eu
+              python <<'PY'
+              from pathlib import Path
+
+              path = Path("/app/app/routers/auth.py")
+              try:
+                  source = path.read_text(encoding="utf-8")
+              except FileNotFoundError:
+                  raise SystemExit(0)
+
+              helper_anchor = 'def _oauth_state_cookie_key(provider: str) -> str:\n    return f"oauth_state_{provider}"\n'
+              helper_block = '''
+              def _oauth_callback_cookie_key(provider: str) -> str:
+                  return f"oauth_callback_{provider}"
+
+
+              def _sanitize_callback_path(callback_url: str | None) -> str | None:
+                  if not callback_url:
+                      return None
+                  callback_url = callback_url.strip()
+                  if not callback_url.startswith("/") or callback_url.startswith("//"):
+                      return None
+                  return callback_url
+
+
+              def _set_oauth_callback_cookie(
+                  response: Response, provider: str, callback_url: str | None
+              ) -> None:
+                  callback_path = _sanitize_callback_path(callback_url)
+                  if not callback_path:
+                      return
+
+                  secure_cookie, same_site = _oauth_state_cookie_attrs(provider)
+                  response.set_cookie(
+                      key=_oauth_callback_cookie_key(provider),
+                      value=callback_path,
+                      httponly=True,
+                      path="/",
+                      samesite=same_site,
+                      secure=secure_cookie,
+                      max_age=OAUTH_STATE_COOKIE_MAX_AGE_SECONDS,
+                  )
+
+
+              def _get_oauth_callback_cookie(request: Request, provider: str) -> str | None:
+                  return _sanitize_callback_path(
+                      request.cookies.get(_oauth_callback_cookie_key(provider))
+                  )
+
+
+              def _clear_oauth_callback_cookie(response: Response, provider: str) -> None:
+                  secure_cookie, same_site = _oauth_state_cookie_attrs(provider)
+                  response.delete_cookie(
+                      key=_oauth_callback_cookie_key(provider),
+                      path="/",
+                      samesite=same_site,
+                      secure=secure_cookie,
+                  )
+              '''.strip()
+
+              if "_oauth_callback_cookie_key(" not in source and helper_anchor in source:
+                  source = source.replace(helper_anchor, helper_anchor + "\n\n" + helper_block + "\n", 1)
+
+              source = source.replace(
+                  "async def _oauth_issue_token_and_redirect(user_id: str, email: str) -> RedirectResponse:",
+                  "async def _oauth_issue_token_and_redirect(\n    user_id: str, email: str, callback_path: str | None = None\n) -> RedirectResponse:",
+              )
+              source = source.replace(
+                  '    response = RedirectResponse(url=f"{frontend_url}/auth/callback")',
+                  '    redirect_path = _sanitize_callback_path(callback_path) or "/portfolio/asset"\n    response = RedirectResponse(url=f"{frontend_url}{redirect_path}")',
+              )
+
+              source = source.replace(
+                  "async def google_login(\n    state: str | None = Query(default=None, min_length=8, max_length=128),\n):",
+                  "async def google_login(\n    request: Request,\n    state: str | None = Query(default=None, min_length=8, max_length=128),\n):",
+              )
+              source = source.replace(
+                  '    response = RedirectResponse(google_auth_url)\n    _set_oauth_state_cookie(response, "google", oauth_state)\n    await _remember_oauth_state("google", oauth_state)\n    return response',
+                  '    response = RedirectResponse(google_auth_url)\n    _set_oauth_state_cookie(response, "google", oauth_state)\n    _set_oauth_callback_cookie(response, "google", request.query_params.get("callbackUrl"))\n    await _remember_oauth_state("google", oauth_state)\n    return response',
+              )
+              source = source.replace(
+                  '    # 4. JWT  + ???\n    response = await _oauth_issue_token_and_redirect(user_id, email)\n    _clear_oauth_state_cookie(response, "google")\n    await _clear_oauth_state_cache("google", state)\n    return response',
+                  '    # 4. JWT  + ???\n    callback_path = _get_oauth_callback_cookie(request, "google")\n    response = await _oauth_issue_token_and_redirect(user_id, email, callback_path)\n    _clear_oauth_state_cookie(response, "google")\n    _clear_oauth_callback_cookie(response, "google")\n    await _clear_oauth_state_cache("google", state)\n    return response',
+              )
+
+              source = source.replace(
+                  "async def kakao_login(\n    state: str | None = Query(default=None, min_length=8, max_length=128),\n):",
+                  "async def kakao_login(\n    request: Request,\n    state: str | None = Query(default=None, min_length=8, max_length=128),\n):",
+              )
+              source = source.replace(
+                  '    response = RedirectResponse(kakao_auth_url)\n    _set_oauth_state_cookie(response, "kakao", oauth_state)\n    await _remember_oauth_state("kakao", oauth_state)\n    return response',
+                  '    response = RedirectResponse(kakao_auth_url)\n    _set_oauth_state_cookie(response, "kakao", oauth_state)\n    _set_oauth_callback_cookie(response, "kakao", request.query_params.get("callbackUrl"))\n    await _remember_oauth_state("kakao", oauth_state)\n    return response',
+              )
+              source = source.replace(
+                  '    # 4. JWT  + ???\n    response = await _oauth_issue_token_and_redirect(user_id, email)\n    _clear_oauth_state_cookie(response, "kakao")\n    await _clear_oauth_state_cache("kakao", state)\n    return response',
+                  '    # 4. JWT  + ???\n    callback_path = _get_oauth_callback_cookie(request, "kakao")\n    response = await _oauth_issue_token_and_redirect(user_id, email, callback_path)\n    _clear_oauth_state_cookie(response, "kakao")\n    _clear_oauth_callback_cookie(response, "kakao")\n    await _clear_oauth_state_cache("kakao", state)\n    return response',
+              )
+
+              source = source.replace(
+                  "async def naver_login(\n    state: str | None = Query(default=None, min_length=8, max_length=128),\n):",
+                  "async def naver_login(\n    request: Request,\n    state: str | None = Query(default=None, min_length=8, max_length=128),\n):",
+              )
+              source = source.replace(
+                  '    response = RedirectResponse(naver_auth_url)\n    _set_oauth_state_cookie(response, "naver", oauth_state)\n    await _remember_oauth_state("naver", oauth_state)\n    return response',
+                  '    response = RedirectResponse(naver_auth_url)\n    _set_oauth_state_cookie(response, "naver", oauth_state)\n    _set_oauth_callback_cookie(response, "naver", request.query_params.get("callbackUrl"))\n    await _remember_oauth_state("naver", oauth_state)\n    return response',
+              )
+              source = source.replace(
+                  '    # 4. JWT  + ???\n    response = await _oauth_issue_token_and_redirect(user_id, email)\n    _clear_oauth_state_cookie(response, "naver")\n    await _clear_oauth_state_cache("naver", state)\n    return response',
+                  '    # 4. JWT  + ???\n    callback_path = _get_oauth_callback_cookie(request, "naver")\n    response = await _oauth_issue_token_and_redirect(user_id, email, callback_path)\n    _clear_oauth_state_cookie(response, "naver")\n    _clear_oauth_callback_cookie(response, "naver")\n    await _clear_oauth_state_cache("naver", state)\n    return response',
+              )
+
+              path.write_text(source, encoding="utf-8")
+              PY
+              exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
           ports:
             - containerPort: 8000
               name: http
