@@ -39,6 +39,56 @@ spec:
               }
               fs.writeFileSync(proxyPath, proxySource.replace(proxyTarget, proxyReplacement));
 
+              const middlewarePath = "/app/.next/server/middleware.js";
+              if (fs.existsSync(middlewarePath)) {
+                let middlewareSource = fs.readFileSync(middlewarePath, "utf8");
+                const middlewareTarget = 'return i&&r?Y.redirect(new URL("/portfolio/asset",e.url)):Y.next()';
+                const middlewareReplacement = 'if(i&&r){let n=e.nextUrl.searchParams.get("callbackUrl");return n&&n.startsWith("/")?Y.redirect(new URL(n,e.url)):Y.redirect(new URL("/portfolio/asset",e.url))}return Y.next()';
+                if (!middlewareSource.includes(middlewareReplacement)) {
+                  if (!middlewareSource.includes(middlewareTarget)) {
+                    throw new Error("frontend middleware auth redirect patch target not found");
+                  }
+                  middlewareSource = middlewareSource.replace(middlewareTarget, middlewareReplacement);
+                }
+                fs.writeFileSync(middlewarePath, middlewareSource);
+              }
+
+              const loginPatchTargets = ["/app/.next/server/app/login/page.js"];
+              const loginChunkDir = "/app/.next/static/chunks/app/login";
+              if (fs.existsSync(loginChunkDir)) {
+                for (const entry of fs.readdirSync(loginChunkDir)) {
+                  if (entry.startsWith("page-") && entry.endsWith(".js")) {
+                    loginPatchTargets.push(`${loginChunkDir}/${entry}`);
+                  }
+                }
+              }
+              const loginRedirectPatches = [
+                [
+                  'window.location.href=`${w}/api/v1/auth/google/login`',
+                  'window.location.href=w+"/api/v1/auth/google/login"+(r?"?callbackUrl="+encodeURIComponent(r):"")'
+                ],
+                [
+                  'window.location.href=`${w}/api/v1/auth/kakao/login`',
+                  'window.location.href=w+"/api/v1/auth/kakao/login"+(r?"?callbackUrl="+encodeURIComponent(r):"")'
+                ],
+                [
+                  'window.location.href=`${w}/api/v1/auth/naver/login`',
+                  'window.location.href=w+"/api/v1/auth/naver/login"+(r?"?callbackUrl="+encodeURIComponent(r):"")'
+                ],
+              ];
+              for (const loginPagePath of loginPatchTargets) {
+                if (!fs.existsSync(loginPagePath)) {
+                  continue;
+                }
+                let loginSource = fs.readFileSync(loginPagePath, "utf8");
+                for (const [target, replacement] of loginRedirectPatches) {
+                  if (loginSource.includes(target)) {
+                    loginSource = loginSource.replaceAll(target, replacement);
+                  }
+                }
+                fs.writeFileSync(loginPagePath, loginSource);
+              }
+
               const adminPagePath = "/app/.next/server/app/admin/page.js";
               if (fs.existsSync(adminPagePath)) {
                 let adminSource = fs.readFileSync(adminPagePath, "utf8");
