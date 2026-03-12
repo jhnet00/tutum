@@ -7,7 +7,7 @@ metadata:
   name: ecr-token-refresher
   namespace: kyverno
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::903913341620:role/tutum-eks-node-role-stg
+    eks.amazonaws.com/role-arn: arn:aws:iam::903913341620:role/tutum-ecr-token-refresher
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

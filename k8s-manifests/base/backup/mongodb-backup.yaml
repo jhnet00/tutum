@@ -24,7 +24,7 @@ spec:
           restartPolicy: OnFailure
           initContainers:
             - name: get-mc
-              image: minio/mc:latest
+              image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/minio/mc:latest
               command: ['sh', '-c', 'cp /usr/bin/mc /shared/mc && chmod +x /shared/mc']
               volumeMounts:
                 - name: shared-bin
@@ -34,7 +34,7 @@ spec:
               emptyDir: {}
           containers:
             - name: mongodb-backup
-              image: mongo:7.0
+              image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/mongo:7.0
               command:
                 - /bin/bash
                 - -c
