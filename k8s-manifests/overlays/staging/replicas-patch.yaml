@@ -128,9 +128,9 @@ spec:
               replacements = {
                   '_HTTP_MIMIR = httpx.AsyncClient(timeout=5.0)': '_HTTP_MIMIR = httpx.AsyncClient(timeout=5.0, headers={"X-Scope-OrgID": "tutum"})',
                   '_HTTP_LOKI = httpx.AsyncClient(timeout=8.0)': '_HTTP_LOKI = httpx.AsyncClient(timeout=8.0, headers={"X-Scope-OrgID": "tutum"})',
-                  "base_selector = f'{job=\"loki.source.kubernetes.k8s_logs\", instance=~\"{ns_pattern}/.*\"}'": "base_selector = f'{job=\"loki.source.kubernetes.pods\", namespace=~\"{ns_pattern}\"}'",
+                  "base_selector = f'{{job=\"loki.source.kubernetes.k8s_logs\", instance=~\"{ns_pattern}/.*\"}}'": "base_selector = f'{{job=\"loki.source.kubernetes.pods\", namespace=~\"{ns_pattern}\"}}'",
                   "instance = labels.get(\"instance\", \"\")\\n            level = labels.get(\"level\", default_level).upper()\\n            ns_pod = instance.split(\":\")[0]\\n            parts = ns_pod.split(\"/\", 1)\\n            ns_name = parts[0] if len(parts) == 2 else \"\"\\n            pod_name = parts[1] if len(parts) == 2 else instance": "level = labels.get(\"level\", labels.get(\"detected_level\", default_level)).upper()\\n            ns_name = labels.get(\"namespace\", \"\")\\n            pod_name = labels.get(\"pod\", labels.get(\"instance\", \"\"))",
-                  "query = f'{job=\"loki.source.kubernetes.k8s_logs\", instance=~\"tutum-app/{worker}-.*\"}'": "query = f'{job=\"loki.source.kubernetes.pods\", namespace=\"tutum-app\", app=~\"{worker}.*\"}'",
+                  "query = f'{{job=\"loki.source.kubernetes.k8s_logs\", instance=~\"tutum-app/{worker}-.*\"}}'": "query = f'{{job=\"loki.source.kubernetes.pods\", namespace=\"tutum-app\", app=~\"{worker}.*\"}}'",
                   "\"query\": '{job=\"loki.source.kubernetes.k8s_logs\"} |= \"ERROR\"',": "\"query\": '{job=\"loki.source.kubernetes.pods\"} |= \"ERROR\"',",
                   'level = labels.get("level", default_level).upper()': 'level = labels.get("level", labels.get("detected_level", default_level)).upper()',
                   'cpu_nano = int(item[\"usage\"][\"cpu\"].rstrip(\"n\"))': 'cpu_nano = _cpu_usage_to_nano(item[\"usage\"][\"cpu\"])',
