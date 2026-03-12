@@ -132,7 +132,7 @@ class Settings(BaseSettings):
     AWS_REGION: str = "ap-northeast-2"
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
-    BEDROCK_MODEL_ID: str = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    BEDROCK_MODEL_ID: str = "global.anthropic.claude-sonnet-4-6"
     BEDROCK_MAX_TOKENS: int = 4096
     BEDROCK_TEMPERATURE: float = 0.7
 
