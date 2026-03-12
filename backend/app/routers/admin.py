@@ -2226,8 +2226,8 @@ async def get_action_needed():
 
 # ─── 트레이스 (Tempo) ─────────────────────────────────────────────────────────
 
-TEMPO_URL = os.getenv("TEMPO_URL", "http://192.168.0.230:3200")
-GRAFANA_URL = os.getenv("GRAFANA_URL", "http://192.168.0.230:3000")
+TEMPO_URL = os.getenv("TEMPO_URL", "http://10.60.11.95:3200")
+GRAFANA_URL = os.getenv("GRAFANA_URL", "http://10.60.11.95:3000")
 
 
 @router.get("/traces")

@@ -30,14 +30,24 @@ spec:
               set -eu
               node <<'NODE'
               const fs = require("fs");
-              const path = "/app/.next/server/app/api/proxy/[...path]/route.js";
-              const source = fs.readFileSync(path, "utf8");
-              const target = 'let r;let o=process.env.BACKEND_INTERNAL_URL||"http://localhost:8000";if(!o)return console.error("[Proxy] ERROR: API base URL is not configured"),new Response(JSON.stringify({detail:"API base URL is not configured"}),{status:500,headers:{"Content-Type":"application/json"}});if("import"===t[0]){let e=process.env.OCR_SERVICE_URL||"http://ocr.tutum-app.svc.cluster.local:8002";r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}else r=new URL(`${o.replace(/\\/$/,"")}/${t.join("/")}`);';
-              const replacement = 'let r;let o=process.env.BACKEND_INTERNAL_URL||"http://backend-svc.tutum-app.svc.cluster.local:8000",n=process.env.AUTH_INTERNAL_URL||"http://auth-svc.tutum-app.svc.cluster.local:8001";if(!o)return console.error("[Proxy] ERROR: API base URL is not configured"),new Response(JSON.stringify({detail:"API base URL is not configured"}),{status:500,headers:{"Content-Type":"application/json"}});if("import"===t[0]){let e=process.env.OCR_SERVICE_URL||"http://ocr.tutum-app.svc.cluster.local:8002";r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}else{let e="api"===t[0]&&"v1"===t[1]&&"auth"===t[2]?n:o;r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}';
-              if (!source.includes(target)) {
+              const proxyPath = "/app/.next/server/app/api/proxy/[...path]/route.js";
+              const proxySource = fs.readFileSync(proxyPath, "utf8");
+              const proxyTarget = 'let r;let o=process.env.BACKEND_INTERNAL_URL||"http://localhost:8000";if(!o)return console.error("[Proxy] ERROR: API base URL is not configured"),new Response(JSON.stringify({detail:"API base URL is not configured"}),{status:500,headers:{"Content-Type":"application/json"}});if("import"===t[0]){let e=process.env.OCR_SERVICE_URL||"http://ocr.tutum-app.svc.cluster.local:8002";r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}else r=new URL(`${o.replace(/\\/$/,"")}/${t.join("/")}`);';
+              const proxyReplacement = 'let r;let o=process.env.BACKEND_INTERNAL_URL||"http://backend-svc.tutum-app.svc.cluster.local:8000",n=process.env.AUTH_INTERNAL_URL||"http://auth-svc.tutum-app.svc.cluster.local:8001";if(!o)return console.error("[Proxy] ERROR: API base URL is not configured"),new Response(JSON.stringify({detail:"API base URL is not configured"}),{status:500,headers:{"Content-Type":"application/json"}});if("import"===t[0]){let e=process.env.OCR_SERVICE_URL||"http://ocr.tutum-app.svc.cluster.local:8002";r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}else{let e="api"===t[0]&&"v1"===t[1]&&"auth"===t[2]?n:o;r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}';
+              if (!proxySource.includes(proxyTarget)) {
                 throw new Error("frontend proxy patch target not found");
               }
-              fs.writeFileSync(path, source.replace(target, replacement));
+              fs.writeFileSync(proxyPath, proxySource.replace(proxyTarget, proxyReplacement));
+
+              const adminPagePath = "/app/.next/server/app/admin/page.js";
+              if (fs.existsSync(adminPagePath)) {
+                const adminSource = fs.readFileSync(adminPagePath, "utf8");
+                const adminTarget = 'href:"".concat("http://192.168.0.230:3000","/explore")';
+                const adminReplacement = 'href:"".concat("http://10.60.11.95:3000","/explore")';
+                if (adminSource.includes(adminTarget)) {
+                  fs.writeFileSync(adminPagePath, adminSource.replace(adminTarget, adminReplacement));
+                }
+              }
               NODE
               exec node server.js
           ports:
