@@ -18,6 +18,7 @@ spec:
         metadata:
           annotations:
             sidecar.istio.io/inject: "true"
+            proxy.istio.io/config: '{"holdApplicationUntilProxyStarts": true}'
         spec:
           restartPolicy: OnFailure
           containers:
@@ -28,6 +29,7 @@ spec:
                 - -c
                 - |
                   set -e
+                  trap 'curl -fsS -X POST http://127.0.0.1:15020/quitquitquit >/dev/null 2>&1 || true' EXIT
                   DATE="$(date +%Y-%m-%d)"
                   SNAPSHOT="snap-${DATE}"
                   ES_URL="http://${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}"
