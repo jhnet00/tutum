@@ -55,19 +55,33 @@ spec:
                     fi
                   fi
 
-                  printf '%s' '{"include_global_state":false}' > "${SNAPSHOT_PAYLOAD}"
-                  SNAPSHOT_STATUS="$(curl -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
-                    "${ES_URL}/_snapshot/${REPO_NAME}/${SNAPSHOT}?wait_for_completion=true" \
-                    -X PUT \
-                    -H 'Content-Type: application/json' \
-                    --data-binary @"${SNAPSHOT_PAYLOAD}" || true)"
-                  if [ "${SNAPSHOT_STATUS}" != "200" ] && [ "${SNAPSHOT_STATUS}" != "201" ]; then
-                    echo "[ERROR] snapshot request failed with HTTP ${SNAPSHOT_STATUS}"
-                    cat "${RESPONSE_FILE}" || true
-                    exit 1
-                  fi
+                  SNAP_EXISTS="$(curl -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
+                    "${ES_URL}/_snapshot/${REPO_NAME}/${SNAPSHOT}" || true)"
+                  if [ "${SNAP_EXISTS}" = "200" ]; then
+                    RESULT="$(cat "${RESPONSE_FILE}")"
+                    STATE="$(echo "${RESULT}" | grep -o '\"state\":\"[^\"]*\"' | head -1 | cut -d'\"' -f4)"
+                    if [ "${STATE}" = "SUCCESS" ]; then
+                      echo "[$(date)] snapshot ${SNAPSHOT} already exists and is successful"
+                    else
+                      echo "[ERROR] snapshot ${SNAPSHOT} already exists with state=${STATE}"
+                      echo "${RESULT}"
+                      exit 1
+                    fi
+                  else
+                    printf '%s' '{"include_global_state":false}' > "${SNAPSHOT_PAYLOAD}"
+                    SNAPSHOT_STATUS="$(curl -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
+                      "${ES_URL}/_snapshot/${REPO_NAME}/${SNAPSHOT}?wait_for_completion=true" \
+                      -X PUT \
+                      -H 'Content-Type: application/json' \
+                      --data-binary @"${SNAPSHOT_PAYLOAD}" || true)"
+                    if [ "${SNAPSHOT_STATUS}" != "200" ] && [ "${SNAPSHOT_STATUS}" != "201" ]; then
+                      echo "[ERROR] snapshot request failed with HTTP ${SNAPSHOT_STATUS}"
+                      cat "${RESPONSE_FILE}" || true
+                      exit 1
+                    fi
 
-                  RESULT="$(cat "${RESPONSE_FILE}")"
+                    RESULT="$(cat "${RESPONSE_FILE}")"
+                  fi
 
                   STATE="$(echo "${RESULT}" | grep -o '\"state\":\"[^\"]*\"' | head -1 | cut -d'\"' -f4)"
                   if [ "${STATE}" != "SUCCESS" ]; then

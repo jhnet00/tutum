@@ -159,7 +159,7 @@ spec:
                   '            recent = await news_col.count_documents({"_id": {"$gte": ObjectId.from_datetime(one_hour_ago.replace(tzinfo=None))}})',
               )
               updated = updated.replace(
-                  '    {"name": "etcd-backup", "namespace": "kube-system", "label": "etcd"},\\n',
+                  '    {"name": "etcd-backup", "namespace": "kube-system", "label": "etcd"},\n',
                   "",
               )
 
