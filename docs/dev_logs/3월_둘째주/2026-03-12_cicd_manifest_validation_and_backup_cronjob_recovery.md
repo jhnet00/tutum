@@ -17,6 +17,7 @@
 - `k8s-manifests/base/backup/elasticsearch-backup.yaml`
   - Job template Pod에 `sidecar.istio.io/inject: "false"`를 추가했다.
   - repository 등록과 snapshot 요청 payload를 임시 JSON 파일로 만들어 `curl --data-binary @file`로 보내도록 바꿨다.
+  - YAML block scalar 내부 heredoc 들여쓰기 때문에 container가 즉시 종료되던 문제를 피하려고, repository JSON도 `printf`로 파일에 쓰도록 정리했다.
   - 잘못 escaped 된 `{\"include_global_state\": false}` 요청 본문 때문에 snapshot Job이 실패하던 문제를 수정했다.
   - 실패 시 Elasticsearch 응답 body를 출력하도록 바꿔 원인 추적이 가능하게 했다.
 - `k8s-manifests/argocd/argocd-config-app.yaml`
@@ -38,6 +39,7 @@
 - 대응:
   - Elasticsearch Pod 내부에서 repository 등록과 snapshot 호출을 직접 검증해 S3 plugin/keystore 자체는 정상임을 먼저 확인했다.
   - 이후 CronJob 스크립트의 JSON escaping 오류를 수정하고, sidecar injection을 꺼서 재실행 가능 상태로 정리했다.
+  - 추가로 repository JSON heredoc이 YAML 들여쓰기와 충돌해 shell parse error를 내는 것을 확인하고 `printf` 방식으로 바꿨다.
 - 이슈: ArgoCD `tutum-staging` Application 상태에 repo-server connection refused 흔적이 남아 있었다.
 - 대응:
   - 현재 시점의 repo-server 로그에서는 새 revision manifest generate가 정상 동작하는 것을 확인했다.

@@ -43,16 +43,7 @@ spec:
 
                   if [ "${REPO_EXISTS}" != "200" ]; then
                     echo "[$(date)] registering snapshot repository ${REPO_NAME}"
-                    cat > "${REPO_PAYLOAD}" <<EOF
-                    {
-                      "type": "s3",
-                      "settings": {
-                        "bucket": "${S3_BUCKET_NAME}",
-                        "region": "${AWS_REGION}",
-                        "base_path": "backups/elasticsearch"
-                      }
-                    }
-                    EOF
+                    printf '%s' "{\"type\":\"s3\",\"settings\":{\"bucket\":\"${S3_BUCKET_NAME}\",\"region\":\"${AWS_REGION}\",\"base_path\":\"backups/elasticsearch\"}}" > "${REPO_PAYLOAD}"
                     REGISTER_STATUS="$(curl -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
                       -X PUT "${ES_URL}/_snapshot/${REPO_NAME}" \
                       -H 'Content-Type: application/json' \
