@@ -21,7 +21,7 @@
 | **인그레스** | MetalLB VIP 192.168.0.240 + Istio IngressGateway | ALB (internet-facing) — Istio IngressGateway 제거 |
 | **외부 HTTPS** | Cloudflare Tunnel → 192.168.0.240 | Route53 → ALB (가비아 네임서버를 Route53으로 변경, Cloudflare 미사용) |
 | **Service Mesh** | Istio (istiod + IngressGateway, mTLS STRICT, tutum-app ns) | Istio minimal profile (istiod만, IngressGateway 제거, mTLS STRICT 유지) |
-| **MongoDB** | K8s StatefulSet **3-replica** (tutum-data ns, PVC 30Gi×3, worker1/2/3 분산) + 독립 VM (192.168.0.231, v7.0.30) | EKS StatefulSet 그대로 이식 |
+| **MongoDB** | K8s StatefulSet **3-replica** (tutum-data ns, PVC 30Gi×3, worker1/2/3 분산) + 독립 VM (192.168.0.231, v7.0.30) | EKS StatefulSet 정본 운영 + Atlas/legacy VM 의존 제거 |
 | **MariaDB** | 211.46.52.153:15432 (학원 공인 IP) | **RDS 이전 완료** (D-5, 2026-03-10) — `tutum-mariadb.cfoeqgoysp2f.ap-northeast-2.rds.amazonaws.com:3306` |
 | **Redis** | K8s StatefulSet 3-replica, Master+2Replica (tutum-data, PVC 5Gi×3) | EKS StatefulSet 그대로 이식 |
 | **Kafka** | K8s StatefulSet KRaft 3-replica (tutum-data, PVC 20Gi×3, RF=3) | EKS StatefulSet 그대로 이식 |
@@ -36,13 +36,13 @@
 ### 변경 없는 항목 (이전 불필요)
 - ~~MariaDB: 학원 공인 IP(211.46.52.153:15432), EKS에서도 NAT GW → 직접 TCP 연결~~ → **RDS 이전 완료** (D-5, 2026-03-10, tutum-mariadb.cfoeqgoysp2f.ap-northeast-2.rds.amazonaws.com:3306)
 - GitLab: SaaS, CI/CD 파이프라인은 Phase C에서 이미 ECR 전환 완료
-- DNS: Cloudflare 미사용 — 가비아 레지스트라에서 네임서버를 Route53으로 변경 (Phase E 완료)
+- DNS: AWS Route53 기준 레코드는 준비 완료, 최종 네임서버 컷오버는 Phase E에서 수행
 
 ### 이미 완료된 항목 (이전 작업에서 처리됨)
 - **컨테이너 레지스트리**: GitLab CR → ECR 전환 완료 (`.gitlab-ci.yml`, kustomization.yaml, Cosign 키 재발급, Kyverno 정책 갱신)
 - **Dockerfile Alpine**: backend/workers `python:3.11-alpine` 전환 완료
-- **MongoDB**: Atlas Cloud 아님 — K8s StatefulSet 3-replica (tutum-data)로 운영 중.
-  독립 MongoDB VM(192.168.0.231, v7.0.30)은 별도 운영 중이나 앱 연결은 K8s StatefulSet 기준
+- **MongoDB**: 2026-03-12 기준 앱 정본을 Atlas에서 EKS in-cluster ReplicaSet(`mongodb-0~2`, `mongo-rs`)으로 전환 완료.
+  `backend/auth/ocr`와 뉴스 파이프라인 secret까지 cutover했으며, 남은 작업은 local MongoDB 인증 적용, Atlas hidden writer/consumer 정리, legacy MongoDB VM(192.168.0.231) 종료
 
 ---
 
@@ -58,12 +58,12 @@
 
 마이그레이션 순서:
 Phase A (D+0~3)  : AWS 기반 준비 (계정, ECR, VPC 설계)               ← ✅ ECR/EKS 생성 완료, SSM 검증 완료           [5/8  63%]
-Phase B (D+4~7)  : EKS 클러스터 구성 + 기존 addon 이식               ← 🔶 진행 중 (ALB/Istio/ArgoCD 완료, KEDA/Runner/미러링 미완) [8/20 40%]
+Phase B (D+4~7)  : EKS 클러스터 구성 + 기존 addon 이식               ← 🔶 진행 중 (ALB/Istio/ArgoCD 완료, auth manifest 작성, KEDA/Runner/미러링 미완) [9/20 45%]
 Phase C (D+8~12) : CI/CD 파이프라인 전환 + 스테이징 검증             ← 🔶 코드 완료, COSIGN키/파이프라인 실행 미완   [5/8  63%]
-Phase D (D+13~18): 데이터 이전 (MongoDB/Kafka/ES/MinIO→S3/모니터링)  ← 🔶 RDS/모니터링EC2 완료, 나머지 미완          [4/17 24%]
-Phase E (D+19~24): 트래픽 컷오버 + 온프레미스 철수                   ← ⬜ 미시작                                     [0/9   0%]
+Phase D (D+13~18): 데이터 이전 (MongoDB/Kafka/ES/MinIO→S3/모니터링)  ← 🔶 RDS/모니터링/S3/Mongo cutover 완료, 나머지 미완 [9/19 47%]
+Phase E (D+19~24): 트래픽 컷오버 + 온프레미스 철수                   ← 🔶 OAuth 콜백 완료, 전체 cutover는 미완          [1/9  11%]
 
-전체 진행률: 22/62 ≈ 35%
+전체 진행률: 29/64 ≈ 45%
 ```
 
 ---
@@ -1238,7 +1238,7 @@ kubectl get pods -n tutum-app
 # 1. 인증: Google OAuth 콜백 URL이 EKS ALB DNS를 가리키도록 임시 수정
 # 2. 시세: KIS API, Upbit API 호출 정상 여부
 # 3. 뉴스: Elasticsearch 연결 (아직 온프레미스 Node3 사용, Phase D에서 이전)
-# 4. AI 채팅: Bedrock Claude 응답 정상 여부
+# 4. AI 채팅: Bedrock Claude Sonnet 4.6 inference profile 응답 정상 여부
 # 5. OCR: S3 연결 (2026-03-12 staging cutover 완료, MinIO 제거는 후속 정리)
 # 6. MariaDB: 사용자 로그인/회원가입
 
@@ -1247,6 +1247,14 @@ kubectl get ingress tutum-alb -n tutum-app \
   -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
 # 예: k8s-tutumap-tutumalb-xxxx.ap-northeast-2.elb.amazonaws.com
 ```
+
+**2026-03-12 상태 업데이트**
+- staging `backend` / `ocr`는 `tutum-prod-storage`를 사용하도록 전환 완료
+- `backend-secret`에 `S3_BUCKET_NAME` 반영, `MINIO_*` 직접 설정 제거 완료
+- 실제 업로드 검증 완료 (`ocr-images/`, `profile-images/` S3 객체 생성 확인)
+- `mongodb-backup`는 S3 `backups/mongodb/`로 전환 완료
+- Elasticsearch snapshot 경로는 S3 `backups/elasticsearch/` 기준으로 전환 완료
+- EKS base에서는 MinIO StatefulSet과 `etcd-backup` CronJob을 제거 완료
 
 ---
 
@@ -1334,14 +1342,6 @@ aws s3api put-bucket-lifecycle-configuration \
     ]
   }'
 ```
-
-**2026-03-12 상태 업데이트**
-- staging `backend` / `ocr`는 `tutum-prod-storage`를 사용하도록 전환 완료
-- `backend-secret`에 `S3_BUCKET_NAME` 반영, `MINIO_*` 직접 설정 제거 완료
-- 실제 업로드 검증 완료 (`ocr-images/`, `profile-images/` S3 객체 생성 확인)
-- `mongodb-backup`는 S3 `backups/mongodb/`로 전환 완료
-- Elasticsearch snapshot 경로는 S3 `backups/elasticsearch/` 기준으로 전환 완료
-- EKS base에서는 MinIO StatefulSet과 `etcd-backup` CronJob을 제거 완료
 
 ---
 
@@ -1441,6 +1441,12 @@ curl -X POST "${ES}/_snapshot/s3_migration/onprem_final/_restore"
 ---
 
 ### D-5. 모니터링 이전 — LGTM Docker Compose
+
+> **최근 반영 사항 (2026-03-12)**
+> - monitoring EC2로의 Alloy `remote_write` 경로는 정상 수집 상태다.
+> - `tutum.my/admin`은 `/api/proxy` ingress 경로를 `frontend-svc`로 복구한 뒤 Overview KPI, API 처리량/응답시간, Logs 탭까지 데이터 확인을 마쳤다.
+> - traces는 `alloy.monitoring.svc.cluster.local:4317` export timeout(`DEADLINE_EXCEEDED`)이 남아 있어 추가 조치가 필요하다.
+> - Kafka lag는 Mimir에 lag metric이 아직 적재되지 않아 `N/A`로 보일 수 있다.
 
 ```bash
 # ──────────────────────────────────────────────
@@ -1785,187 +1791,92 @@ terraform/
 
 ---
 
-### D-9. MongoDB 독립 VM → EC2 이전 + LGTM 동작 확인
+### D-9. MongoDB 정본 전환 - Atlas → EKS ReplicaSet
 
 **배경**:
-- 현재 MongoDB는 두 곳에서 운영 중:
-  1. K8s StatefulSet 3-replica (`tutum-data` ns) — 앱 연결 기준
-  2. 독립 VM (192.168.0.231, MongoDB v7.0.30) — 별도 운영 (백업·관리용)
-- 사용자 요청: 독립 VM의 MongoDB를 EC2 standalone으로 이전 + 앱 연결 EC2로 변경
+- 마이그레이션 목표는 외부 Atlas가 아니라 AWS 내부의 EKS MongoDB ReplicaSet을 정본으로 사용하는 것이다.
+- 2026-03-11 기준 `backend/auth/ocr`는 MongoDB Atlas, `news-consumer`는 EKS in-cluster MongoDB를 바라보는 이원화 상태였다.
+- 2026-03-12 cutover로 앱 정본을 EKS in-cluster ReplicaSet으로 통일했고, Atlas는 잔여 writer/consumer 점검 후 제거 대상으로 전환했다.
 
-**목표 구성**:
+**현재 연결 상태 (2026-03-12)**:
 ```
-현재: app → mongodb.tutum-data.svc.cluster.local:27017 (K8s StatefulSet)
-변경: app → MongoDB EC2 (10.60.11.x, standalone 또는 ReplicaSet)
-     독립 VM(192.168.0.231) → EC2로 데이터 이전 + 폐기
+backend/auth/ocr -> mongodb-0/1/2.mongodb-headless.tutum-data.svc.cluster.local:27017
+                    replicaSet=mongo-rs, db=clouddx
+news-consumer    -> same replica set, db=clouddx
+Atlas            -> 앱 정본 아님 / hidden writer·consumer 점검 대상
+legacy VM        -> 192.168.0.231, 의존성 확인 후 shutdown 대상
 ```
 
-```bash
-# ── Step 1: MongoDB EC2 생성 (private subnet, t3.large) ──
-PRIVATE_SUBNET_A=$(aws ec2 describe-subnets \
-  --filters "Name=cidr-block,Values=10.60.11.0/24" \
-  --query 'Subnets[0].SubnetId' --output text)
+**실행 절차**:
+1. Atlas와 local MongoDB(`clouddx`)의 collection별 문서 건수를 비교해 기준 데이터를 확정했다.
+2. Atlas 데이터를 local ReplicaSet으로 merge했다.
+   - `users`, `assets`, `email_verification_tokens`: `_id` 기준 upsert
+   - `news`: `url/link/id` 우선 upsert, 없으면 `_id` 기준 보존
+3. AWS Secrets Manager `tutum/backend-secret`의 `MONGODB_URL`을 in-cluster ReplicaSet URI로 변경했다.
+4. ExternalSecret 동기화 후 `backend`, `auth`, `ocr`를 재기동했다.
+5. `news-pipeline-secret`의 `MONGO_URI`를 `/clouddx?replicaSet=mongo-rs`로 정규화했다.
 
-CLUSTER_SG=$(aws eks describe-cluster --name tutum-stg-eks \
-  --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text)
-
-# MongoDB 전용 SG 생성
-MONGO_SG=$(aws ec2 create-security-group \
-  --group-name tutum-mongodb-sg \
-  --description "MongoDB EC2 standalone" \
-  --vpc-id "$(aws ec2 describe-vpcs --filters Name=cidr-block,Values=10.60.0.0/16 \
-              --query 'Vpcs[0].VpcId' --output text)" \
-  --query 'GroupId' --output text)
-
-# EKS 노드 → MongoDB 27017 inbound 허용
-aws ec2 authorize-security-group-ingress \
-  --group-id "$MONGO_SG" \
-  --ip-permissions "[{
-    \"IpProtocol\":\"tcp\",\"FromPort\":27017,\"ToPort\":27017,
-    \"UserIdGroupPairs\":[{\"GroupId\":\"$CLUSTER_SG\",\"Description\":\"EKS apps\"}]
-  }]"
-
-# SSM outbound 허용
-aws ec2 authorize-security-group-egress \
-  --group-id "$MONGO_SG" \
-  --ip-permissions '[{"IpProtocol":"tcp","FromPort":443,"ToPort":443,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]'
-
-# EC2 생성 (SSM Instance Profile 재사용)
-MONGO_EC2=$(aws ec2 run-instances \
-  --image-id ami-042e76978adeb8c48 \
-  --instance-type t3.large \
-  --subnet-id "$PRIVATE_SUBNET_A" \
-  --security-group-ids "$MONGO_SG" \
-  --iam-instance-profile Name=tutum-monitoring-profile \
-  --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]' \
-  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=tutum-mongodb}]' \
-  --query 'Instances[0].InstanceId' --output text)
-
-aws ec2 wait instance-running --instance-ids "$MONGO_EC2"
-MONGO_IP=$(aws ec2 describe-instances --instance-ids "$MONGO_EC2" \
-  --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)
-echo "MongoDB EC2 IP: $MONGO_IP"
-
-# ── Step 2: MongoDB 7.0 설치 (SSM) ──
-aws ssm send-command \
-  --instance-ids "$MONGO_EC2" \
-  --document-name "AWS-RunShellScript" \
-  --parameters 'commands=[
-    "curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg",
-    "echo \"deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse\" | tee /etc/apt/sources.list.d/mongodb-org-7.0.list",
-    "apt-get update -y && apt-get install -y mongodb-org",
-    "systemctl enable --now mongod",
-    "mongosh --eval \"db.runCommand({connectionStatus:1})\""
-  ]' --region ap-northeast-2
-
-# ── Step 3: 온프레미스 독립 VM(192.168.0.231)에서 dump → S3 ──
-# 온프레미스 cp-1에서 실행
-ssh cp-1 << 'EOF'
-  mongodump \
-    --host 192.168.0.231 --port 27017 \
-    --out /tmp/mongo-vm-dump
-  tar czf /tmp/mongo-vm-dump.tar.gz -C /tmp mongo-vm-dump
-  # S3에 업로드 (AWS CLI 설치 필요)
-  aws s3 cp /tmp/mongo-vm-dump.tar.gz \
-    s3://tutum-prod-storage/migration/mongodb/mongo-vm-dump.tar.gz
-EOF
-
-# ── Step 4: EC2에서 S3 dump 다운로드 + restore ──
-aws ssm send-command \
-  --instance-ids "$MONGO_EC2" \
-  --document-name "AWS-RunShellScript" \
-  --parameters 'commands=[
-    "apt-get install -y awscli",
-    "aws s3 cp s3://tutum-prod-storage/migration/mongodb/mongo-vm-dump.tar.gz /tmp/",
-    "tar xzf /tmp/mongo-vm-dump.tar.gz -C /tmp/",
-    "mongorestore --host localhost --port 27017 /tmp/mongo-vm-dump/"
-  ]' --region ap-northeast-2
-
-# ── Step 5: K8s StatefulSet MongoDB dump → EC2 restore ──
-# (앱 연결을 EC2로 변경할 경우 최신 데이터 동기화)
-kubectl exec -it mongodb-0 -n tutum-data -- \
-  mongodump --host mongodb.tutum-data.svc.cluster.local:27017 \
-  --username root --password <password> \
-  --replicaSet mongo-rs --out /tmp/k8s-dump/
-
-kubectl cp tutum-data/mongodb-0:/tmp/k8s-dump /tmp/k8s-dump
-tar czf /tmp/k8s-dump.tar.gz -C /tmp k8s-dump
-aws s3 cp /tmp/k8s-dump.tar.gz s3://tutum-prod-storage/migration/mongodb/k8s-dump.tar.gz
-
-# EC2에서 복원
-aws ssm send-command \
-  --instance-ids "$MONGO_EC2" \
-  --document-name "AWS-RunShellScript" \
-  --parameters 'commands=[
-    "aws s3 cp s3://tutum-prod-storage/migration/mongodb/k8s-dump.tar.gz /tmp/",
-    "tar xzf /tmp/k8s-dump.tar.gz -C /tmp/",
-    "mongorestore --drop --host localhost --port 27017 /tmp/k8s-dump/"
-  ]' --region ap-northeast-2
-
-# ── Step 6: backend-secret MongoDB 연결 주소 변경 ──
-kubectl patch secret backend-secret -n tutum-app --type=merge -p "{
-  \"data\": {
-    \"MONGODB_URL\": \"$(echo -n "mongodb://${MONGO_IP}:27017/tutum?authSource=admin" | base64)\"
-  }
-}"
-kubectl rollout restart deployment/backend -n tutum-app
-kubectl rollout status deployment/backend -n tutum-app
+**적용 URI**:
+```text
+mongodb://mongodb-0.mongodb-headless.tutum-data.svc.cluster.local:27017,mongodb-1.mongodb-headless.tutum-data.svc.cluster.local:27017,mongodb-2.mongodb-headless.tutum-data.svc.cluster.local:27017/clouddx?replicaSet=mongo-rs
 ```
+
+**검증 결과 (2026-03-12)**:
+- local `clouddx.users = 11`
+- local `clouddx.assets = 22`
+- local `clouddx.email_verification_tokens = 11`
+- local `clouddx.news = 12421`
+- `backend 5/5`, `auth 2/2`, `ocr 1/1`
+- 외부 검증
+  - `https://tutum.my/api/v1/chat/health` -> `200`
+  - `https://tutum.my/api/v1/market/prices/stocks?symbols=NVDA` -> `200`
+  - `https://tutum.my/api/v1/auth/me` -> `401` (비로그인 상태 기준 정상)
 
 **체크리스트**:
-- [ ] MongoDB EC2 생성 (t3.large, 100GB gp3, private subnet 10.60.11.x)
-- [ ] MongoDB SG 생성 (EKS Cluster SG → 27017 inbound)
-- [ ] MongoDB 7.0 설치 + 서비스 기동 확인
-- [ ] 독립 VM(192.168.0.231) mongodump → S3 업로드
-- [ ] EC2에서 S3 dump 복원 (mongorestore)
-- [ ] K8s StatefulSet 최신 데이터 EC2로 동기화 (필요 시)
-- [ ] backend-secret MONGODB_URL → EC2 IP로 변경 + rolling restart
-- [ ] 앱 로그에서 MongoDB 연결 오류 없음 확인
+- [x] Atlas 데이터 → EKS ReplicaSet merge
+- [x] `backend/auth/ocr` `MONGODB_URL` cutover
+- [x] `news-pipeline-secret` `clouddx` 기준 정리
+- [x] 주요 앱 API health 검증
+- [ ] local MongoDB 인증/권한 적용
+- [ ] Atlas hidden writer/consumer audit 및 중지
+- [ ] legacy MongoDB VM(192.168.0.231) shutdown
 
 ---
 
-### D-9-V. LGTM 어드민 페이지 동작 확인
+### D-9-V. LGTM / Admin 모니터링 검증
 
-> 파이프라인 정상 동작 후, 모니터링 EC2(10.60.11.95)의 Grafana 어드민 페이지에서
-> EKS 워크로드 메트릭·로그가 정상 수집되는지 검증.
+> **현재 상태 (2026-03-12)**
+> - `/api/proxy`, `/api/public` ingress를 `frontend-svc`로 복구해 admin 요청이 Next proxy를 경유하도록 수정했다.
+> - Overview KPI, API 처리량/응답시간, Logs 탭은 실제 데이터 확인을 마쳤다.
+> - traces는 OTLP export timeout, Kafka lag는 Mimir lag metric 부재로 후속 조치가 남아 있다.
 
 ```bash
-# ── 1. Grafana 접근 (SSM 포트포워딩) ──
+# 검증 1. Grafana 접근 (SSM 포트포워딩)
 MONITORING_EC2="i-0a8cab5d5ce1cac60"
-aws ssm start-session \
-  --target "$MONITORING_EC2" \
-  --document-name AWS-StartPortForwardingSession \
-  --parameters "portNumber=3000,localPortNumber=3000"
-# → 브라우저: http://localhost:3000 (admin / tutum2026!)
+aws ssm start-session   --target "$MONITORING_EC2"   --document-name AWS-StartPortForwardingSession   --parameters "portNumber=3000,localPortNumber=3000"
+# 브라우저: http://localhost:3000 (admin / tutum2026!)
 
-# ── 2. Alloy DaemonSet 상태 확인 ──
+# 검증 2. Alloy DaemonSet 상태 확인
 kubectl get pods -n monitoring -l app.kubernetes.io/name=alloy
 kubectl logs -n monitoring -l app.kubernetes.io/name=alloy --tail=50 | grep -E "error|warn|remote_write"
 
-# ── 3. Mimir 메트릭 수신 확인 ──
+# 검증 3. Mimir 메트릭 수신 확인
 # Grafana → Explore → Mimir datasource → 쿼리:
 # up{namespace="tutum-app"}
 # container_cpu_usage_seconds_total{namespace="tutum-app"}
 
-# ── 4. Loki 로그 수신 확인 ──
+# 검증 4. Loki 로그 수신 확인
 # Grafana → Explore → Loki datasource → 쿼리:
 # {namespace="tutum-app"}
-
-# ── 5. 체크 항목 ──
-# Grafana 대시보드: "Kubernetes / Compute Resources / Namespace (Workloads)"
-# - tutum-app: backend, frontend, price-consumer, news-consumer pods 표시 여부
-# - tutum-data: kafka, redis, mongodb pods 표시 여부
-# Loki: 각 pod 실시간 로그 조회 가능 여부
-# Mimir: PromQL up{namespace="tutum-app"} == 1 확인
 ```
 
 **LGTM 검증 체크리스트**:
-- [ ] Grafana 어드민 페이지 접속 확인 (SSM 포트포워딩)
-- [ ] Alloy DaemonSet 모든 노드에서 Running 확인
-- [ ] Mimir: tutum-app 네임스페이스 Pod 메트릭 수신 확인
-- [ ] Loki: tutum-app 네임스페이스 Pod 로그 수신 확인
-- [ ] Grafana 대시보드 "K8s / Namespace" — backend/frontend 지표 표시 확인
-- [ ] MongoDB EC2 이전 후 backend Pod 재기동 로그 정상 확인
+- [x] `/api/proxy` ingress 복구 후 admin API가 frontend proxy를 경유하도록 수정
+- [x] Overview KPI / API 처리량 그래프 / Logs 탭 정상 확인
+- [x] Alloy DaemonSet 전체 노드 Running 확인
+- [ ] traces export (`alloy.monitoring.svc.cluster.local:4317`) timeout 해소
+- [ ] Kafka lag metric Mimir 적재 확인
+- [ ] Grafana Explore에서 Tempo trace 조회 확인
 
 ---
 
@@ -2271,7 +2182,7 @@ gabia.com 로그인 → My가비아 → 서비스 관리 → 도메인
 4. [ ] 가비아 네임서버 → Route53 변경
 5. [ ] ACM 인증서 ISSUED 확인 (네임서버 전파 후 자동 완료)
 6. [ ] ALB Ingress HTTPS annotation 활성화 (certificate-arn, ssl-redirect)
-7. [ ] OAuth 콜백 URL 업데이트 (Google, Naver) → https://tutum.my
+7. [x] OAuth 콜백 URL 업데이트 (Google, Naver) → https://tutum.my ← 완료 (2026-03-11)
 8. [ ] 브라우저에서 tutum.my 접속 → EKS 응답 확인
 9. [ ] 로그인, 시세 조회, 뉴스, AI 채팅 빠른 확인
 10. [ ] Grafana 대시보드에서 EKS 지표 수신 확인
@@ -2398,7 +2309,12 @@ aws budgets create-budget \
 - [x] NetworkPolicy 이식 (vpc-cni network policy 활성화 + manifest 적용)
 - [x] MariaDB 연결 확인 (SSM send-command → `MARIADB_REACHABLE` ✅)
 
+**완료**
+- [x] **auth 서비스 K8s 매니페스트 작성** (2026-03-11): `k8s-manifests/base/auth/` Deployment+Service, ECR `tutum/auth` 레포 생성, GitLab CI 파이프라인 트리거, CI 변수 추가
+
 **미완료 — 기본**
+- [ ] **auth 서비스 ECR 이미지 빌드** (CI/CD 팀원 담당) — Kaniko image 경로 ECR 미러로 변경 필요
+- [ ] **auth 서비스 EKS Running 확인** (ECR 빌드 완료 후 ArgoCD auto-sync)
 - [ ] **시크릿 재생성** (app-secrets, OAuth 키, gitlab-registry-secret 등) — EKS에 미생성
 - [ ] **KEDA 설치 + ScaledObject 적용** (on-prem 정상, EKS 미설치)
 - [ ] **Kyverno 설치 + ECR 정책 적용** (on-prem 완료, EKS 미설치)
@@ -2442,21 +2358,22 @@ aws budgets create-budget \
 - [x] 모니터링 EC2 생성 (EKS VPC private subnet, t3.medium) ← 완료 (10.60.11.95)
 - [x] Docker Compose LGTM 기동 (Grafana/Loki/Tempo/Mimir) ← 완료
 - [x] EKS Alloy DaemonSet remote_write → 모니터링 EC2 내부 IP ← 완료
+- [x] **Mimir out-of-order 샘플 허용 설정** (2026-03-11): `limits.out_of_order_time_window: 30m` 추가 → mimir 재시작 완료, Alloy 400 에러 해소
 - [x] S3 Lifecycle 설정 (ocr-images 180일 만료, backups/ Glacier 30일)
 - [ ] CloudTrail 활성화 + S3 저장 (90일 보관)
 - [x] **[완료] MariaDB → RDS 이전** (D-5, 2026-03-10: tutum-mariadb.cfoeqgoysp2f, backend-secret 패치 완료)
 - [ ] **SonarQube 배포** (D-6: CI/CD 코드 품질 게이트)
 - [ ] **Kiali 설치** (D-7: Istio 서비스 메시 시각화, Mimir 연동)
 - [ ] **Terraform IaC** (D-8: 기존 AWS 인프라 terraform import → 코드화)
-- [ ] **[신규] MongoDB EC2 이전** (D-9): 독립 VM(192.168.0.231) → EC2 standalone, 앱 연결 변경
-- [ ] **[신규] LGTM Grafana 어드민 페이지 동작 확인** (D-9-V): Alloy→Mimir/Loki 메트릭/로그 수신 확인
+- [x] **[완료] MongoDB Atlas → EKS ReplicaSet 정본 전환** (D-9, 2026-03-12: backend/auth/ocr + news secret cutover)
+- [ ] **[진행 중] LGTM / Admin 모니터링 검증** (D-9-V): Overview/Logs 정상, traces export timeout + Kafka lag metric 후속 필요
 - [ ] **[신규] Kafka EC2 이전** (D-10): K8s StatefulSet → EC2 Docker Compose, Consumer 연결 전환
 - [ ] **[신규] Elasticsearch EKS StatefulSet 배포 + S3 스냅샷 복원** (D-4)
 - [ ] **[신규] 온프레미스 VM 워크로드 누락 항목 점검 + 전체 Gap 해소** (D-11)
 
-### Phase E (컷오버) — ⬜ 미시작
+### Phase E (컷오버) — 🔶 진행 중
 - [ ] ACM `*.tutum.my` 인증서 ISSUED 확인 후 ALB Ingress 생성
-- [ ] OAuth 콜백 URL → ALB DNS 또는 tutum.my (Google, Naver)
+- [x] OAuth 콜백 URL → https://tutum.my 등록 완료 (Google + Naver, 2026-03-11)
 - [ ] 가비아 네임서버 → Route53 변경 (Cloudflare 제거)
 - [ ] ACM 인증서 ISSUED 확인 후 ALB HTTPS annotation 활성화
 - [ ] tutum.my 전체 기능 접속 확인
@@ -2485,16 +2402,17 @@ aws budgets create-budget \
 
 ## 마이그레이션 진행률 대시보드
 
-> 마지막 업데이트: 2026-03-10
+> 마지막 업데이트: 2026-03-12
+> 2026-03-11~2026-03-12 기준 모니터링 복구, MongoDB 정본 전환, Bedrock runtime 갱신 반영 상태를 기준으로 재정리했다.
 
-### 전체 진행률: **35%** (22 / 62 항목 완료)
+### 전체 진행률: **45%** (29 / 64 항목 완료)
 
 ```
 Phase A ████████████░░░░░░░░  63%  (5/8)   ← 기반 준비 대부분 완료
-Phase B ████████░░░░░░░░░░░░  40%  (8/20)  ← EKS 기본 완료, addon 이식 진행 중
+Phase B █████████░░░░░░░░░░░  45%  (9/20)  ← EKS 기본 구성, auth manifest 작성, addon 이식 진행 중
 Phase C █████████████░░░░░░░  63%  (5/8)   ← 코드 완료, 파이프라인 실행 필요
-Phase D ████░░░░░░░░░░░░░░░░  24%  (4/17)  ← RDS/모니터링 완료, 데이터 이전 대기
-Phase E ░░░░░░░░░░░░░░░░░░░░   0%  (0/9)   ← 미시작 (Phase C/D 완료 후 진행)
+Phase D █████████░░░░░░░░░░░  47%  (9/19)  ← RDS/모니터링/S3/Mongo cutover 완료, 나머지 이전 대기
+Phase E ██░░░░░░░░░░░░░░░░░░  11%  (1/9)   ← OAuth 콜백 반영, 전체 cutover는 미완
 ```
 
 ### 완료된 주요 이정표
@@ -2514,6 +2432,13 @@ Phase E ░░░░░░░░░░░░░░░░░░░░   0%  (0/9)
 | 2026-03-10 | 모니터링 EC2 생성 (10.60.11.95, LGTM Docker Compose) |
 | 2026-03-10 | EKS Alloy DaemonSet → 모니터링 EC2 연결 |
 | 2026-03-10 | MariaDB → RDS 이전 완료 (tutum-mariadb.cfoeqgoysp2f) |
+| 2026-03-11 | Mimir out-of-order 샘플 허용 설정 (`limits.out_of_order_time_window: 30m`) + 재시작 |
+| 2026-03-11~2026-03-12 | `tutum.my` frontend proxy / ALB / private-only nodepool 안정화 |
+| 2026-03-12 | Backend/OCR S3 cutover + MinIO base 제거 |
+| 2026-03-12 | admin `/api/proxy` ingress 복구 + Overview/Logs 검증 |
+| 2026-03-12 | MongoDB Atlas → EKS ReplicaSet 정본 전환 |
+| 2026-03-12 | Bedrock runtime → Claude Sonnet 4.6 inference profile 적용 |
+| 2026-03-11 | auth 서비스 K8s 매니페스트 작성 + ECR 레포 생성 (CI/CD 빌드 팀원 인계) |
 
 ### 다음 우선 작업 (블로커 순)
 
@@ -2523,11 +2448,13 @@ Phase E ░░░░░░░░░░░░░░░░░░░░   0%  (0/9)
 | 🔴 2 | 파이프라인 실행 (build→sign→deploy) | C | EKS 배포 차단 중 |
 | 🔴 3 | ArgoCD GitLab 리포 연결 + destination 변경 | B-7 | GitOps 미연결 |
 | 🟠 4 | KEDA EKS 설치 + ECR 미러링 (B-16) | B-5/B-16 | HPA 미작동 |
+| ✅ - | Mimir out-of-order 수정 완료 | D-5 | Alloy 400 에러 해소, 모니터링 수집 정상화 |
+| 🔴 2.5 | auth 서비스 EKS 배포 확인 (ECR 빌드 후) | B | tutum.my 소셜로그인 차단 중 |
 | 🟠 5 | GitLab Runner EKS 설치 (B-17) | B-17 | 온프레미스 CI 의존 잔존 |
-| 🟠 6 | MongoDB EC2 이전 | D-9 | 독립 VM 폐기 조건 |
+| 🟠 6 | MongoDB in-cluster auth hardening + Atlas writer audit | D-9 | 정본 전환 후 보안/정리 필요 |
 | 🟠 7 | Kafka EC2 이전 | D-10 | K8s 워크로드 의존 제거 |
 | 🟡 8 | Kyverno EKS 설치 | B-6 | 이미지 서명 검증 미적용 |
 | 🟡 9 | Redis EKS StatefulSet 배포 | D-2 | 세션/캐시 미작동 |
 | 🟡 10 | Elasticsearch EKS 배포 + S3 스냅샷 복원 | D-4 | 뉴스 검색 미작동 |
-| 🟡 11 | LGTM 어드민 페이지 동작 확인 | D-9-V | 모니터링 검증 |
-| 🟡 12 | MinIO → S3 이전 | D-1 | 파일 업로드 미작동 |
+| 🟠 11 | Tempo trace export 복구 + Kafka lag metric 수집 | D-9-V | 모니터링 검증 미완 |
+| 🟡 12 | MinIO 잔여 데이터 mirror 및 배포 검증 | D-1 | object 정합성 최종 확인 필요 |
