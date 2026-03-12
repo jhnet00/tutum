@@ -1951,7 +1951,6 @@ async def get_data_metrics():
 _BACKUP_CRONJOBS = [
     {"name": "mongodb-backup", "namespace": "tutum-data", "label": "MongoDB"},
     {"name": "elasticsearch-backup", "namespace": "tutum-data", "label": "Elasticsearch"},
-    {"name": "etcd-backup", "namespace": "kube-system", "label": "etcd"},
 ]
 
 _K8S_API = "https://kubernetes.default.svc"

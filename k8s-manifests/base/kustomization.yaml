@@ -22,8 +22,6 @@ resources:
   - data/kafka-exporter.yaml
   - data/elasticsearch.yaml
   - data/elasticsearch-exporter.yaml
-  - storage/minio-secret.yaml
-  - storage/minio.yaml
   - workers/price-producer.yaml
   - workers/price-consumer.yaml
   - workers/email-worker.yaml
@@ -41,5 +39,5 @@ resources:
   - monitoring/alloy-config.yaml
   - monitoring/alloy.yaml
   - backup/mongodb-backup.yaml
-  - backup/etcd-backup.yaml
+  - backup/elasticsearch-backup.yaml
   - infra/cloudflared.yaml

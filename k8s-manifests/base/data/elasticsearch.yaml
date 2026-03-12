@@ -36,8 +36,6 @@ spec:
       labels:
         app: elasticsearch
     spec:
-      # ES 8.x: repository-s3는 내장 모듈 (플러그인 설치 불필요)
-      # initContainer로 MinIO 자격증명을 ES keystore에 주입 → S3 스냅샷 저장소 등록 시 인증 사용
       initContainers:
         - name: setup-keystore
           image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/elasticsearch/elasticsearch:8.17.0
@@ -46,23 +44,23 @@ spec:
             - -c
             - |
               set -e
-              echo "[init] ES keystore 설정 시작"
+              echo "[init] configuring Elasticsearch keystore"
               elasticsearch-keystore create --silent 2>/dev/null || true
               echo "${S3_ACCESS_KEY}" | elasticsearch-keystore add --stdin --force s3.client.default.access_key
               echo "${S3_SECRET_KEY}" | elasticsearch-keystore add --stdin --force s3.client.default.secret_key
               cp /usr/share/elasticsearch/config/elasticsearch.keystore /keystore-dir/
-              echo "[init] keystore 설정 완료"
+              echo "[init] keystore ready"
           env:
             - name: S3_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: minio-secret
-                  key: MINIO_ROOT_USER
+                  name: s3-backup-secret
+                  key: AWS_ACCESS_KEY_ID
             - name: S3_SECRET_KEY
               valueFrom:
                 secretKeyRef:
-                  name: minio-secret
-                  key: MINIO_ROOT_PASSWORD
+                  name: s3-backup-secret
+                  key: AWS_SECRET_ACCESS_KEY
           volumeMounts:
             - name: keystore-dir
               mountPath: /keystore-dir

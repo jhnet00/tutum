@@ -1239,7 +1239,7 @@ kubectl get pods -n tutum-app
 # 2. 시세: KIS API, Upbit API 호출 정상 여부
 # 3. 뉴스: Elasticsearch 연결 (아직 온프레미스 Node3 사용, Phase D에서 이전)
 # 4. AI 채팅: Bedrock Claude 응답 정상 여부
-# 5. OCR: MinIO 연결 (아직 on-prem MinIO, Phase D에서 S3 전환)
+# 5. OCR: S3 연결 (2026-03-12 staging cutover 완료, MinIO 제거는 후속 정리)
 # 6. MariaDB: 사용자 로그인/회원가입
 
 # ALB DNS 확인
@@ -1334,6 +1334,14 @@ aws s3api put-bucket-lifecycle-configuration \
     ]
   }'
 ```
+
+**2026-03-12 상태 업데이트**
+- staging `backend` / `ocr`는 `tutum-prod-storage`를 사용하도록 전환 완료
+- `backend-secret`에 `S3_BUCKET_NAME` 반영, `MINIO_*` 직접 설정 제거 완료
+- 실제 업로드 검증 완료 (`ocr-images/`, `profile-images/` S3 객체 생성 확인)
+- `mongodb-backup`는 S3 `backups/mongodb/`로 전환 완료
+- Elasticsearch snapshot 경로는 S3 `backups/elasticsearch/` 기준으로 전환 완료
+- EKS base에서는 MinIO StatefulSet과 `etcd-backup` CronJob을 제거 완료
 
 ---
 
@@ -2134,7 +2142,7 @@ kubectl logs -n tutum-app -l app=price-consumer --tail=20 | grep -E "kafka|conne
 | Redis StatefulSet | K8s tutum-data | EKS tutum-data | ⬜ 미완료 |
 | Kafka StatefulSet | K8s tutum-data | Kafka EC2 (D-10) | ⬜ 미완료 |
 | Elasticsearch StatefulSet | K8s tutum-data | EKS tutum-data | ⬜ 미완료 |
-| MinIO StatefulSet | K8s tutum-storage | S3 버킷 (D-1) | ⬜ 미완료 |
+| MinIO StatefulSet | K8s tutum-storage | S3 버킷 (D-1) | ☑ 완료 (EKS base 배포 제외) |
 | Monitoring VM (192.168.0.230) | VirtualBox VM | EC2 10.60.11.95 | ✅ 완료 |
 | MongoDB VM (192.168.0.231) | VirtualBox VM | MongoDB EC2 (D-9) | ⬜ 미완료 |
 | ArgoCD | K8s argocd ns | EKS argocd ns | ✅ 설치 완료 (GitLab 연결 미완료) |
@@ -2258,7 +2266,7 @@ gabia.com 로그인 → My가비아 → 서비스 관리 → 도메인
 **컷오버 체크리스트** (순서 중요):
 ```
 1. [ ] EKS 스테이징에서 E2E 기능 검증 완료
-2. [ ] MinIO → S3 데이터 이전 완료 + 백엔드 S3 연결 확인
+2. [x] Backend/OCR S3 연결 확인 + 업로드 검증 완료
 3. [ ] Elasticsearch EC2 복원 완료 + 뉴스 검색 정상
 4. [ ] 가비아 네임서버 → Route53 변경
 5. [ ] ACM 인증서 ISSUED 확인 (네임서버 전파 후 자동 완료)
@@ -2427,14 +2435,14 @@ aws budgets create-budget \
 - [ ] 스테이징 E2E 검증 (로그인, 시세, 뉴스, AI, OCR, MariaDB)
 
 ### Phase D (데이터 이전) — 🔶 진행 중
-- [ ] S3 버킷 생성 (`tutum-prod-storage`) + KMS 암호화 + 퍼블릭 액세스 차단
+- [x] S3 버킷 생성 (`tutum-prod-storage`) + KMS 암호화 + 퍼블릭 액세스 차단
 - [ ] MinIO → S3 mc mirror 완료 (ocr-images, profile-images 버킷)
-- [ ] Backend MINIO_* env → S3 + IRSA 적용 (키 제거)
+- [x] Backend MINIO_* env → S3 + IRSA 적용 (키 제거)
 - [ ] Redis: 빈 상태 시작 (캐시 데이터 손실 허용) or RDB 이전
 - [x] 모니터링 EC2 생성 (EKS VPC private subnet, t3.medium) ← 완료 (10.60.11.95)
 - [x] Docker Compose LGTM 기동 (Grafana/Loki/Tempo/Mimir) ← 완료
 - [x] EKS Alloy DaemonSet remote_write → 모니터링 EC2 내부 IP ← 완료
-- [ ] S3 Lifecycle 설정 (ocr-images 180일 만료, backups/ Glacier 30일)
+- [x] S3 Lifecycle 설정 (ocr-images 180일 만료, backups/ Glacier 30일)
 - [ ] CloudTrail 활성화 + S3 저장 (90일 보관)
 - [x] **[완료] MariaDB → RDS 이전** (D-5, 2026-03-10: tutum-mariadb.cfoeqgoysp2f, backend-secret 패치 완료)
 - [ ] **SonarQube 배포** (D-6: CI/CD 코드 품질 게이트)
