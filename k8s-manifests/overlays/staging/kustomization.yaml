@@ -12,6 +12,7 @@ patches:
   - path: replicas-patch.yaml
   - path: remove-nodeselector-patch.yaml
   - path: private-general-nodepool-patch.yaml
+  - path: kafka-startup-probe-patch.yaml
 
 images:
   - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/frontend

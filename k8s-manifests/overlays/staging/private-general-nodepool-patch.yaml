@@ -36,3 +36,19 @@ spec:
         $patch: replace
         eks.amazonaws.com/nodeclass: private-only
         karpenter.sh/nodepool: private-general
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: tutum-data
+spec:
+  template:
+    metadata:
+      annotations:
+        karpenter.sh/do-not-disrupt: "true"
+    spec:
+      nodeSelector:
+        $patch: replace
+        eks.amazonaws.com/nodeclass: private-only
+        karpenter.sh/nodepool: private-general
