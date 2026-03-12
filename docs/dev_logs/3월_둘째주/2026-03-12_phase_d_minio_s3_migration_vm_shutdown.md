@@ -4,7 +4,7 @@
 - 작업 일시: 2026-03-12
 - 작업자: 박성준
 - 브랜치: develop
-- 작업 목적: Phase D 잔여 항목 마무리 — MinIO EKS PVC 정리와 on-prem MinIO 데이터 S3 이관, MongoDB legacy VM 종료, on-prem monitoring VM 종료
+- 작업 목적: Phase D 잔여 항목 마무리 — MinIO EKS PVC 정리와 on-prem MinIO 데이터 S3 이관, MongoDB legacy VM 종료, on-prem monitoring VM 종료, on-prem K8s 클러스터 worker/cp 종료 (cp-2 제외)
 
 ## 2. 상세 변경 사항
 
@@ -41,6 +41,17 @@
 - on-prem K8s Alloy는 `192.168.0.230`으로 전송 중이나, on-prem 클러스터 자체가 해체 예정이므로 허용
 - `sudo shutdown -h now`로 VM 종료, SSH 타임아웃으로 오프라인 확인
 
+### D-11: on-prem K8s 클러스터 worker/cp 종료
+- `kubectl get pods -A -o wide` 로 worker1~3 실행 파드 목록 확인
+  - 잔존 파드: argocd, cert-manager, istio, keda, kyverno, tutum-app, tutum-data, tutum-storage, sonarqube 등
+  - 해당 워크로드는 모두 EKS에 동일 기능 존재, on-prem 파드는 구형 잔존 분
+- `kubectl drain worker1 worker2 worker3 --ignore-daemonsets --delete-emptydir-data --force --grace-period=10 --timeout=120s`
+  - worker2: drain 완료
+  - worker1, worker3: StatefulSet PDB로 타임아웃 → VM 직접 종료로 전환
+- SSH로 worker1~3 동시 `shutdown -h now` → 모두 오프라인 확인
+- SSH로 cp-1, cp-3 동시 `shutdown -h now` → 모두 오프라인 확인
+- **cp-2 (192.168.0.221)는 aws CLI + EKS kubeconfig 용도로 유지**
+
 ## 3. 작업 중 발생 이슈 및 대응
 - 이슈: local bash 환경에 aws CLI 미설치로 `aws ssm send-command` 실행 불가
 - 대응: cp-2(192.168.0.221)에 aws CLI와 EKS kubeconfig가 구성되어 있음을 확인하고, cp-2 SSH를 통해 EKS kubectl 명령 실행
@@ -57,6 +68,12 @@
 | legacy MongoDB VM (192.168.0.231) | 오프라인 ✅ |
 | on-prem monitoring VM (192.168.0.230) | 오프라인 ✅ |
 | AWS monitoring EC2 (10.60.11.95) | 영향 없음, LGTM 스택 운영 중 ✅ |
+| on-prem worker1 (192.168.0.223) | 오프라인 ✅ |
+| on-prem worker2 (192.168.0.224) | 오프라인 ✅ |
+| on-prem worker3 (192.168.0.225) | 오프라인 ✅ |
+| on-prem cp-1 (192.168.0.220) | 오프라인 ✅ |
+| on-prem cp-3 (192.168.0.222) | 오프라인 ✅ |
+| on-prem cp-2 (192.168.0.221) | 유지 중 (AWS CLI 전용) ✅ |
 
 ## 5. 커밋 로그
 ```bash
@@ -64,8 +81,7 @@ git log --oneline --since="2026-03-12" --until="2026-03-12 23:59:59"
 ```
 
 ## 6. 후속 작업/리스크
-- on-prem `cloudflared` pod: worker1~3에 아직 잔존 중 → worker 종료 시 자동 해소
-- on-prem `minio` pod: worker1~3에서 실행 중, S3 전환 완료됐으므로 worker 종료 시 같이 해소
-- on-prem worker1~3 drain + cp1~3 종료: D-11 마지막 단계, 별도 계획 수립 필요
 - `tutum-storage` 네임스페이스 자체: PVC 삭제 완료, namespace 정리는 추후 판단
 - InfluxDB: Mimir로 대체됨. k6 차기 테스트는 `--out=experimental-prometheus-rw`로 Mimir 직접 push 사용 권장
+- cp-2 (192.168.0.221): on-prem kubeadm etcd quorum 상실 (3→1). K8s 클러스터 기능 불가 상태이나 aws CLI / EKS kubectl 기능은 정상. 팀에서 더 이상 cp-2가 필요 없을 경우 종료 가능
+- on-prem 물리 호스트 PC들의 전원/네트워크 비용이 잔존하므로, cp-2 종료 시점 팀 내 합의 후 진행 권장
