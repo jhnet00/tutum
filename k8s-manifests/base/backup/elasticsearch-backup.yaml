@@ -29,6 +29,7 @@ spec:
                 - -c
                 - |
                   set -e
+                  CURL_ARGS="--retry 10 --retry-all-errors --retry-delay 2 --max-time 30"
                   trap 'curl -fsS -X POST http://127.0.0.1:15020/quitquitquit >/dev/null 2>&1 || true' EXIT
                   DATE="$(date +%Y-%m-%d)"
                   SNAPSHOT="snap-${DATE}"
@@ -40,13 +41,13 @@ spec:
 
                   echo "[$(date)] starting Elasticsearch backup for ${DATE}"
 
-                  REPO_EXISTS="$(curl -s -o /dev/null -w "%{http_code}" \
+                  REPO_EXISTS="$(curl ${CURL_ARGS} -s -o /dev/null -w "%{http_code}" \
                     "${ES_URL}/_snapshot/${REPO_NAME}")"
 
                   if [ "${REPO_EXISTS}" != "200" ]; then
                     echo "[$(date)] registering snapshot repository ${REPO_NAME}"
                     printf '%s' "{\"type\":\"s3\",\"settings\":{\"bucket\":\"${S3_BUCKET_NAME}\",\"region\":\"${AWS_REGION}\",\"base_path\":\"backups/elasticsearch\"}}" > "${REPO_PAYLOAD}"
-                    REGISTER_STATUS="$(curl -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
+                    REGISTER_STATUS="$(curl ${CURL_ARGS} -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
                       -X PUT "${ES_URL}/_snapshot/${REPO_NAME}" \
                       -H 'Content-Type: application/json' \
                       --data-binary @"${REPO_PAYLOAD}" || true)"
@@ -57,7 +58,7 @@ spec:
                     fi
                   fi
 
-                  SNAP_EXISTS="$(curl -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
+                  SNAP_EXISTS="$(curl ${CURL_ARGS} -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
                     "${ES_URL}/_snapshot/${REPO_NAME}/${SNAPSHOT}" || true)"
                   if [ "${SNAP_EXISTS}" = "200" ]; then
                     RESULT="$(cat "${RESPONSE_FILE}")"
@@ -71,7 +72,7 @@ spec:
                     fi
                   else
                     printf '%s' '{"include_global_state":false}' > "${SNAPSHOT_PAYLOAD}"
-                    SNAPSHOT_STATUS="$(curl -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
+                    SNAPSHOT_STATUS="$(curl ${CURL_ARGS} -sS -o "${RESPONSE_FILE}" -w "%{http_code}" \
                       "${ES_URL}/_snapshot/${REPO_NAME}/${SNAPSHOT}?wait_for_completion=true" \
                       -X PUT \
                       -H 'Content-Type: application/json' \
@@ -102,13 +103,13 @@ spec:
                   fi
 
                   if [ -n "${CUTOFF}" ]; then
-                    SNAPSHOTS="$(curl -sf "${ES_URL}/_snapshot/${REPO_NAME}/_all" | \
+                    SNAPSHOTS="$(curl ${CURL_ARGS} -sf "${ES_URL}/_snapshot/${REPO_NAME}/_all" | \
                       grep -o '\"snapshot\":\"snap-[^\"]*\"' | cut -d'\"' -f4 || true)"
 
                     for SNAP in ${SNAPSHOTS}; do
                       SNAP_DATE="$(echo "${SNAP}" | sed 's/snap-//')"
                       if [ "${SNAP_DATE}" \< "${CUTOFF}" ]; then
-                        curl -sf -X DELETE "${ES_URL}/_snapshot/${REPO_NAME}/${SNAP}" >/dev/null || true
+                        curl ${CURL_ARGS} -sf -X DELETE "${ES_URL}/_snapshot/${REPO_NAME}/${SNAP}" >/dev/null || true
                       fi
                     done
                   fi
