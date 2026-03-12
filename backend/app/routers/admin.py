@@ -649,7 +649,7 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
     namespace: "tutum-app" | "tutum-data" | "all"
     """
     ns_pattern = "(tutum-app|tutum-data)" if namespace == "all" else namespace
-    base_selector = f'{{job="loki.source.kubernetes.k8s_logs", instance=~"{ns_pattern}/.*"}}'
+    base_selector = f'{{job="loki.source.kubernetes.pods", namespace=~"{ns_pattern}"}}'
     log_query = base_selector  # 실시간 스트림 (최근 10분)
     error_query = f'{base_selector} |= "ERROR"'  # 에러 이력 (최근 1시간)
 
@@ -660,12 +660,10 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
         logs = []
         for stream in result:
             labels = stream["stream"]
-            instance = labels.get("instance", "")
             level = labels.get("level", default_level).upper()
-            ns_pod = instance.split(":")[0]
-            parts = ns_pod.split("/", 1)
-            ns_name = parts[0] if len(parts) == 2 else ""
-            pod_name = parts[1] if len(parts) == 2 else instance
+            # Alloy loki.source.kubernetes 레이블: namespace, pod 직접 사용
+            ns_name = labels.get("namespace", "")
+            pod_name = labels.get("pod", labels.get("instance", ""))
             for ts_ns, msg in stream.get("values", []):
                 ts = datetime.fromtimestamp(int(ts_ns) / 1_000_000_000, tz=timezone.utc)
                 logs.append({
@@ -978,7 +976,7 @@ async def _collect_pipeline_data() -> dict:
     try:
         for worker in _ALL_WORKERS:
             try:
-                query = f'{{job="loki.source.kubernetes.k8s_logs", instance=~"tutum-app/{worker}-.*"}}'
+                query = f'{{job="loki.source.kubernetes.pods", namespace="tutum-app", app=~"{worker}.*"}}'
                 resp = await _HTTP_LOKI.get(
                     f"{LOKI_URL}/loki/api/v1/query_range",
                     params={"query": query, "limit": 5, "start": start_ns, "end": end_ns, "direction": "backward"},
@@ -1304,7 +1302,7 @@ async def get_log_diagnose(
         resp = await _HTTP_LOKI.get(
             f"{LOKI_URL}/loki/api/v1/query_range",
             params={
-                "query": '{job="loki.source.kubernetes.k8s_logs"} |= "ERROR"',
+                "query": '{job="loki.source.kubernetes.pods"} |= "ERROR"',
                 "limit": 50,
                 "start": start_ns,
                 "end": end_ns,

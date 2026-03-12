@@ -6,8 +6,53 @@ metadata:
 data:
   config.alloy: |
     // ── Prometheus metrics scraping ──────────────────────────────────────
+    // annotation 기반 relabeling: prometheus.io/scrape, /port, /path 적용
+    // Istio sidecar가 주입된 pod는 port:15020, path:/stats/prometheus 로 덮어씌워지므로
+    // 해당 annotation을 그대로 사용해 merged metrics(app+envoy)를 스크레이프함
+    discovery.relabel "pods_scrape" {
+      targets = discovery.kubernetes.pods.targets
+
+      // prometheus.io/scrape: "true" 인 pod만 스크레이프
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+        action        = "keep"
+        regex         = "true"
+      }
+
+      // prometheus.io/path annotation으로 scrape path 오버라이드
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+        action        = "replace"
+        target_label  = "__metrics_path__"
+        regex         = "(.+)"
+      }
+
+      // prometheus.io/port annotation으로 scrape port 오버라이드
+      rule {
+        source_labels = ["__address__", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+        action        = "replace"
+        regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+        replacement   = "$1:$2"
+        target_label  = "__address__"
+      }
+
+      // 식별용 label 추가
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        target_label  = "app"
+      }
+    }
+
     prometheus.scrape "kubernetes_pods" {
-      targets    = discovery.kubernetes.pods.targets
+      targets    = discovery.relabel.pods_scrape.output
       forward_to = [prometheus.remote_write.mimir.receiver]
       scrape_interval = "30s"
     }
