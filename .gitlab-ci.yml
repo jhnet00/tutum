@@ -24,8 +24,8 @@ variables:
   WORKERS_IMAGE: "${ECR_REGISTRY}/tutum/workers"
   # 매니페스트는 동일 레포(tutum-backend)의 overlays/에 위치 → ArgoCD가 같은 레포 감시
   K8S_MANIFESTS_REPO: "https://gitlab.com/tutum-project/tutum-app/tutum-backend.git"
-  STAGING_MANIFEST: "overlays/staging/kustomization.yaml"
-  PRODUCTION_MANIFEST: "overlays/production/kustomization.yaml"
+  STAGING_MANIFEST: "k8s-manifests/overlays/staging/kustomization.yaml"
+  PRODUCTION_MANIFEST: "k8s-manifests/overlays/production/kustomization.yaml"
 
 # GitLab commit policy guard (ignored files such as env examples are allowed)
 guard:commit-policy:
@@ -515,7 +515,18 @@ deploy:staging:
     update_kustomization() {
       local image="$1"
       if grep -qF "  - name: ${image}" "${kustomization_file}"; then
-        sed -i "\#  - name: ${image}$#{n;s#newTag: .*#newTag: ${CI_COMMIT_SHORT_SHA}#;}" "${kustomization_file}"
+        awk -v image="  - name: ${image}" -v tag="${CI_COMMIT_SHORT_SHA}" '
+          $0 == image {
+            print
+            if (getline) {
+              sub(/newTag: .*/, "newTag: " tag)
+              print
+              next
+            }
+          }
+          { print }
+        ' "${kustomization_file}" > "${kustomization_file}.tmp"
+        mv "${kustomization_file}.tmp" "${kustomization_file}"
         echo "1" > /tmp/manifest_changed
         echo "Updated ${image}"
       else
@@ -573,7 +584,18 @@ deploy:production:
     update_kustomization() {
       local image="$1"
       if grep -qF "  - name: ${image}" "${kustomization_file}"; then
-        sed -i "\#  - name: ${image}$#{n;s#newTag: .*#newTag: ${CI_COMMIT_SHORT_SHA}#;}" "${kustomization_file}"
+        awk -v image="  - name: ${image}" -v tag="${CI_COMMIT_SHORT_SHA}" '
+          $0 == image {
+            print
+            if (getline) {
+              sub(/newTag: .*/, "newTag: " tag)
+              print
+              next
+            }
+          }
+          { print }
+        ' "${kustomization_file}" > "${kustomization_file}.tmp"
+        mv "${kustomization_file}.tmp" "${kustomization_file}"
         echo "1" > /tmp/manifest_changed
         echo "Updated ${image}"
       else
