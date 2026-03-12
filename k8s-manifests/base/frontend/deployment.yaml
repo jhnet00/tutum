@@ -42,10 +42,10 @@ spec:
               const adminPagePath = "/app/.next/server/app/admin/page.js";
               if (fs.existsSync(adminPagePath)) {
                 const adminSource = fs.readFileSync(adminPagePath, "utf8");
-                const adminTarget = 'href:"".concat("http://192.168.0.230:3000","/explore")';
-                const adminReplacement = 'href:"".concat("http://10.60.11.95:3000","/explore")';
-                if (adminSource.includes(adminTarget)) {
-                  fs.writeFileSync(adminPagePath, adminSource.replace(adminTarget, adminReplacement));
+                const legacyGrafanaUrl = "http://192.168.0.230:3000/explore";
+                const awsGrafanaUrl = "http://10.60.11.95:3000/explore";
+                if (adminSource.includes(legacyGrafanaUrl)) {
+                  fs.writeFileSync(adminPagePath, adminSource.replaceAll(legacyGrafanaUrl, awsGrafanaUrl));
                 }
               }
               NODE

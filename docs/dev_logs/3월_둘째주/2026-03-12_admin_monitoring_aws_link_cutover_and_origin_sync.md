@@ -11,7 +11,7 @@
   - `TEMPO_URL`, `GRAFANA_URL` 기본값을 온프레미스 `192.168.0.230`에서 AWS monitoring EC2 `10.60.11.95`로 정정
 - `k8s-manifests/base/frontend/deployment.yaml`
   - frontend 컨테이너 startup patch에 `/app/.next/server/app/admin/page.js` 치환 로직 추가
-  - Traces 탭 상단 고정 링크 `Grafana Tempo ->`가 `http://10.60.11.95:3000/explore`를 가리키도록 보정
+  - Traces 탭 상단 고정 링크 `Grafana Tempo ->`의 legacy URL `http://192.168.0.230:3000/explore`를 AWS monitoring URL `http://10.60.11.95:3000/explore`로 통째로 치환하도록 보정
 - 원격 동기화 확인
   - `origin/develop` 최신 커밋 `6bf51f4`, `90861bb`, `dde38bc`, `2c1bfc2`, `8f4ec16` 반영 상태를 기준으로 후속 작업 수행
   - `node-exporter` 이미지가 Docker Hub가 아닌 ECR mirror를 사용하도록 최신 상태 확인
@@ -21,6 +21,8 @@
 - 대응: 원격 최신 상태는 fetch로 확인하고, commit/push는 clean temp clone 기준으로 처리하도록 분리
 - 이슈: 프론트 소스(`frontend/app/admin/page.tsx`)가 저장소에 없고 `.next` 산출물만 있어 링크 수정이 source 레벨이 아니라 build artifact와 startup patch 둘 다 필요했음
 - 대응: Deployment startup patch가 컨테이너 내부 `.next` 산출물을 직접 치환하도록 바꿔 새 이미지 재빌드 없이도 링크 경로를 보정할 수 있게 함
+- 이슈: live frontend 이미지의 `page.js`는 로컬 확인본과 minified 형태가 달라 `href:\"\".concat(...)` 타깃 치환이 실제 컨테이너에서 동작하지 않았음
+- 대응: 특정 AST 형태가 아니라 legacy Grafana URL 문자열 전체를 `replaceAll`로 치환하도록 보강
 
 ## 4. 결과
 - 검증 항목:
@@ -32,6 +34,7 @@
   - `origin/develop` 최신 HEAD: `6bf51f42f397ced24be8da2f86188aafbfedec8f`
   - live frontend Deployment args는 아직 admin link patch가 없는 상태여서, 이번 commit 반영 후 rollout 필요
   - local verification 기준 `/app/.next/server/app/admin/page.js` 대상 링크 치환 문자열을 startup patch에서 확인
+  - live frontend pod 내부 `page.js` 확인 시 legacy URL이 남아 있는 것을 재현했고, generic URL 치환 방식으로 후속 수정
   - `kubectl -n monitoring get ds node-exporter -o jsonpath='{.spec.template.spec.containers[0].image}'`
     - `903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/prometheus/node-exporter:v1.8.2`
 
