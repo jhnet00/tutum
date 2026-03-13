@@ -8,6 +8,7 @@ stages:
   - sign
   - deploy
   - notify
+  - mirror
 
 workflow:
   rules:
@@ -26,6 +27,7 @@ variables:
   K8S_MANIFESTS_REPO: "https://gitlab.com/tutum-project/tutum-app/tutum-backend.git"
   STAGING_MANIFEST: "k8s-manifests/overlays/staging/kustomization.yaml"
   PRODUCTION_MANIFEST: "k8s-manifests/overlays/production/kustomization.yaml"
+  GITHUB_MIRROR_REPO: "https://github.com/kyk02405/clouddx-project.git"
 
 # GitLab commit policy guard (ignored files such as env examples are allowed)
 guard:commit-policy:
@@ -644,3 +646,38 @@ notify:slack_on_success:
       "${SLACK_WEBHOOK_URL}"
   when: on_success
 
+
+mirror:github:
+  stage: mirror
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/alpine:3.20
+  before_script:
+    - apk add --no-cache git
+  script: |
+    set -euo pipefail
+
+    test -n "${GITHUB_MIRROR_TOKEN:-}" || { echo "ERROR: GITHUB_MIRROR_TOKEN is missing"; exit 1; }
+    test -n "${GITHUB_MIRROR_REPO:-}" || { echo "ERROR: GITHUB_MIRROR_REPO is missing"; exit 1; }
+
+    branch="${CI_COMMIT_BRANCH:-}"
+    case "${branch}" in
+      develop|main) ;;
+      *)
+        echo "Skip unsupported branch: ${branch}"
+        exit 0
+        ;;
+    esac
+
+    git config user.email "ci@tutum.dev"
+    git config user.name "GitLab CI"
+    git remote remove github-mirror >/dev/null 2>&1 || true
+    git remote add github-mirror "https://x-access-token:${GITHUB_MIRROR_TOKEN}@${GITHUB_MIRROR_REPO#https://}"
+
+    if git fetch --no-tags github-mirror "${branch}"; then
+      remote_sha="$(git rev-parse "refs/remotes/github-mirror/${branch}")"
+      git push github-mirror "${CI_COMMIT_SHA}:refs/heads/${branch}" --force-with-lease="refs/heads/${branch}:${remote_sha}"
+    else
+      git push github-mirror "${CI_COMMIT_SHA}:refs/heads/${branch}"
+    fi
+  rules:
+    - if: '$GITHUB_MIRROR_TOKEN && $CI_COMMIT_BRANCH == "develop" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api")'
+    - if: '$GITHUB_MIRROR_TOKEN && $CI_COMMIT_BRANCH == "main" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api")'
