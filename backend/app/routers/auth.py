@@ -61,8 +61,14 @@ async def verify_csrf_token(
 ) -> None:
     """Validate CSRF token for state-changing requests.
 
-    If neither auth nor refresh cookie exists, skip CSRF validation.
+    If the request is explicitly authenticated with a Bearer token,
+    treat it as header-based auth and skip cookie CSRF validation.
+    Otherwise, if neither auth nor refresh cookie exists, skip CSRF validation.
     """
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return
+
     auth_cookie = request.cookies.get("auth_token")
     refresh_cookie = request.cookies.get(REFRESH_COOKIE_KEY)
     if not auth_cookie and not refresh_cookie:
