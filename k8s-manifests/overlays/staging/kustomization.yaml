@@ -18,7 +18,7 @@ patches:
 
 images:
   - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/frontend
-    newTag: 6a04b1e0
+    newTag: f43d19d5
   - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/backend
     newTag: bbd11967
   - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/workers
