@@ -24,4 +24,4 @@ images:
   - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/workers
     newTag: 1023001e
   - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/auth
-    newTag: 27f911e3
+    newTag: c1443843
