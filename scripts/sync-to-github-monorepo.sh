@@ -11,6 +11,7 @@ SYNC_TARGET_PATH=${SYNC_TARGET_PATH:-}
 SYNC_COMPONENT_NAME=${SYNC_COMPONENT_NAME:-}
 SYNC_BRANCH=${SYNC_BRANCH:-${CI_COMMIT_BRANCH:-}}
 SYNC_ROOT_OWNER=${SYNC_ROOT_OWNER:-0}
+SYNC_ROOT_PATHS=${SYNC_ROOT_PATHS:-}
 
 [ -n "$GITHUB_MONOREPO_REPO" ] || { echo "ERROR: GITHUB_MONOREPO_REPO is missing"; exit 1; }
 [ -n "$SYNC_SOURCE_PATH" ] || { echo "ERROR: SYNC_SOURCE_PATH is missing"; exit 1; }
@@ -54,6 +55,7 @@ if [ "$SYNC_ROOT_OWNER" = "1" ]; then
     ! -name 'backend' \
     ! -name 'frontend' \
     ! -name 'auth' \
+    ! -name 'docs' \
     -exec rm -rf {} +
 
   cat > README.md <<'EOF'
@@ -68,6 +70,7 @@ Mapped repositories:
 - backend -> `backend/`
 - frontend -> `frontend/`
 - auth -> `auth/`
+- docs -> `docs/` (mirrored from backend repo)
 EOF
 
   cat > .gitignore <<'EOF'
@@ -79,6 +82,46 @@ __pycache__/
 *.pyc
 *.pyo
 EOF
+fi
+
+if [ -n "$SYNC_ROOT_PATHS" ]; then
+  old_ifs=$IFS
+  IFS=','
+  for root_path in $SYNC_ROOT_PATHS; do
+    IFS=$old_ifs
+    root_path=$(printf '%s' "$root_path" | sed 's#^[[:space:]]*##;s#[[:space:]]*$##')
+    [ -n "$root_path" ] || continue
+
+    src_root="$REPO_ROOT/$root_path"
+    if [ ! -d "$src_root" ]; then
+      echo "ERROR: root sync source directory not found: $src_root"
+      exit 1
+    fi
+
+    mkdir -p "$root_path"
+    find "$root_path" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+
+    tar \
+      --exclude='.git' \
+      --exclude='.github' \
+      --exclude='.gitlab-ci.yml' \
+      --exclude='.idea' \
+      --exclude='.vscode' \
+      --exclude='node_modules' \
+      --exclude='.next' \
+      --exclude='.cache' \
+      --exclude='.logs' \
+      --exclude='__pycache__' \
+      --exclude='.pytest_cache' \
+      --exclude='.venv' \
+      --exclude='*.pyc' \
+      --exclude='*.pyo' \
+      --exclude='tsconfig.tsbuildinfo' \
+      -C "$src_root" -cf - . | tar -C "$root_path" -xf -
+
+    IFS=','
+  done
+  IFS=$old_ifs
 fi
 
 mkdir -p "$SYNC_TARGET_PATH"
