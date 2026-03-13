@@ -55,7 +55,6 @@ if [ "$SYNC_ROOT_OWNER" = "1" ]; then
     ! -name 'backend' \
     ! -name 'frontend' \
     ! -name 'auth' \
-    ! -name 'docs' \
     -exec rm -rf {} +
 
   cat > README.md <<'EOF'
@@ -70,7 +69,6 @@ Mapped repositories:
 - backend -> `backend/`
 - frontend -> `frontend/`
 - auth -> `auth/`
-- docs -> `docs/` (mirrored from backend repo)
 EOF
 
   cat > .gitignore <<'EOF'
