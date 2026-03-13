@@ -1600,7 +1600,9 @@ async def get_trace_diagnose(
         )
         if err_resp.status_code == 200:
             for t in err_resp.json().get("traces", []):
-                error_lines.append(f"  {t.get('rootTraceName','-')} {t.get('durationMs',0)}ms [5xx]")
+                error_lines.append(
+                    f"  {t.get('rootTraceName', '-')} {t.get('durationMs', 0)}ms [5xx]"
+                )
     except Exception as e:
         logger.warning("trace-diagnose error query 실패: %s", e)
     try:
@@ -1610,7 +1612,9 @@ async def get_trace_diagnose(
         )
         if slow_resp.status_code == 200:
             for t in slow_resp.json().get("traces", []):
-                slow_lines.append(f"  {t.get('rootTraceName','-')} {t.get('durationMs',0)}ms")
+                slow_lines.append(
+                    f"  {t.get('rootTraceName', '-')} {t.get('durationMs', 0)}ms"
+                )
     except Exception as e:
         logger.warning("trace-diagnose slow query 실패: %s", e)
 
