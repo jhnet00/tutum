@@ -4,73 +4,96 @@ set -euo pipefail
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
+RED='\033[0;31m'
 NC='\033[0m'
+
+AWS_REGION="${AWS_REGION:-ap-northeast-2}"
+STAGING_CLUSTER_NAME="${STAGING_CLUSTER_NAME:-tutum-stg-eks}"
+MONITORING_INSTANCE_ID="${MONITORING_INSTANCE_ID:-i-0a8cab5d5ce1cac60}"
+START_MONITORING="${START_MONITORING:-1}"
+KUBECTL_BIN="${KUBECTL_BIN:-$(command -v kubectl 2>/dev/null || command -v kubectl.exe 2>/dev/null || true)}"
+AWS_BIN="${AWS_BIN:-$(command -v aws 2>/dev/null || command -v aws.exe 2>/dev/null || true)}"
 
 log()  { echo -e "${GREEN}[$(date +%H:%M:%S)]${NC} $*"; }
 warn() { echo -e "${YELLOW}[$(date +%H:%M:%S)]${NC} $*"; }
 info() { echo -e "${CYAN}[$(date +%H:%M:%S)]${NC} $*"; }
+fail() { echo -e "${RED}[$(date +%H:%M:%S)]${NC} $*" >&2; exit 1; }
 
-log "[1/5] Start monitoring EC2 (i-0a8cab5d5ce1cac60)"
-aws ec2 start-instances \
-  --instance-ids i-0a8cab5d5ce1cac60 \
-  --region ap-northeast-2 \
-  --output text \
-  --query 'StartingInstances[0].CurrentState.Name' \
-  >/dev/null 2>&1 \
-  && log "monitoring EC2 start requested" \
-  || warn "failed to start monitoring EC2; check AWS CLI credentials"
+[[ -n "${KUBECTL_BIN}" ]] || fail "kubectl not found in PATH"
+[[ -n "${AWS_BIN}" ]] || fail "aws CLI not found in PATH"
 
-log "[2/5] Restore ArgoCD core components"
-kubectl scale statefulset argocd-application-controller -n argocd --replicas=1 2>/dev/null || true
-kubectl scale deployment argocd-redis -n argocd --replicas=1 2>/dev/null || true
-kubectl scale deployment argocd-repo-server -n argocd --replicas=1 2>/dev/null || true
-kubectl scale deployment argocd-server -n argocd --replicas=1 2>/dev/null || true
-kubectl scale deployment argocd-dex-server -n argocd --replicas=1 2>/dev/null || true
-kubectl scale deployment argocd-applicationset-controller -n argocd --replicas=1 2>/dev/null || true
-kubectl scale deployment argocd-notifications-controller -n argocd --replicas=1 2>/dev/null || true
+current_context="$("${KUBECTL_BIN}" config current-context 2>/dev/null || true)"
+[[ -n "${current_context}" ]] || fail "kubectl current-context is empty"
+[[ "${current_context}" == *"${STAGING_CLUSTER_NAME}"* ]] || fail "current context '${current_context}' is not ${STAGING_CLUSTER_NAME}"
 
-log "[3/5] Wait for ArgoCD control plane"
-kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=180s
-kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=120s
+scale_named_deployments() {
+  local namespace="$1"
+  local replicas="$2"
+  shift 2
 
-log "[4/5] Resume KEDA scaled objects"
-for so in $(kubectl get scaledobject -n tutum-app -o name 2>/dev/null || true); do
-  kubectl annotate "${so}" -n tutum-app autoscaling.keda.sh/paused- --overwrite 2>/dev/null || true
-done
+  for deploy in "$@"; do
+    "${KUBECTL_BIN}" scale deployment "${deploy}" -n "${namespace}" --replicas="${replicas}" 2>/dev/null || true
+  done
+}
 
-log "[5/5] Restore non-KEDA workloads"
-kubectl scale deployment auth -n tutum-app --replicas=2 2>/dev/null || true
-kubectl scale deployment email-worker -n tutum-app --replicas=1 2>/dev/null || true
-kubectl scale deployment news-producer -n tutum-app --replicas=1 2>/dev/null || true
-kubectl scale deployment price-producer -n tutum-app --replicas=1 2>/dev/null || true
-kubectl scale deployment ocr -n tutum-app --replicas=1 2>/dev/null || true
-
-kubectl scale deployment elasticsearch-exporter -n tutum-data --replicas=1 2>/dev/null || true
-kubectl scale deployment kafka-exporter -n tutum-data --replicas=1 2>/dev/null || true
-kubectl scale deployment redis-exporter -n tutum-data --replicas=1 2>/dev/null || true
-
-kubectl scale deployment kyverno-admission-controller -n kyverno --replicas=1 2>/dev/null || true
-kubectl scale deployment kyverno-background-controller -n kyverno --replicas=1 2>/dev/null || true
-kubectl scale deployment kyverno-cleanup-controller -n kyverno --replicas=1 2>/dev/null || true
-kubectl scale deployment kyverno-reports-controller -n kyverno --replicas=1 2>/dev/null || true
-
-kubectl scale deployment --all -n gitlab-runner --replicas=1 2>/dev/null || true
-
-if kubectl get deployment istio-ingressgateway -n istio-system >/dev/null 2>&1; then
-  info "legacy istio-ingressgateway detected; scaling it back to 1"
-  kubectl scale deployment istio-ingressgateway -n istio-system --replicas=1 2>/dev/null || true
+log "[1/6] Start monitoring EC2 when requested"
+if [[ "${START_MONITORING}" == "1" ]]; then
+  "${AWS_BIN}" ec2 start-instances \
+    --instance-ids "${MONITORING_INSTANCE_ID}" \
+    --region "${AWS_REGION}" \
+    --output text \
+    --query 'StartingInstances[0].CurrentState.Name' \
+    >/dev/null 2>&1 \
+    && log "monitoring EC2 start requested" \
+    || warn "failed to start monitoring EC2; check AWS CLI credentials"
+else
+  warn "START_MONITORING=0, skipping monitoring EC2 start"
 fi
 
+log "[2/6] Restore cluster control-plane workloads"
+scale_named_deployments kube-system 2 aws-load-balancer-controller metrics-server
+scale_named_deployments external-secrets 1 external-secrets external-secrets-cert-controller external-secrets-webhook
+scale_named_deployments keda 1 keda-operator keda-operator-metrics-apiserver keda-admission-webhooks
+scale_named_deployments kyverno 1 kyverno-admission-controller kyverno-background-controller kyverno-cleanup-controller kyverno-reports-controller
+scale_named_deployments gitlab-runner 1 gitlab-runner
+scale_named_deployments istio-system 1 istiod kiali
+scale_named_deployments kiali-operator 1 kiali-operator
+
+log "[3/6] Restore ArgoCD core components"
+"${KUBECTL_BIN}" scale statefulset argocd-application-controller -n argocd --replicas=1 2>/dev/null || true
+scale_named_deployments argocd 1 \
+  argocd-redis \
+  argocd-repo-server \
+  argocd-server \
+  argocd-dex-server \
+  argocd-applicationset-controller \
+  argocd-notifications-controller
+
+log "[4/6] Wait for ArgoCD control plane"
+"${KUBECTL_BIN}" rollout status statefulset/argocd-application-controller -n argocd --timeout=240s
+"${KUBECTL_BIN}" rollout status deployment/argocd-repo-server -n argocd --timeout=180s
+
+log "[5/6] Resume KEDA and force staging app reconciliation"
+for so in $("${KUBECTL_BIN}" get scaledobject -n tutum-app -o name 2>/dev/null || true); do
+  "${KUBECTL_BIN}" annotate "${so}" -n tutum-app autoscaling.keda.sh/paused- >/dev/null 2>&1 || true
+done
+"${KUBECTL_BIN}" annotate application tutum-staging -n argocd argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
+
+log "[6/6] Restore fixed-replica workloads that ArgoCD should not wait to heal"
+scale_named_deployments tutum-app 2 auth
+scale_named_deployments tutum-app 1 email-worker news-producer price-producer ocr
+scale_named_deployments tutum-data 1 elasticsearch-exporter kafka-exporter redis-exporter
+
 echo
-echo "Cost-up sequence completed."
-echo "KEDA-managed workloads will recover after ArgoCD sync and metric polling."
+echo "Staging full-up sequence completed."
+echo "ArgoCD will restore application and stateful workloads to the manifest-defined state."
 echo
 info "Recommended checks:"
-echo "  kubectl get applications -n argocd"
-echo "  kubectl get pods -n tutum-app --watch"
-echo "  kubectl get nodes --watch"
+echo "  kubectl get app -n argocd tutum-staging"
+echo "  kubectl get pods -A --watch"
+echo "  kubectl get nodepool"
 echo
 info "Expected recovery window:"
-echo "  ArgoCD control plane: 2-3 minutes"
-echo "  Karpenter nodes: 3-5 minutes"
-echo "  Full workload recovery: 5-10 minutes"
+echo "  Control-plane workloads: 2-4 minutes"
+echo "  Karpenter nodes: 3-6 minutes"
+echo "  Full workload recovery: 8-15 minutes"
