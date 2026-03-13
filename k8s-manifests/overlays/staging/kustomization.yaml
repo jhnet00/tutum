@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - ../../base
   - alb-ingress.yaml
+  - sonar-ingress.yaml
   - peer-authentication.yaml
   - private-nodepools.yaml
   - eks-builtin-nodepools.yaml

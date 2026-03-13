@@ -23,18 +23,21 @@ from datetime import datetime, timezone, timedelta
 
 import boto3
 import httpx
-from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorClient
 from botocore.config import Config
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ..config import get_settings
 from ..database import get_database, get_news_collection
 from ..middleware.rate_limit import check_rate_limit
 from .auth import UserResponse, get_current_user
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 MIMIR_URL = os.getenv("MIMIR_URL", "http://10.60.11.95:9009/prometheus")
 LOKI_URL = os.getenv("LOKI_URL", "http://10.60.11.95:3100")
+_ADMIN_MONGO_CLIENT: AsyncIOMotorClient | None = None
 
 _DEFAULT_ADMIN_NETWORKS = "127.0.0.0/8,192.168.0.0/24,10.0.0.0/8"
 
@@ -975,6 +978,54 @@ async def _count_distinct_indexable_news(news_col) -> int:
     return int(rows[0]["count"]) if rows else 0
 
 
+def _get_admin_news_collection():
+    news_col = get_news_collection()
+    if news_col is not None:
+        return news_col
+
+    db = get_database()
+    if db is not None:
+        return db["news"]
+
+    global _ADMIN_MONGO_CLIENT
+    if _ADMIN_MONGO_CLIENT is None:
+        _ADMIN_MONGO_CLIENT = AsyncIOMotorClient(
+            settings.MONGODB_URL,
+            serverSelectionTimeoutMS=2000,
+        )
+    return _ADMIN_MONGO_CLIENT[settings.MONGODB_DB_NAME]["news"]
+
+
+async def _count_recent_distinct_news(news_col, since: datetime) -> int:
+    """Count distinct business keys recently ingested into MongoDB."""
+    rows = await news_col.aggregate([
+        {
+            "$match": {
+                "title": {"$exists": True, "$type": "string", "$ne": ""},
+                "$or": [
+                    {"content": {"$exists": True, "$type": "string", "$ne": ""}},
+                    {"body": {"$exists": True, "$type": "string", "$ne": ""}},
+                ],
+            }
+        },
+        {
+            "$addFields": {
+                "_recent_key": {"$ifNull": ["$url", "$link"]},
+                "_recent_ts": {"$toDate": {"$ifNull": ["$ingested_at", "$created_at"]}},
+            }
+        },
+        {
+            "$match": {
+                "_recent_key": {"$exists": True, "$type": "string", "$ne": ""},
+                "_recent_ts": {"$gte": since},
+            }
+        },
+        {"$group": {"_id": "$_recent_key"}},
+        {"$count": "count"},
+    ]).to_list(length=1)
+    return int(rows[0]["count"]) if rows else 0
+
+
 async def _count_distinct_es_news_urls(es_url: str) -> int | None:
     """Count Elasticsearch docs by distinct business key(url)."""
     try:
@@ -1043,14 +1094,11 @@ async def _collect_pipeline_data() -> dict:
 
     # 2. MongoDB news count
     try:
-        news_col = get_news_collection()
+        news_col = _get_admin_news_collection()
         if news_col is not None:
             total = await _count_distinct_indexable_news(news_col)
             one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
-            # "Added in 1h" should reflect ingestion time, not article publication time.
-            recent = await news_col.count_documents(
-                {"_id": {"$gte": ObjectId.from_datetime(one_hour_ago.replace(tzinfo=None))}}
-            )
+            recent = await _count_recent_distinct_news(news_col, one_hour_ago)
             out["mongodb"] = {"news_total": total, "news_last_1h": recent, "available": True}
     except Exception as e:
         logger.warning("pipeline MongoDB 조회 실패: %s", e)

@@ -1632,6 +1632,13 @@ kubectl run mysql-client --image=mariadb:10.11 --rm -it --restart=Never -n tutum
 **배치**: EC2 (private subnet, t3.medium 권장) 또는 EKS Pod
 **접근**: kubectl port-forward 또는 ALB Ingress (IP 제한)
 
+> **현재 상태 (2026-03-13)**
+> - SonarQube와 PostgreSQL은 AWS monitoring EC2 `tutum-monitoring`(`10.60.11.95`)에서 실제 기동 중이다.
+> - `http://10.60.11.95:9000/api/system/status`는 `200`, 상태는 `UP`이다.
+> - `https://sonar.tutum.my`는 ALB host rule 복구 후 `200` 응답을 확인했다.
+> - 다만 AWS Load Balancer Controller는 external EC2 endpoint를 target group에 자동 등록하지 않아, 현재 Sonar target `10.60.11.95:9000`은 수동 등록 상태다.
+> - GitLab CI Sonar job은 `.gitlab-ci.yml`에 이미 존재하며, 남은 작업은 CI 변수/실행 검증이다.
+
 ```bash
 # EC2 배포 시 docker-compose
 # /opt/sonarqube/docker-compose.yml
@@ -1678,10 +1685,10 @@ sonarqube:
 ```
 
 **체크리스트**:
-- [ ] SonarQube EC2 생성 또는 기존 모니터링 EC2 활용 (메모리 여유 확인)
-- [ ] docker-compose로 SonarQube + PostgreSQL 기동
-- [ ] GitLab CI `SONAR_URL`, `SONAR_TOKEN` 변수 등록
-- [ ] `.gitlab-ci.yml` sonarqube stage 추가
+- [x] SonarQube EC2 생성 또는 기존 모니터링 EC2 활용 (메모리 여유 확인)
+- [x] docker-compose로 SonarQube + PostgreSQL 기동
+- [ ] GitLab CI `SONAR_HOST_URL`, `SONAR_TOKEN` 변수 등록 확인
+- [x] `.gitlab-ci.yml` sonarqube stage 추가
 - [ ] 첫 분석 실행 + 결과 확인
 
 ---
@@ -1690,6 +1697,11 @@ sonarqube:
 
 **배치**: EKS `istio-system` 네임스페이스
 **연동**: Mimir(메트릭), Tempo(트레이싱)
+
+> **현재 상태 (2026-03-13)**
+> - `istio-system/kiali` pod가 `Running` 상태다.
+> - `https://kiali.tutum.my/kiali/`는 `200` 응답을 반환한다.
+> - 운영 경로 기준으로는 설치/노출까지 완료된 상태다.
 
 ```bash
 # Kiali Operator 설치
@@ -1730,9 +1742,9 @@ kubectl port-forward svc/kiali 20001:20001 -n istio-system
 ```
 
 **체크리스트**:
-- [ ] Kiali Operator Helm 설치
-- [ ] Kiali CR 생성 (Mimir/Tempo/Grafana 연동)
-- [ ] 서비스 메시 그래프 확인 (tutum-app 트래픽 흐름)
+- [x] Kiali Operator Helm 설치
+- [x] Kiali CR 생성 (Mimir/Tempo/Grafana 연동)
+- [x] 서비스 메시 그래프 확인 (tutum-app 트래픽 흐름)
 
 ---
 
@@ -1861,9 +1873,11 @@ mongodb://mongodb-0.mongodb-headless.tutum-data.svc.cluster.local:27017,mongodb-
 
 ### D-9-V. LGTM / Admin 모니터링 검증
 
-> **현재 상태 (2026-03-12)**
+> **현재 상태 (2026-03-13)**
 > - `/api/proxy`, `/api/public` ingress를 `frontend-svc`로 복구해 admin 요청이 Next proxy를 경유하도록 수정했다.
 > - Overview KPI, API 처리량/응답시간, Logs 탭은 실제 데이터 확인을 마쳤다.
+> - backend startup patch에 Mongo fallback client와 `$toDate(ingested_at|created_at)` 최근 1시간 집계를 주입해 `Data Store Status`의 Mongo/Elasticsearch business count를 맞췄다.
+> - `/admin`의 AI Summary 탭과 admin login callback 경로는 운영 기준으로 복구됐다.
 > - traces는 OTLP export timeout, Kafka lag는 Mimir lag metric 부재로 후속 조치가 남아 있다.
 
 ```bash
@@ -1889,6 +1903,7 @@ kubectl logs -n monitoring -l app.kubernetes.io/name=alloy --tail=50 | grep -E "
 **LGTM 검증 체크리스트**:
 - [x] `/api/proxy` ingress 복구 후 admin API가 frontend proxy를 경유하도록 수정
 - [x] Overview KPI / API 처리량 그래프 / Logs 탭 정상 확인
+- [x] MongoDB `news_total/news_last_1h`와 Elasticsearch business count 정합성 확인
 - [x] Alloy DaemonSet 전체 노드 Running 확인
 - [ ] traces export (`alloy.monitoring.svc.cluster.local:4317`) timeout 해소
 - [ ] Kafka lag metric Mimir 적재 확인
@@ -2051,8 +2066,10 @@ kubectl logs -n tutum-app -l app=price-consumer --tail=20 | grep -E "kafka|conne
 
 ### D-11. 온프레미스 VM 워크로드 현황 점검 + 단계별 Shutdown 계획
 
-> 2026-03-12 기준 cp1/2/3, w1/2/3, monitoring, mongodb VM에 SSH 접속해 live 상태를 확인했다.
-> 결론은 "핵심 서비스는 상당 부분 AWS로 이전됐지만, 온프레미스 VM을 지금 한 번에 모두 종료하면 안 된다"이다.
+> 2026-03-12 SSH 감사 결과와 2026-03-13 네트워크 재검증 결과를 함께 기준으로 사용한다.
+> 2026-03-13에는 cp1/2/3, w1/2/3, monitoring, mongodb VM 8대 모두 ping 응답을 확인했다.
+> 다만 현재 셸의 SSH 인증키가 없어 2026-03-13에는 네트워크 reachability까지만 재검증했다.
+> 결론은 여전히 "핵심 서비스는 상당 부분 AWS로 이전됐지만, 온프레미스 VM을 지금 한 번에 모두 종료하면 안 된다"이다.
 
 관련 문서:
 - `docs/plans/infra/ONPREM_VM_TO_AWS_MIGRATION_STATUS_2026-03-12.md`
@@ -2074,7 +2091,7 @@ kubectl logs -n tutum-app -l app=price-consumer --tail=20 | grep -E "kafka|conne
 | 앱 워크로드 (`frontend/backend/auth/ocr/workers`) | 주로 `w2`, `w3` | EKS `tutum-app` | 대부분 완료 | 온프레미스 중복 파드 정리 필요 |
 | ArgoCD | `w2`, `w3` | EKS `argocd` | 대부분 완료 | on-prem ArgoCD 철수 절차 필요 |
 | GitLab Runner | `w3` | EKS `gitlab-runner` | 부분 완료 | on-prem runner 사용 여부 최종 감사 필요 |
-| SonarQube | `w1`, `w3` | AWS 대응 미정 | 미완료 | 현재 on-prem only로 보임 |
+| SonarQube | `w1`, `w3` | AWS monitoring EC2 `10.60.11.95:9000` + `sonar.tutum.my` | 대부분 완료 | GitLab CI Sonar 실행 검증, external target 등록 자동화 필요 |
 | Ingress / 외부 진입 | `w3` + MetalLB `192.168.0.240` | AWS ALB + EKS ingress | 부분 완료 | on-prem `cloudflared` 잔존 |
 | Monitoring LGTM | `monitoring VM` | EC2 `10.60.11.95` | 대부분 완료 | old monitoring VM 참조 제거 확인 필요 |
 | MongoDB 앱 DB | `mongodb VM` + on-prem K8s Mongo | EKS `mongodb-0~2` | 대부분 완료 | legacy VM, on-prem Mongo 정리 필요 |
@@ -2090,7 +2107,7 @@ kubectl logs -n tutum-app -l app=price-consumer --tail=20 | grep -E "kafka|conne
 |---|---|---|---|
 | `cp1`, `cp2`, `cp3` | kubeadm control-plane | 종료 금지 | 온프레미스 클러스터 자체가 아직 live |
 | `w1`, `w2`, `w3` | app/data/storage/infra worker | 종료 금지 | 실제 서비스 파드와 infra 파드가 남아 있음 |
-| `monitoring` | old LGTM Docker Compose | 조건부 종료 가능 | AWS monitoring EC2는 있으나 old VM 참조 제거 확인 필요 |
+| `monitoring` | old LGTM Docker Compose | 조건부 종료 가능 | AWS monitoring EC2 LGTM + Sonar는 확인됐고 old VM 참조 제거 확인 필요 |
 | `mongodb` | legacy standalone MongoDB | 조건부 종료 가능 | 앱 정본은 EKS Mongo로 전환됐지만 hidden client audit 필요 |
 
 #### D-11 후속 작업
@@ -2255,7 +2272,7 @@ ssh cp1 'kubectl get svc -A'
 
 - [ ] `tutum.my` 핵심 사용자 경로가 AWS 기준으로 정상 동작
 - [ ] RDS / EKS Mongo / EKS Redis / EKS Kafka / EKS Elasticsearch / S3가 실제 서비스 정본 경로로 확인
-- [ ] monitoring EC2 LGTM / Sonar readiness 확인
+- [x] monitoring EC2 LGTM / Sonar readiness 확인
 - [ ] `mongodb-backup`, `elasticsearch-backup` S3 runtime 검증 완료
 - [ ] traces / Kafka lag 후속 이슈는 원인과 보류 사유가 문서화됨
 - [ ] on-prem `mongodb`, `monitoring`, `cloudflared`, `minio` 종료 조건이 확정됨

@@ -58,6 +58,24 @@ spec:
                       "from botocore.config import Config\nfrom bson import ObjectId",
                   )
 
+              if "from motor.motor_asyncio import AsyncIOMotorClient" not in source and "from botocore.config import Config" in source:
+                  source = source.replace(
+                      "from botocore.config import Config",
+                      "from motor.motor_asyncio import AsyncIOMotorClient\nfrom botocore.config import Config",
+                  )
+
+              if "from ..config import get_settings" not in source and "from ..database import get_database, get_news_collection" in source:
+                  source = source.replace(
+                      "from ..database import get_database, get_news_collection",
+                      "from ..config import get_settings\nfrom ..database import get_database, get_news_collection",
+                  )
+
+              if "settings = get_settings()" not in source and "logger = logging.getLogger(__name__)" in source:
+                  source = source.replace(
+                      "logger = logging.getLogger(__name__)",
+                      "logger = logging.getLogger(__name__)\nsettings = get_settings()\n_ADMIN_MONGO_CLIENT: AsyncIOMotorClient | None = None",
+                  )
+
               helper_block = '''
               def _cpu_usage_to_nano(raw: str) -> int:
                   raw = (raw or "").strip()
@@ -162,6 +180,54 @@ spec:
                   return None
               '''.strip()
 
+              mongo_helper_block = '''
+              def _get_admin_news_collection():
+                  news_col = get_news_collection()
+                  if news_col is not None:
+                      return news_col
+
+                  db = get_database()
+                  if db is not None:
+                      return db["news"]
+
+                  global _ADMIN_MONGO_CLIENT
+                  if _ADMIN_MONGO_CLIENT is None:
+                      _ADMIN_MONGO_CLIENT = AsyncIOMotorClient(
+                          settings.MONGODB_URL,
+                          serverSelectionTimeoutMS=2000,
+                      )
+                  return _ADMIN_MONGO_CLIENT[settings.MONGODB_DB_NAME]["news"]
+
+
+              async def _count_recent_distinct_news(news_col, since: datetime) -> int:
+                  rows = await news_col.aggregate([
+                      {
+                          "$match": {
+                              "title": {"$exists": True, "$type": "string", "$ne": ""},
+                              "$or": [
+                                  {"content": {"$exists": True, "$type": "string", "$ne": ""}},
+                                  {"body": {"$exists": True, "$type": "string", "$ne": ""}},
+                              ],
+                          }
+                      },
+                      {
+                          "$addFields": {
+                              "_recent_key": {"$ifNull": ["$url", "$link"]},
+                              "_recent_ts": {"$toDate": {"$ifNull": ["$ingested_at", "$created_at"]}},
+                          }
+                      },
+                      {
+                          "$match": {
+                              "_recent_key": {"$exists": True, "$type": "string", "$ne": ""},
+                              "_recent_ts": {"$gte": since},
+                          }
+                      },
+                      {"$group": {"_id": "$_recent_key"}},
+                      {"$count": "count"},
+                  ]).to_list(length=1)
+                  return int(rows[0]["count"]) if rows else 0
+              '''.strip()
+
               anchor = '''def _node_status(node) -> str:
                   for cond in (node.status.conditions or []):
                       if cond.type == "Ready":
@@ -177,6 +243,14 @@ spec:
                   source = source.replace(
                       pipeline_anchor,
                       pipeline_anchor + "\n\n" + pipeline_helper_block,
+                      1,
+                  )
+
+              es_helper_anchor = "async def _count_distinct_es_news_urls(es_url: str) -> int | None:"
+              if "_get_admin_news_collection(" not in source and es_helper_anchor in source:
+                  source = source.replace(
+                      es_helper_anchor,
+                      mongo_helper_block + "\n\n" + es_helper_anchor,
                       1,
                   )
 
@@ -213,7 +287,15 @@ spec:
               )
               updated = updated.replace(
                   '            recent = await news_col.count_documents({"published_at": {"$gte": one_hour_ago}})',
-                  '            recent = await news_col.count_documents({"_id": {"$gte": ObjectId.from_datetime(one_hour_ago.replace(tzinfo=None))}})',
+                  '            recent = await _count_recent_distinct_news(news_col, one_hour_ago)',
+              )
+              updated = updated.replace(
+                  '            recent = await news_col.count_documents(\n                {"_id": {"$gte": ObjectId.from_datetime(one_hour_ago.replace(tzinfo=None))}}\n            )',
+                  '            recent = await _count_recent_distinct_news(news_col, one_hour_ago)',
+              )
+              updated = updated.replace(
+                  '        news_col = get_news_collection()',
+                  '        news_col = _get_admin_news_collection()',
               )
               updated = updated.replace(
                   '    {"name": "etcd-backup", "namespace": "kube-system", "label": "etcd"},\n',

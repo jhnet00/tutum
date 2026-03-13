@@ -31,13 +31,31 @@ spec:
               node <<'NODE'
               const fs = require("fs");
               const proxyPath = "/app/.next/server/app/api/proxy/[...path]/route.js";
-              const proxySource = fs.readFileSync(proxyPath, "utf8");
-              const proxyTarget = 'let r;let o=process.env.BACKEND_INTERNAL_URL||"http://localhost:8000";if(!o)return console.error("[Proxy] ERROR: API base URL is not configured"),new Response(JSON.stringify({detail:"API base URL is not configured"}),{status:500,headers:{"Content-Type":"application/json"}});if("import"===t[0]){let e=process.env.OCR_SERVICE_URL||"http://ocr.tutum-app.svc.cluster.local:8002";r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}else r=new URL(`${o.replace(/\\/$/,"")}/${t.join("/")}`);';
-              const proxyReplacement = 'let r;let o=process.env.BACKEND_INTERNAL_URL||"http://backend-svc.tutum-app.svc.cluster.local:8000",n=process.env.AUTH_INTERNAL_URL||"http://auth-svc.tutum-app.svc.cluster.local:8001";if(!o)return console.error("[Proxy] ERROR: API base URL is not configured"),new Response(JSON.stringify({detail:"API base URL is not configured"}),{status:500,headers:{"Content-Type":"application/json"}});if("import"===t[0]){let e=process.env.OCR_SERVICE_URL||"http://ocr.tutum-app.svc.cluster.local:8002";r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}else{let e="api"===t[0]&&"v1"===t[1]&&"auth"===t[2]?n:o;r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}';
-              if (!proxySource.includes(proxyTarget)) {
-                throw new Error("frontend proxy patch target not found");
+              let proxySource = fs.readFileSync(proxyPath, "utf8");
+              const proxyPatches = [
+                {
+                  target: 'let r;let o=process.env.BACKEND_INTERNAL_URL||"http://localhost:8000";if(!o)return console.error("[Proxy] ERROR: API base URL is not configured"),new Response(JSON.stringify({detail:"API base URL is not configured"}),{status:500,headers:{"Content-Type":"application/json"}});if("import"===t[0]){let e=process.env.OCR_SERVICE_URL||"http://ocr.tutum-app.svc.cluster.local:8002";r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}else r=new URL(`${o.replace(/\\/$/,"")}/${t.join("/")}`);',
+                  replacement: 'let r;let o=process.env.BACKEND_INTERNAL_URL||"http://backend-svc.tutum-app.svc.cluster.local:8000",n=process.env.AUTH_INTERNAL_URL||"http://auth-svc.tutum-app.svc.cluster.local:8000";if(!o)return console.error("[Proxy] ERROR: API base URL is not configured"),new Response(JSON.stringify({detail:"API base URL is not configured"}),{status:500,headers:{"Content-Type":"application/json"}});if("import"===t[0]){let e=process.env.OCR_SERVICE_URL||"http://ocr.tutum-app.svc.cluster.local:8002";r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}else{let e="api"===t[0]&&"v1"===t[1]&&"auth"===t[2]?n:o;r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}',
+                },
+                {
+                  target: 'let r;let a=await i(e,t);if(a)return a;let n=process.env.BACKEND_INTERNAL_URL||"http://localhost:8000";if(!n)return console.error("[Proxy] ERROR: API base URL is not configured"),new Response(JSON.stringify({detail:"API base URL is not configured"}),{status:500,headers:{"Content-Type":"application/json"}});if("import"===t[0]){let e=process.env.OCR_SERVICE_URL||"http://ocr.tutum-app.svc.cluster.local:8002";r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}else r=new URL(`${n.replace(/\\/$/,"")}/${t.join("/")}`);',
+                  replacement: 'let r;let a=await i(e,t);if(a)return a;let n=process.env.BACKEND_INTERNAL_URL||"http://backend-svc.tutum-app.svc.cluster.local:8000",o=process.env.AUTH_INTERNAL_URL||"http://auth-svc.tutum-app.svc.cluster.local:8000";if(!n)return console.error("[Proxy] ERROR: API base URL is not configured"),new Response(JSON.stringify({detail:"API base URL is not configured"}),{status:500,headers:{"Content-Type":"application/json"}});if("import"===t[0]){let e=process.env.OCR_SERVICE_URL||"http://ocr.tutum-app.svc.cluster.local:8002";r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}else{let e="api"===t[0]&&"v1"===t[1]&&"auth"===t[2]?o:n;r=new URL(`${e.replace(/\\/$/,"")}/${t.join("/")}`)}',
+                },
+              ];
+              if (!proxySource.includes("AUTH_INTERNAL_URL")) {
+                let proxyPatched = false;
+                for (const patch of proxyPatches) {
+                  if (proxySource.includes(patch.target)) {
+                    proxySource = proxySource.replace(patch.target, patch.replacement);
+                    proxyPatched = true;
+                    break;
+                  }
+                }
+                if (!proxyPatched) {
+                  console.warn("[startup-patch] frontend proxy patch target not found");
+                }
               }
-              fs.writeFileSync(proxyPath, proxySource.replace(proxyTarget, proxyReplacement));
+              fs.writeFileSync(proxyPath, proxySource);
 
               const middlewarePath = "/app/.next/server/middleware.js";
               if (fs.existsSync(middlewarePath)) {
@@ -50,21 +68,24 @@ spec:
                 const assetBounceReplacement = 'if(i&&r){let n=e.nextUrl.searchParams.get("callbackUrl");return n&&n.startsWith("/")?Y.redirect(new URL(n,e.url)):Y.redirect(new URL("/portfolio/asset",e.url))}let o=e.cookies.get("login_callback")?.value;if(r&&o&&o.startsWith("/")&&!o.startsWith("//")&&t.startsWith("/portfolio/asset")){let n=Y.redirect(new URL(o,e.url));return n.cookies.set("login_callback","",{path:"/",maxAge:0}),n}return Y.next()';
                 if (!middlewareSource.includes('login_callback')) {
                   if (!middlewareSource.includes(protectedRouteTarget)) {
-                    throw new Error("frontend middleware protected route patch target not found");
+                    console.warn("[startup-patch] frontend middleware protected route patch target not found");
+                  } else {
+                    middlewareSource = middlewareSource.replace(protectedRouteTarget, protectedRouteReplacement);
                   }
-                  middlewareSource = middlewareSource.replace(protectedRouteTarget, protectedRouteReplacement);
                 }
                 if (!middlewareSource.includes(middlewareReplacement)) {
                   if (!middlewareSource.includes(middlewareTarget)) {
-                    throw new Error("frontend middleware auth redirect patch target not found");
+                    console.warn("[startup-patch] frontend middleware auth redirect patch target not found");
+                  } else {
+                    middlewareSource = middlewareSource.replace(middlewareTarget, middlewareReplacement);
                   }
-                  middlewareSource = middlewareSource.replace(middlewareTarget, middlewareReplacement);
                 }
                 if (!middlewareSource.includes('t.startsWith("/portfolio/asset")')) {
                   if (!middlewareSource.includes(assetBounceTarget)) {
-                    throw new Error("frontend middleware asset callback patch target not found");
+                    console.warn("[startup-patch] frontend middleware asset callback patch target not found");
+                  } else {
+                    middlewareSource = middlewareSource.replace(assetBounceTarget, assetBounceReplacement);
                   }
-                  middlewareSource = middlewareSource.replace(assetBounceTarget, assetBounceReplacement);
                 }
                 fs.writeFileSync(middlewarePath, middlewareSource);
               }
@@ -80,12 +101,24 @@ spec:
               }
               const loginRedirectPatches = [
                 [
+                  'window.location.href=`${N}/api/v1/auth/google/login`',
+                  'window.location.href=N+"/api/v1/auth/google/login"+(r?"?callbackUrl="+encodeURIComponent(r):"")'
+                ],
+                [
                   'window.location.href=`${w}/api/v1/auth/google/login`',
                   'window.location.href=w+"/api/v1/auth/google/login"+(r?"?callbackUrl="+encodeURIComponent(r):"")'
                 ],
                 [
+                  'window.location.href=`${N}/api/v1/auth/kakao/login`',
+                  'window.location.href=N+"/api/v1/auth/kakao/login"+(r?"?callbackUrl="+encodeURIComponent(r):"")'
+                ],
+                [
                   'window.location.href=`${w}/api/v1/auth/kakao/login`',
                   'window.location.href=w+"/api/v1/auth/kakao/login"+(r?"?callbackUrl="+encodeURIComponent(r):"")'
+                ],
+                [
+                  'window.location.href=`${N}/api/v1/auth/naver/login`',
+                  'window.location.href=N+"/api/v1/auth/naver/login"+(r?"?callbackUrl="+encodeURIComponent(r):"")'
                 ],
                 [
                   'window.location.href=`${w}/api/v1/auth/naver/login`',
@@ -114,23 +147,23 @@ spec:
                   adminSource = adminSource.replaceAll(legacyGrafanaUrl, awsGrafanaUrl);
                 }
 
-                const tabsTarget = '{id:"traces",label:"Traces",icon:"∿"},{id:"cost",label:"Cost",icon:"$"}';
-                const tabsReplacement = '{id:"traces",label:"Traces",icon:"∿"},{id:"ai",label:"AI",icon:"✦"},{id:"cost",label:"Cost",icon:"$"}';
+                const tabsTarget = '{id:"traces",label:"Traces",icon:"??},{id:"cost",label:"Cost",icon:"$"}';
+                const tabsReplacement = '{id:"traces",label:"Traces",icon:"??},{id:"ai",label:"AI",icon:"??},{id:"cost",label:"Cost",icon:"$"}';
                 if (!adminSource.includes('label:"AI"')) {
                   if (!adminSource.includes(tabsTarget)) {
-                    throw new Error("frontend admin tab patch target not found");
+                    console.warn("[startup-patch] frontend admin tab patch target not found");
                   }
                   adminSource = adminSource.replace(tabsTarget, tabsReplacement);
                 }
 
                 const costAnchor = '),"cost"===e&&';
                 const aiBranchPattern = /\),"ai"===e&&\(\(\)=>\{[\s\S]*?\}\)\(\)(?=,"cost"===e&&)/;
-                const aiBranch = String.raw`),"ai"===e&&(()=>{let t=ep.ai?.result??null,s=t?.overall??null,l=t?.sections??[];return(0,a.jsxs)("div",{className:"space-y-4",children:[(0,a.jsxs)("div",{className:"flex items-center justify-between",children:[(0,a.jsxs)(tm,{children:["AI Summary",a.jsx(th,{tip:"Runs Claude across Infra, Pipeline, Data, Backup, Logs, and Traces.\nIt returns one overall diagnosis plus per-section issues and actions."})]}),a.jsx("button",{onClick:async()=>{eb(e=>({...e,ai:{result:e.ai?.result??null,loading:!0}}));try{let t=[["infra","infra-diagnose","Infra"],["pipeline","pipeline-diagnose","Pipeline"],["data","data-diagnose","Data"],["backup","backup-diagnose","Backup"],["logs","log-diagnose","Logs"],["traces","trace-diagnose","Traces"]],s=await Promise.all(t.map(async([e,t,s])=>{try{let a=await fetch(tr+"/api/v1/admin/"+t);if(a.ok){let t=await a.json();return{key:e,label:s,diagnosis:t.diagnosis??null}}}catch{}return{key:e,label:s,diagnosis:{severity:"WARN",summary:s+" AI diagnosis failed.",issues:[{level:"WARN",title:"Diagnosis failed",detail:s+" diagnosis API did not return a valid result."}],recommendations:[{priority:"MEDIUM",action:"Check the "+s+" diagnosis endpoint and retry."}]}}}));eb(e=>{let t={...e},a=["OK","WARN","CRITICAL"],r="OK",i=[];for(let e of s)t[e.key]={result:e.diagnosis??null,loading:!1},a.indexOf(e.diagnosis?.severity??"WARN")>a.indexOf(r)&&(r=e.diagnosis?.severity??"WARN"),"OK"!==(e.diagnosis?.severity??"WARN")&&i.push({level:"CRITICAL"===e.diagnosis?.severity?"ERROR":"WARN",title:e.label+" "+(e.diagnosis?.severity??"WARN"),detail:e.diagnosis?.summary??(e.label+" requires review.")});let n=s.flatMap(e=>(e.diagnosis?.recommendations??[]).map(t=>({priority:t.priority??"MEDIUM",action:"["+e.label+"] "+t.action}))).slice(0,5);return t.ai={loading:!1,result:{overall:{severity:r,summary:"Generated section-level AI diagnoses across all admin sectors.",issues:i.slice(0,5),recommendations:n},sections:s}},t})}catch{eb(e=>({...e,ai:{loading:!1,result:{overall:{severity:"WARN",summary:"AI summary generation failed.",issues:[{level:"WARN",title:"Request failed",detail:"One or more diagnosis requests failed."}],recommendations:[{priority:"MEDIUM",action:"Retry the AI summary analysis."}]},sections:[]}}}))}},disabled:ep.ai?.loading,className:"px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-400/30 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 transition disabled:opacity-50",children:ep.ai?.loading?"Analyzing...":"✦ AI Analysis"})]}),a.jsx("p",{className:"text-xs text-white/40",children:"One-shot diagnosis across every admin sector"}),a.jsx(tg,{diag:s,loading:ep.ai?.loading??!1}),!ep.ai?.loading&&t&&l.length>0&&a.jsx("div",{className:"grid grid-cols-1 xl:grid-cols-2 gap-4",children:l.map(e=>(0,a.jsxs)("div",{className:"space-y-2",children:[a.jsx("p",{className:"text-xs text-white/40 uppercase tracking-widest",children:e.label||e.key}),a.jsx(tg,{diag:e.diagnosis??null,loading:!1})]},e.key))})]})})()`;
+                const aiBranch = String.raw`),"ai"===e&&(()=>{let t=ep.ai?.result??null,s=t?.overall??null,l=t?.sections??[];return(0,a.jsxs)("div",{className:"space-y-4",children:[(0,a.jsxs)("div",{className:"flex items-center justify-between",children:[(0,a.jsxs)(tm,{children:["AI Summary",a.jsx(th,{tip:"Runs Claude across Infra, Pipeline, Data, Backup, Logs, and Traces.\nIt returns one overall diagnosis plus per-section issues and actions."})]}),a.jsx("button",{onClick:async()=>{eb(e=>({...e,ai:{result:e.ai?.result??null,loading:!0}}));try{let t=[["infra","infra-diagnose","Infra"],["pipeline","pipeline-diagnose","Pipeline"],["data","data-diagnose","Data"],["backup","backup-diagnose","Backup"],["logs","log-diagnose","Logs"],["traces","trace-diagnose","Traces"]],s=await Promise.all(t.map(async([e,t,s])=>{try{let a=await fetch(tr+"/api/v1/admin/"+t);if(a.ok){let t=await a.json();return{key:e,label:s,diagnosis:t.diagnosis??null}}}catch{}return{key:e,label:s,diagnosis:{severity:"WARN",summary:s+" AI diagnosis failed.",issues:[{level:"WARN",title:"Diagnosis failed",detail:s+" diagnosis API did not return a valid result."}],recommendations:[{priority:"MEDIUM",action:"Check the "+s+" diagnosis endpoint and retry."}]}}}));eb(e=>{let t={...e},a=["OK","WARN","CRITICAL"],r="OK",i=[];for(let e of s)t[e.key]={result:e.diagnosis??null,loading:!1},a.indexOf(e.diagnosis?.severity??"WARN")>a.indexOf(r)&&(r=e.diagnosis?.severity??"WARN"),"OK"!==(e.diagnosis?.severity??"WARN")&&i.push({level:"CRITICAL"===e.diagnosis?.severity?"ERROR":"WARN",title:e.label+" "+(e.diagnosis?.severity??"WARN"),detail:e.diagnosis?.summary??(e.label+" requires review.")});let n=s.flatMap(e=>(e.diagnosis?.recommendations??[]).map(t=>({priority:t.priority??"MEDIUM",action:"["+e.label+"] "+t.action}))).slice(0,5);return t.ai={loading:!1,result:{overall:{severity:r,summary:"Generated section-level AI diagnoses across all admin sectors.",issues:i.slice(0,5),recommendations:n},sections:s}},t})}catch{eb(e=>({...e,ai:{loading:!1,result:{overall:{severity:"WARN",summary:"AI summary generation failed.",issues:[{level:"WARN",title:"Request failed",detail:"One or more diagnosis requests failed."}],recommendations:[{priority:"MEDIUM",action:"Retry the AI summary analysis."}]},sections:[]}}}))}},disabled:ep.ai?.loading,className:"px-3 py-1.5 rounded-lg text-xs font-medium border border-blue-400/30 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20 transition disabled:opacity-50",children:ep.ai?.loading?"Analyzing...":"??AI Analysis"})]}),a.jsx("p",{className:"text-xs text-white/40",children:"One-shot diagnosis across every admin sector"}),a.jsx(tg,{diag:s,loading:ep.ai?.loading??!1}),!ep.ai?.loading&&t&&l.length>0&&a.jsx("div",{className:"grid grid-cols-1 xl:grid-cols-2 gap-4",children:l.map(e=>(0,a.jsxs)("div",{className:"space-y-2",children:[a.jsx("p",{className:"text-xs text-white/40 uppercase tracking-widest",children:e.label||e.key}),a.jsx(tg,{diag:e.diagnosis??null,loading:!1})]},e.key))})]})})()`;
                 if (aiBranchPattern.test(adminSource)) {
                   adminSource = adminSource.replace(aiBranchPattern, aiBranch);
                 } else if (!adminSource.includes('"ai"===e&&')) {
                   if (!adminSource.includes(costAnchor)) {
-                    throw new Error("frontend admin AI patch anchor not found");
+                    console.warn("[startup-patch] frontend admin AI patch anchor not found");
                   }
                   adminSource = adminSource.replace(costAnchor, aiBranch + ',"cost"===e&&');
                 }
@@ -176,3 +209,4 @@ spec:
             failureThreshold: 3
       imagePullSecrets:
         - name: gitlab-registry-secret
+

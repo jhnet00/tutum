@@ -28,6 +28,12 @@
 - 따라서 이 문서는 사용자 권한으로 확인 가능한 활성 서비스, 컨테이너, 쿠버네티스 파드 기준으로 작성했다.
 - 종료 판단은 현재 관찰 가능한 live 상태 기준이며, 숨겨진 cron 또는 외부 클라이언트 연결은 별도 추적이 필요하다.
 
+## 2026-03-13 재검증 메모
+- 사용자 요청으로 전원 상태를 다시 확인한 결과 `cp-1`, `cp-2`, `cp-3`, `worker1`, `worker2`, `worker3`, `monitoring`, `mongodb` 8대 모두 `ping-up` 상태였다.
+- NAT/SSH 포트(`2220~2230`)도 모두 `tcp-open`으로 확인됐다.
+- 다만 현재 셸에는 올바른 SSH 인증키가 없어 `ssh` 인증은 실패했다. 따라서 2026-03-13 확인은 네트워크 reachability 기준이다.
+- 본 문서의 상세 역할 표는 2026-03-12 SSH 감사 결과를 유지하되, 전원 상태 관련 판단은 2026-03-13 재검증 결과를 우선한다.
+
 ## 한눈에 보는 결론
 - AWS 이전은 상당 부분 진행됐지만, 온프레미스 VM을 지금 한 번에 모두 끄는 단계는 아니다.
 - 현재 AWS에서 실제로 확인된 주요 대응 리소스는 아래와 같다.
@@ -50,9 +56,9 @@
 | `cp1` | `192.168.0.220` | kubeadm control-plane 1. `kubelet`, `containerd` active. `etcd-cp-1`, `kube-apiserver-cp-1`, `kube-controller-manager-cp-1`, `kube-scheduler-cp-1`, `coredns` 등 control-plane 핵심 파드 실행 | EKS 관리형 control plane + EKS worker fleet | 부분 완료. AWS EKS control plane은 존재하지만, 온프레미스 control plane도 아직 live cluster를 유지 중 | 즉시 종료 금지 |
 | `cp2` | `192.168.0.221` | kubeadm control-plane 2. `kubelet`, `containerd` active. `etcd-cp-2`, `kube-apiserver-cp-2`, `kube-scheduler-cp-2`와 `tigera-operator`, `calico-typha` 등 클러스터 운영 파드 실행 | EKS 관리형 control plane + AWS 네트워크/CNI 기반 클러스터 | 부분 완료. AWS 쪽 대체 수단은 있으나 온프레미스 클러스터 자체는 아직 동작 중 | 즉시 종료 금지 |
 | `cp3` | `192.168.0.222` | kubeadm control-plane 3. `kubelet`, `containerd` active. `etcd-cp-3`, `kube-apiserver-cp-3` 외에 `monitoring/alloy`, MetalLB speaker 등 일부 운영 파드 배치 | EKS 관리형 control plane + EKS Alloy DaemonSet | 부분 완료. AWS 대응은 존재하지만 온프레미스 control plane 제거 전 상태 아님 | 즉시 종료 금지 |
-| `w1` | `192.168.0.223` | 앱/데이터/스토리지 worker. `sonarqube-sonarqube-0`, `elastic-consumer`, `kafka-1`, `mongodb-2`, `redis-2`, `minio-1` 실행 | EKS `tutum-app`, `tutum-data`에 대응 워크로드 존재. 다만 SonarQube AWS 이관은 미완 | 부분 완료. 앱/데이터 일부는 AWS에 있음. SonarQube, MinIO 잔여 의존은 온프레미스에 남음 | 즉시 종료 금지 |
+| `w1` | `192.168.0.223` | 앱/데이터/스토리지 worker. `sonarqube-sonarqube-0`, `elastic-consumer`, `kafka-1`, `mongodb-2`, `redis-2`, `minio-1` 실행 | EKS `tutum-app`, `tutum-data`에 대응 워크로드 존재. SonarQube는 AWS monitoring EC2 + `sonar.tutum.my` 경로 확인 | 부분 완료. 앱/데이터 일부는 AWS에 있음. MinIO 잔여 의존은 온프레미스에 남음 | 즉시 종료 금지 |
 | `w2` | `192.168.0.224` | 가장 많은 infra/app/data 파드가 집중된 worker. `argocd`, `cert-manager`, `istiod`, `keda`, `kyverno`, `backend` 이력 파드, `ocr`, `price-producer`, `cloudflared`, `kafka-0`, `mongodb-0`, `redis-1`, `minio-0`, `minio-3` 등 실행 | AWS EKS에 ArgoCD, Istio, KEDA, Kyverno, backend, ocr, Kafka, MongoDB, Redis가 모두 존재 | 부분 완료. AWS 대응은 많지만 온프레미스에서도 아직 같은 기능이 live | 즉시 종료 금지 |
-| `w3` | `192.168.0.225` | ingress/app/data worker. `istio-ingressgateway`, `argocd-server`, `gitlab-runner`, `backend`, `frontend`, `email-worker`, `cloudflared`, `elasticsearch-0`, `kafka-2`, `mongodb-1`, `redis-0`, `sonarqube-postgresql-0`, `minio-2` 실행 | AWS EKS에 ingress, app, GitLab Runner, Elasticsearch, Kafka, MongoDB, Redis 대응 워크로드 존재 | 부분 완료. 다만 SonarQube, cloudflared, 일부 온프레미스 ingress 경로는 아직 잔존 | 즉시 종료 금지 |
+| `w3` | `192.168.0.225` | ingress/app/data worker. `istio-ingressgateway`, `argocd-server`, `gitlab-runner`, `backend`, `frontend`, `email-worker`, `cloudflared`, `elasticsearch-0`, `kafka-2`, `mongodb-1`, `redis-0`, `sonarqube-postgresql-0`, `minio-2` 실행 | AWS EKS에 ingress, app, GitLab Runner, Elasticsearch, Kafka, MongoDB, Redis 대응 워크로드 존재 | 부분 완료. SonarQube AWS 경로는 확인됐지만 cloudflared와 일부 온프레미스 ingress 경로는 아직 잔존 | 즉시 종료 금지 |
 | `mon` | `192.168.0.230` | 별도 monitoring VM. `docker` active. `grafana`, `loki`, `tempo`, `mimir`, `kiali`, `influxdb` 컨테이너 실행 | AWS EC2 `tutum-monitoring` (`10.60.11.95`, `t3.medium`)에서 LGTM stack 운영 중 | 대부분 완료. AWS monitoring EC2는 확인됐지만 온프레미스 monitoring VM도 아직 실행 중 | 조건부 종료 가능. Alloy/로그/트레이스 대상이 모두 AWS EC2를 보는지 재검증 후 종료 |
 | `mongo` | `192.168.0.231` | standalone legacy MongoDB VM. `mongod` active, `mongosh ping` 성공 | AWS EKS `tutum-data/mongodb-0~2` ReplicaSet이 현재 앱 기준 Mongo 정본 역할 | 대부분 완료. 앱 경로는 AWS EKS Mongo로 옮겼지만 legacy VM 접속자 추적 전 | 조건부 종료 가능. hidden client/백업 경로 점검 후 종료 |
 
@@ -64,7 +70,7 @@
 | 앱 워크로드 (`frontend`, `backend`, `auth`, `ocr`, workers) | 주로 `w2`, `w3` | EKS `tutum-app` namespace | 대부분 완료 | 온프레미스에 중복 워크로드와 old rollout 파드 잔존 |
 | ArgoCD | `w2`, `w3` | EKS `argocd` namespace | 완료에 가까움 | 온프레미스 ArgoCD 정리 필요 |
 | GitLab Runner | `w3` | EKS `gitlab-runner` namespace | 부분 완료 | 온프레미스 runner 정리 기준 수립 필요 |
-| SonarQube | `w1`, `w3` | AWS 대응 미확정 또는 미배포 | 미완료 | 온프레미스 only 상태로 보임 |
+| SonarQube | `w1`, `w3` | AWS monitoring EC2 `10.60.11.95:9000` + `sonar.tutum.my` | 대부분 완료 | GitLab CI Sonar 실행 검증, external target registration 자동화 필요 |
 | Istio ingress / 내부 진입점 | `w3` + on-prem MetalLB `192.168.0.240` | AWS ALB + EKS ingress | 부분 완료 | on-prem `cloudflared`가 아직 실행 중 |
 | Monitoring LGTM | `mon` VM Docker Compose | AWS EC2 `tutum-monitoring` | 대부분 완료 | traces/lag 후속과 온프레미스 monitoring 종료 검증 필요 |
 | MongoDB 앱 DB | legacy `mongo` VM + on-prem K8s `mongodb-0~2` | EKS `tutum-data/mongodb-0~2` | 대부분 완료 | legacy VM과 on-prem Mongo StatefulSet 정리 필요 |
