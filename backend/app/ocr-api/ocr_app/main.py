@@ -1,15 +1,15 @@
-import os
+﻿import os
 import uuid
 import logging
 from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, Dict
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Form, status
 from fastapi.middleware.cors import CORSMiddleware
 
-# Internal imports
 # Internal imports
 from ocr_app.workers.ocr_parser import parse_portfolio_text
 from ocr_app.workers.ocr_engine import extract_text_from_image_bytes
@@ -18,16 +18,15 @@ from ocr_app.workers.ocr_engine import extract_text_from_image_bytes
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ocr-api")
 
-# .env 파일 로드 (프로젝트 루트에서)
+# .env load
 env_path = Path(__file__).parent.parent.parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 # ============================================
-# 환경변수 설정
+# ENV CONFIG
 # ============================================
-# 백엔드와 통일: MONGODB_URL 사용
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/clouddx")
-MONGO_URI = MONGODB_URL  # 호환성 유지
+MONGO_URI = MONGODB_URL
 KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "localhost:9092")
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
@@ -35,18 +34,54 @@ MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET_OCR", "ocr-images")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 MOCK_MODE = os.getenv("MOCK_MODE", "false").lower() == "true"
+STRICT_STORAGE_ERROR = os.getenv("OCR_STRICT_STORAGE", "false").lower() == "true"
+OCR_MAX_UPLOAD_BYTES = int(os.getenv("OCR_MAX_UPLOAD_BYTES", "10485760"))
 
 # MinIO/Kafka availability
 MINIO_AVAILABLE = True
 KAFKA_AVAILABLE = False
 
 # ============================================
-# 전역 클라이언트 상태
+# APP CONTEXT
 # ============================================
 minio_client = None
 kafka_producer = None
 image_storage: dict[str, bytes] = {}
 ocr_cache: dict[str, dict] = {}
+
+# Structured error presets
+OCR_ERROR_CODES = {
+    "EMPTY_FILE": "No upload payload provided",
+    "INVALID_USER": "Missing or invalid user_id",
+    "INVALID_FILE_TYPE": "Unsupported image type",
+    "FILE_TOO_LARGE": "Uploaded file exceeds allowed size",
+    "STORAGE_FAILURE": "Image storage service failed",
+    "PROCESSING_FAILURE": "OCR processing failed",
+    "DRAFT_NOT_FOUND": "OCR draft item not found",
+    "INTERNAL_ERROR": "OCR API internal error",
+}
+
+
+def _build_error(code: str, message: str, detail: str | dict[str, Any] | None = None) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "error": {
+            "code": code,
+            "message": message,
+            "description": OCR_ERROR_CODES.get(code, "OCR API Error"),
+        }
+    }
+    if detail is not None:
+        payload["error"]["detail"] = detail
+    return payload
+
+
+def _is_supported_image(file: UploadFile) -> bool:
+    content_type = (file.content_type or "").lower()
+    if content_type.startswith("image/"):
+        return True
+
+    filename = (file.filename or "").lower()
+    return filename.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"))
 
 
 @asynccontextmanager
@@ -67,18 +102,18 @@ async def lifespan(app: FastAPI):
 
 
 # ============================================
-# FastAPI 앱 인스턴스
+# FastAPI setup
 # ============================================
 app = FastAPI(
     title="TUTUM OCR API",
-    description="이미지 업로드 및 Google Vision OCR 처리 서비스",
+    description="Image upload and Google Vision OCR processing",
     version="1.0.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for local development/testing
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -86,7 +121,7 @@ app.add_middleware(
 
 
 # ============================================
-# 스키마 및 간단한 작업함수
+# Worker and OCR error
 # ============================================
 class OCRError(Exception):
     pass
@@ -94,26 +129,23 @@ class OCRError(Exception):
 
 def process_ocr_task(import_id: str, content: bytes, user_id: str):
     """
-    Background Task:
-    1. Vision API로 텍스트 추출
-    2. 파서로 포트폴리오 데이터 구조화
-    3. 결과 캐싱 (Redis 대신 메모리 캐시 사용 중)
+    Background Task
+    1) Call Vision API
+    2) Parse output
+    3) Cache result
     """
     logger.info(
         f"[TASK] OCR Background Task Started: {import_id} (Data size: {len(content)} bytes)"
     )
     try:
-        # 1. Google Vision API 호출
         logger.info(f"[API] Calling Vision API for ID: {import_id}...")
         raw_text = extract_text_from_image_bytes(content)
         logger.info(f"[SUCCESS] Vision API Success: {len(raw_text)} chars extracted")
 
-        # 2. 텍스트 파싱
         logger.info("[PARSE] Parsing extracted text...")
         parsed_items = parse_portfolio_text(raw_text)
         logger.info(f"[SUCCESS] Parsing Success: {len(parsed_items)} items found")
 
-        # 3. 결과 저장 (Polling 대상)
         ocr_cache[import_id] = {
             "import_id": import_id,
             "user_id": user_id,
@@ -145,23 +177,57 @@ async def process_ocr(
     user_id: str = Form(...),
 ):
     """
-    이미지를 업로드하고 OCR 처리를 시작합니다.
-    - 이미지는 MinIO (ocr-images 버킷)에 저장됩니다.
+    Start OCR processing.
     """
     import_id = str(uuid.uuid4())
+
+    request_id = str(uuid.uuid4())
+
+    if not user_id or not user_id.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_build_error("INVALID_USER", "user_id is required", {"request_id": request_id}),
+        )
+
     content = await file.read()
     logger.info(
         f"[REQUEST] New OCR Request: {import_id} | File: {file.filename} | Size: {len(content)} bytes"
     )
 
-    # 1. MinIO 이미지 저장
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_build_error("EMPTY_FILE", "Uploaded file is empty", {"request_id": request_id}),
+        )
+
+    if len(content) > OCR_MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=_build_error(
+                "FILE_TOO_LARGE",
+                "Uploaded file is too large",
+                {"request_id": request_id, "max_bytes": OCR_MAX_UPLOAD_BYTES},
+            ),
+        )
+
+    if not _is_supported_image(file):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=_build_error(
+                "INVALID_FILE_TYPE",
+                "Unsupported file type",
+                {"request_id": request_id, "content_type": file.content_type},
+            ),
+        )
+
+    # 1. Save image to storage if available
     image_url = None
     try:
         from app.services.storage import get_storage_service
         import io
 
         storage = get_storage_service()
-        filename = f"ocr_{user_id}_{import_id}{os.path.splitext(file.filename)[1]}"
+        filename = f"ocr_{user_id}_{import_id}{os.path.splitext(file.filename or '.bin')[1]}"
 
         result = await storage.upload_file(
             file=io.BytesIO(content),
@@ -170,41 +236,58 @@ async def process_ocr(
             content_type=file.content_type,
         )
         image_url = result["url"]
-        logger.info(f"[SAVE] 이미지 MinIO 저장 완료: {filename}")
+        logger.info(f"[SAVE] Image stored: {filename}")
     except Exception as e:
-        logger.warning(f"[WARNING] 이미지 MinIO 저장 실패 (메모리 대체): {e}")
+        logger.warning(f"[WARNING] Image storage failed: {e}")
+        if STRICT_STORAGE_ERROR:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=_build_error(
+                    "STORAGE_FAILURE",
+                    "Failed to store OCR image",
+                    {"request_id": request_id, "error": str(e)},
+                ),
+            )
         image_storage[import_id] = content
 
-    # 2. OCR 처리 (MOCK_MODE=false 일 때만 실제 Vision API 호출)
+    # 2. OCR processing
     if not MOCK_MODE:
         try:
-            # 동기 처리로 변경: 프론트엔드에서 즉시 조회가 가능하도록 함
             process_ocr_task(import_id, content, user_id)
             return {
                 "import_id": import_id,
                 "status": "completed",
                 "image_url": image_url,
+                "request_id": request_id,
             }
         except Exception as e:
-            logger.error(f"[ERROR] OCR 처리 실패: {e}")
-            return {"import_id": import_id, "status": "failed", "error": str(e)}
+            logger.error(f"[ERROR] OCR processing failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=_build_error(
+                    "PROCESSING_FAILURE",
+                    "OCR processing failed",
+                    {"request_id": request_id, "error": str(e)},
+                ),
+            )
     else:
-        # Mock 모드일 때는 즉시 완료로 표시 (get_ocr_draft에서 mock 데이터 리턴)
+        # Mock mode response for quick test flow
         return {
             "import_id": import_id,
             "status": "completed",
             "image_url": image_url,
             "note": "MOCK_MODE is ON",
+            "request_id": request_id,
         }
 
 
 @app.get("/import/draft/{import_id}")
 async def get_ocr_draft(import_id: str):
-    # 1. 캐시(실제 Vision API 결과) 확인
+    # Return processed cache result
     if import_id in ocr_cache:
         return ocr_cache[import_id]
 
-    # 2. Mock 모드인 경우 하드코딩된 예시 반환
+    # Mock fallback preview
     if MOCK_MODE and import_id in image_storage:
         return {
             "import_id": import_id,
@@ -225,6 +308,14 @@ async def get_ocr_draft(import_id: str):
                     "currency": "KRW",
                 },
             ],
+            "request_id": str(uuid.uuid4()),
         }
 
-    raise HTTPException(status_code=404, detail="결과를 찾을 수 없거나 처리 중입니다.")
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=_build_error(
+            "DRAFT_NOT_FOUND",
+            "OCR draft not found",
+            {"import_id": import_id},
+        ),
+    )
