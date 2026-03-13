@@ -1667,8 +1667,6 @@ async def get_backup_diagnose(
 
 # ─── 스토리지 (PVC) ────────────────────────────────────────────────────────────
 
-
-
 @router.get("/ai-summary")
 async def get_ai_summary(
     request: Request,
@@ -1678,7 +1676,17 @@ async def get_ai_summary(
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
 
     try:
-        nodes_data, pods_data, metrics_data, pipeline_data, data_metrics, backup_data, logs_data, traces_data, alerts_data = await asyncio.gather(
+        (
+            nodes_data,
+            pods_data,
+            metrics_data,
+            pipeline_data,
+            data_metrics,
+            backup_data,
+            logs_data,
+            traces_data,
+            alerts_data,
+        ) = await asyncio.gather(
             get_nodes(),
             get_pods("all"),
             get_metrics(),
