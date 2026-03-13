@@ -654,7 +654,7 @@ mirror:github-monorepo:
     - chmod +x scripts/sync-to-github-monorepo.sh
   script:
     - |
-      SYNC_SOURCE_PATH=backend \
+      SYNC_SOURCE_PATH=. \
       SYNC_TARGET_PATH=backend \
       SYNC_COMPONENT_NAME=backend \
       SYNC_ROOT_OWNER=1 \
