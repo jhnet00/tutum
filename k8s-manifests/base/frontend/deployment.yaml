@@ -57,24 +57,23 @@ spec:
               }
               proxySource = proxySource
                 .replace(
-                  /let n=process\.env\.BACKEND_INTERNAL_URL\|\|"(?:http:\/\/localhost:8000|http:\/\/backend-svc\.tutum-app\.svc\.cluster\.local:8000)",o=process\.env\.AUTH_INTERNAL_URL\|\|"http:\/\/auth-svc\.tutum-app\.svc\.cluster\.local:8000";/g,
+                  'let n=process.env.BACKEND_INTERNAL_URL||"http://backend-svc.tutum-app.svc.cluster.local:8000",o=process.env.AUTH_INTERNAL_URL||"http://auth-svc.tutum-app.svc.cluster.local:8000";',
                   'let backendBase=process.env.BACKEND_INTERNAL_URL||"http://backend-svc.tutum-app.svc.cluster.local:8000",authBase=process.env.AUTH_INTERNAL_URL||"http://auth-svc.tutum-app.svc.cluster.local:8000";'
                 )
-                .replace(/if\(!n\)return/g, 'if(!backendBase)return')
+                .replace('if(!n)return', 'if(!backendBase)return')
                 .replace(
-                  /let e="api"===t\[0\]&&"v1"===t\[1\]&&"auth"===t\[2\]\?o:n;/g,
+                  'let e="api"===t[0]&&"v1"===t[1]&&"auth"===t[2]?o:n;',
                   'let e="api"===t[0]&&"v1"===t[1]&&"auth"===t[2]?authBase:backendBase;'
                 )
                 .replace(
-                  /let o=new Headers;for\(let t of\["authorization","content-type","x-csrf-token","cookie"\]\)\{let r=e\.headers\.get\(t\);r&&o\.set\(t,r)\}/g,
+                  'let o=new Headers;for(let t of["authorization","content-type","x-csrf-token","cookie"]){let r=e.headers.get(t);r&&o.set(t,r)}',
                   'let proxyHeaders=new Headers;for(let t of["authorization","content-type","x-csrf-token","cookie"]){let r=e.headers.get(t);r&&proxyHeaders.set(t,r)}'
                 )
-                .replace(/headers:o,body:t,redirect:"manual",cache:"no-store"/g, 'headers:proxyHeaders,body:t,redirect:"manual",cache:"no-store"')
-                .replace(/let r=n\.replace\(\/\\\/\$\/,""\);/g, 'let r=backendBase.replace(/\\/$/,"");')
                 .replace(
-                  /new URL\(e\.nextUrl\.pathname\.replace\("\/api\/proxy",""\)\+e\.nextUrl\.search,o\):new URL\(e\.nextUrl\.pathname\.replace\("\/api\/proxy",""\)\+e\.nextUrl\.search,n\)/g,
-                  'new URL(e.nextUrl.pathname.replace("/api/proxy","")+e.nextUrl.search,authBase):new URL(e.nextUrl.pathname.replace("/api/proxy","")+e.nextUrl.search,backendBase)'
-                );
+                  'headers:o,body:t,redirect:"manual",cache:"no-store"',
+                  'headers:proxyHeaders,body:t,redirect:"manual",cache:"no-store"'
+                )
+                .replace('let r=n.replace(/\\/$/,"");', 'let r=backendBase.replace(/\\/$/,"");');
               fs.writeFileSync(proxyPath, proxySource);
 
               const middlewarePath = "/app/.next/server/middleware.js";
