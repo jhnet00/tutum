@@ -8,10 +8,10 @@ import json
 import re
 import boto3
 from botocore.config import Config
-from typing import AsyncGenerator, List, Dict, Optional
+from typing import AsyncGenerator, List, Dict, Optional, Tuple
 from datetime import datetime
 
-from .market_data import crypto_client
+from .market_data import crypto_client, kis_client
 from ..config import get_settings
 from ..database import get_news_collection, get_assets_collection
 from ..services.exchange_rate import get_exchange_rate
@@ -27,7 +27,72 @@ logger = logging.getLogger(__name__)
 
 RAG_NEWS_LIMIT = 12
 RAG_NEWS_BODY_MAX_CHARS = 700
+RAG_NEWS_RECENT_DAYS = 14
 PORTFOLIO_KEYWORD_ASSET_LIMIT = 5
+PORTFOLIO_QUERY_HINTS = (
+    "포트폴리오",
+    "내 포트폴리오",
+    "내 자산",
+    "내 종목",
+    "보유",
+    "보유중",
+    "가지고 있는",
+    "가지고있",
+    "리밸런싱",
+    "비중",
+    "분산",
+    "추가 매수",
+    "추가매수",
+)
+
+MARKET_SYMBOL_ALIASES: Dict[str, Tuple[str, str]] = {
+    "tqqq": ("TQQQ", "US"),
+    "qqq": ("QQQ", "US"),
+    "spy": ("SPY", "US"),
+    "soxl": ("SOXL", "US"),
+    "soxx": ("SOXX", "US"),
+    "schd": ("SCHD", "US"),
+    "voo": ("VOO", "US"),
+    "vti": ("VTI", "US"),
+    "iwm": ("IWM", "US"),
+    "aapl": ("AAPL", "US"),
+    "apple": ("AAPL", "US"),
+    "애플": ("AAPL", "US"),
+    "msft": ("MSFT", "US"),
+    "microsoft": ("MSFT", "US"),
+    "마이크로소프트": ("MSFT", "US"),
+    "nvda": ("NVDA", "US"),
+    "nvidia": ("NVDA", "US"),
+    "엔비디아": ("NVDA", "US"),
+    "tsla": ("TSLA", "US"),
+    "tesla": ("TSLA", "US"),
+    "테슬라": ("TSLA", "US"),
+    "amzn": ("AMZN", "US"),
+    "amazon": ("AMZN", "US"),
+    "아마존": ("AMZN", "US"),
+    "googl": ("GOOGL", "US"),
+    "google": ("GOOGL", "US"),
+    "구글": ("GOOGL", "US"),
+    "알파벳": ("GOOGL", "US"),
+    "meta": ("META", "US"),
+    "메타": ("META", "US"),
+    "005930": ("005930", "KR"),
+    "삼성전자": ("005930", "KR"),
+    "000660": ("000660", "KR"),
+    "sk하이닉스": ("000660", "KR"),
+    "에스케이하이닉스": ("000660", "KR"),
+}
+
+NON_MARKET_ALPHA_TOKENS = {
+    "ETF",
+    "USD",
+    "KRW",
+    "KRW",
+    "BTC",
+    "ETH",
+    "XRP",
+    "SOL",
+}
 
 # 코인 키워드 매핑
 COIN_KEYWORDS = {
@@ -81,6 +146,11 @@ FINANCIAL_SYNONYMS: Dict[str, List[str]] = {
     "아마존":       ["아마존", "AMZN", "amazon"],
     "amzn":         ["AMZN", "아마존", "amazon"],
     "메타":         ["메타", "META", "meta", "페이스북"],
+    "tqqq":         ["TQQQ", "QQQ", "나스닥100", "NASDAQ 100"],
+    "qqq":          ["QQQ", "나스닥100", "NASDAQ 100", "Invesco QQQ"],
+    "spy":          ["SPY", "S&P500", "SPDR S&P 500"],
+    "soxl":         ["SOXL", "반도체 3배", "semiconductor bull 3x"],
+    "soxx":         ["SOXX", "반도체 ETF", "semiconductor etf"],
     "금리":         ["금리", "기준금리", "이자율", "금리인상", "금리인하"],
     "인플레이션":   ["인플레이션", "물가", "cpi", "소비자물가"],
     "반도체":       ["반도체", "chip", "semiconductor", "칩"],
@@ -211,8 +281,8 @@ class ChatService:
 
         return extracted
 
-    def _extract_keywords(self, query: str, portfolio: Optional[List[dict]] = None) -> List[str]:
-        """질문 + 포트폴리오 기반 키워드 추출"""
+    def _extract_query_keywords(self, query: str) -> List[str]:
+        """질문 본문만 기준으로 키워드 추출"""
         query_lower = query.lower()
         keywords: List[str] = []
         seen: set[str] = set()
@@ -251,19 +321,61 @@ class ChatService:
             "아마존",
             "구글",
             "메타",
+            "TQQQ",
+            "QQQ",
+            "SPY",
+            "SOXL",
+            "SOXX",
         ]
         for kw in stock_keywords:
             if kw in query:
                 add_keyword(kw)
 
         # 영문 티커/종목코드 직접 입력 케이스 (예: NVDA, TSLA, 005930)
-        for token in re.findall(r"\b[A-Za-z0-9\-]{2,10}\b", query):
-            if token.isdigit() and 4 <= len(token) <= 6:
-                add_keyword(token)
-            elif token.isalpha() and 2 <= len(token) <= 6:
+        for token in re.findall(r"(?<!\d)(\d{4,6})(?!\d)", query):
+            add_keyword(token)
+
+        for token in re.findall(r"(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9\-]{1,9})(?![A-Za-z0-9])", query):
+            if token.isalpha() and token.isupper() and 2 <= len(token) <= 6:
                 add_keyword(token.upper())
 
-        # 내 포트폴리오 기반 키워드 보강
+        return keywords
+
+    def _should_include_portfolio_keywords(
+        self,
+        query: str,
+        query_keywords: List[str],
+        crypto_tickers: List[str],
+        market_symbols: List[Tuple[str, str]],
+    ) -> bool:
+        query_lower = query.lower()
+        portfolio_intent = any(hint in query_lower for hint in PORTFOLIO_QUERY_HINTS)
+        explicit_asset = bool(query_keywords or crypto_tickers or market_symbols)
+        return portfolio_intent or not explicit_asset
+
+    def _extract_keywords(
+        self,
+        query: str,
+        portfolio: Optional[List[dict]] = None,
+        include_portfolio_keywords: bool = True,
+    ) -> List[str]:
+        """질문 키워드에 필요할 때만 포트폴리오 키워드를 보강"""
+        keywords = self._extract_query_keywords(query)
+        seen = {keyword.lower() for keyword in keywords}
+
+        def add_keyword(value: str) -> None:
+            token = str(value or "").strip()
+            if len(token) < 2:
+                return
+            lowered = token.lower()
+            if lowered in seen:
+                return
+            seen.add(lowered)
+            keywords.append(token)
+
+        if not include_portfolio_keywords:
+            return keywords
+
         for kw in self._extract_portfolio_keywords(portfolio):
             add_keyword(kw)
 
@@ -278,23 +390,100 @@ class ChatService:
                 found.append(ticker)
         return found
 
-    async def _fetch_prices(self, tickers: List[str]) -> Dict[str, dict]:
-        """??? """
-        prices = {}
-        for ticker in tickers:
+    def _extract_market_symbols(self, query: str) -> List[Tuple[str, str]]:
+        """주식/ETF 심볼 추출 (질문 종목이 명확할 때만 가격 문맥에 사용)"""
+        found: List[Tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        query_lower = query.lower()
+
+        def add_symbol(symbol: str, market: str) -> None:
+            key = (symbol.upper(), market.upper())
+            if key in seen:
+                return
+            seen.add(key)
+            found.append(key)
+
+        for alias, (symbol, market) in MARKET_SYMBOL_ALIASES.items():
+            if alias in query_lower:
+                add_symbol(symbol, market)
+
+        for token in re.findall(r"(?<!\d)(\d{4,6})(?!\d)", query):
+            add_symbol(token, "KR")
+
+        for token in re.findall(r"(?<![A-Za-z0-9])([A-Za-z][A-Za-z0-9\-]{1,9})(?![A-Za-z0-9])", query):
+            upper = token.upper()
+            if upper in NON_MARKET_ALPHA_TOKENS:
+                continue
+            if upper in {value.split("-")[-1] for value in COIN_KEYWORDS.values()}:
+                continue
+            if token.isupper():
+                add_symbol(upper, "US")
+
+        return found
+
+    async def _fetch_prices(
+        self,
+        crypto_tickers: List[str],
+        market_symbols: Optional[List[Tuple[str, str]]] = None,
+    ) -> Dict[str, dict]:
+        """코인 + 주식/ETF 현재가 컨텍스트 수집"""
+        prices: Dict[str, dict] = {}
+
+        for ticker in crypto_tickers:
             try:
                 data = await self.crypto_client.get_current_price(ticker)
-                prices[ticker] = data
+                prices[ticker] = {
+                    **data,
+                    "kind": "crypto",
+                    "label": COIN_NAMES.get(ticker, ticker),
+                }
             except Exception as e:
                 logger.warning("Failed to fetch price for {ticker}: %s", e)
+
+        for symbol, market in market_symbols or []:
+            try:
+                data = await kis_client.get_current_price(symbol, market=market)
+                price = float(data.get("price", 0) or 0)
+                if price <= 0:
+                    continue
+                raw_output = data.get("raw", {}).get("output", {}) if isinstance(data.get("raw"), dict) else {}
+                change_percent = raw_output.get("prdy_ctrt") or raw_output.get("rate")
+                try:
+                    change_percent = float(change_percent) if change_percent is not None else None
+                except (TypeError, ValueError):
+                    change_percent = None
+
+                prices[symbol] = {
+                    **data,
+                    "kind": "market",
+                    "label": symbol,
+                    "market": market,
+                    "change_percent": change_percent,
+                }
+            except Exception as e:
+                logger.warning("Failed to fetch market price for %s (%s): %s", symbol, market, e)
+
         return prices
 
-    async def _fetch_news(self, keywords: List[str], limit: int = RAG_NEWS_LIMIT) -> List[dict]:
+    def _recent_news_filter(self) -> dict:
+        cutoff = datetime.utcnow().timestamp() - (RAG_NEWS_RECENT_DAYS * 86400)
+        return {"published_at_ts": {"$gte": cutoff}}
+
+    async def _fetch_news(
+        self,
+        keywords: List[str],
+        limit: int = RAG_NEWS_LIMIT,
+        recent_only: bool = True,
+    ) -> List[dict]:
         """MongoDB??? ??????? ????"""
         try:
             news_col = get_news_collection()
             if news_col is None:
                 return []
+
+            filters = []
+            if recent_only:
+                filters.append(self._recent_news_filter())
 
             if keywords:
                 search_conditions = []
@@ -305,9 +494,11 @@ class ChatService:
                         {"body": regex},
                         {"content": regex},
                     ]})
-                query_filter = {"$or": search_conditions}
+                filters.append({"$or": search_conditions})
             else:
-                query_filter = {}
+                pass
+
+            query_filter = {"$and": filters} if filters else {}
 
             cursor = news_col.find(query_filter).sort("published_at", -1).limit(limit)
 
@@ -333,6 +524,9 @@ class ChatService:
                     "published_at": pub_at,
                     "url": doc.get("link") or doc.get("url"),
                 })
+
+            if not news_list and recent_only:
+                return await self._fetch_news(keywords, limit=limit, recent_only=False)
 
             return news_list
         except Exception as e:
@@ -377,14 +571,19 @@ class ChatService:
         expanded_terms: List[str],
         embedding: Optional[List[float]],
         limit: int,
+        recent_only: bool = True,
     ) -> dict:
         """ES 검색 바디 구성 (BM25 bool/should + 선택적 kNN 하이브리드)"""
         source_fields = ["title", "content", "summary", "source", "press", "published_at", "url", "finance_origin_link"]
+        recent_range = {"range": {"published_at": {"gte": f"now-{RAG_NEWS_RECENT_DAYS}d/d"}}}
 
         if not expanded_terms:
             # 키워드 없음 → 최신순
+            query: dict = {"match_all": {}}
+            if recent_only:
+                query = {"bool": {"filter": [recent_range]}}
             return {
-                "query": {"match_all": {}},
+                "query": query,
                 "sort": [{"published_at": "desc"}],
                 "size": limit,
                 "_source": source_fields,
@@ -430,27 +629,56 @@ class ChatService:
 
         # kNN: 문서 임베딩이 있을 때만 하이브리드, 없으면 BM25만
         if embedding:
+            query = bm25_query
+            if recent_only:
+                query = {
+                    "bool": {
+                        "must": [bm25_query],
+                        "filter": [recent_range],
+                        "boost": 0.6,
+                    }
+                }
+            else:
+                query["bool"]["boost"] = 0.6
+
+            knn = {
+                "field": "embedding",
+                "query_vector": embedding,
+                "k": limit,
+                "num_candidates": limit * 4,
+                "boost": 0.4,  # BM25 60% : kNN 40%
+            }
+            if recent_only:
+                knn["filter"] = recent_range
+
             return {
-                "knn": {
-                    "field": "embedding",
-                    "query_vector": embedding,
-                    "k": limit,
-                    "num_candidates": limit * 4,
-                    "boost": 0.4,  # BM25 60% : kNN 40%
-                },
-                "query": {**bm25_query, "boost": 0.6},
+                "knn": knn,
+                "query": query,
                 "size": limit,
                 "_source": source_fields,
             }
         else:
+            query = bm25_query
+            if recent_only:
+                query = {
+                    "bool": {
+                        "must": [bm25_query],
+                        "filter": [recent_range],
+                    }
+                }
             return {
-                "query": bm25_query,
+                "query": query,
                 "sort": [{"_score": "desc"}, {"published_at": "desc"}],
                 "size": limit,
                 "_source": source_fields,
             }
 
-    async def _fetch_news_es(self, keywords: List[str], limit: int = RAG_NEWS_LIMIT) -> List[dict]:
+    async def _fetch_news_es(
+        self,
+        keywords: List[str],
+        limit: int = RAG_NEWS_LIMIT,
+        recent_only: bool = True,
+    ) -> List[dict]:
         """ES 뉴스 검색: 유사어 확장 + BM25 bool/should + kNN 하이브리드"""
         if not self.es_client:
             return []
@@ -465,13 +693,13 @@ class ChatService:
                 embedding = await self._generate_query_embedding(query_text)
 
             # 3. ES 검색 바디 구성 및 실행
-            body = self._build_es_body(expanded, embedding, limit)
+            body = self._build_es_body(expanded, embedding, limit, recent_only=recent_only)
             resp = await self.es_client.search(index=self.settings.ELASTICSEARCH_INDEX, body=body)
 
             # 4. kNN 사용했지만 결과 없으면 (문서 임베딩 미존재) BM25 단독 재시도
             if embedding and not resp["hits"]["hits"]:
                 logger.info("kNN 결과 없음 (문서 임베딩 미존재), BM25 단독 재시도")
-                body_bm25 = self._build_es_body(expanded, None, limit)
+                body_bm25 = self._build_es_body(expanded, None, limit, recent_only=recent_only)
                 resp = await self.es_client.search(index=self.settings.ELASTICSEARCH_INDEX, body=body_bm25)
 
             news_list = []
@@ -493,6 +721,8 @@ class ChatService:
                 })
 
             mode = "hybrid(BM25+kNN)" if embedding else "BM25"
+            if not news_list and recent_only:
+                return await self._fetch_news_es(keywords, limit=limit, recent_only=False)
             logger.info("ES 뉴스 검색 성공: %d건 | mode=%s | expanded=%s", len(news_list), mode, expanded[:5])
             return news_list
         except Exception as e:
@@ -573,13 +803,25 @@ class ChatService:
             return ""
 
         lines = ["[PRICE DATA]"]
-        for ticker, data in prices.items():
-            name = COIN_NAMES.get(ticker, ticker)
+        for key, data in prices.items():
+            name = data.get("label") or COIN_NAMES.get(key, key)
             price = data.get("price", 0)
-            change = data.get("change_percent", 0)
+            change = data.get("change_percent")
             volume = data.get("volume", 0)
-            change_str = f"+{change:.2f}" if change >= 0 else f"{change:.2f}"
-            lines.append(f"- {name}: {price:,.0f} ({change_str}%), volume {volume:,.2f}")
+            if isinstance(change, (int, float)):
+                change_str = f"+{change:.2f}" if change >= 0 else f"{change:.2f}"
+                if data.get("kind") == "crypto":
+                    lines.append(f"- {name}: {price:,.0f} ({change_str}%), volume {volume:,.2f}")
+                else:
+                    lines.append(f"- {name}: {price:,.2f} ({change_str}%)")
+                continue
+
+            abs_change = data.get("change")
+            if isinstance(abs_change, (int, float)):
+                change_str = f"+{abs_change:,.2f}" if abs_change >= 0 else f"{abs_change:,.2f}"
+                lines.append(f"- {name}: {price:,.2f} (change {change_str})")
+            else:
+                lines.append(f"- {name}: {price:,.2f}")
 
         return "\n".join(lines)
 
@@ -777,9 +1019,24 @@ class ChatService:
                 portfolio, portfolio_fetch_failed = await self._fetch_portfolio(user_id)
 
             tickers = self._extract_tickers(message)
-            keywords = self._extract_keywords(message, portfolio=portfolio)
+            market_symbols = self._extract_market_symbols(message)
+            query_keywords = self._extract_query_keywords(message)
+            for symbol, _ in market_symbols:
+                if symbol.lower() not in {keyword.lower() for keyword in query_keywords}:
+                    query_keywords.append(symbol)
+            include_portfolio_keywords = self._should_include_portfolio_keywords(
+                message,
+                query_keywords,
+                tickers,
+                market_symbols,
+            )
+            keywords = self._extract_keywords(
+                message,
+                portfolio=portfolio,
+                include_portfolio_keywords=include_portfolio_keywords,
+            )
 
-            prices = await self._fetch_prices(tickers)
+            prices = await self._fetch_prices(tickers, market_symbols)
 
             # ES 우선 검색, 실패 시 MongoDB fallback
             news_list = await self._fetch_news_es(keywords, limit=RAG_NEWS_LIMIT)
