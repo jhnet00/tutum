@@ -9,6 +9,7 @@
 ## 2. 상세 변경 사항
 - `scripts/eks-cost-down.sh`
   - Windows PowerShell 환경에서도 `bash scripts/eks-cost-down.sh`가 바로 동작하도록 LF 줄바꿈 기준으로 정리했다.
+  - ArgoCD 종료 직후 `tutum-app`, `tutum-data` zero scale을 한 번 더 적용하도록 순서를 보강했다.
 - `scripts/eks-cost-up.sh`
   - Windows PowerShell 환경에서도 `bash scripts/eks-cost-up.sh`가 바로 동작하도록 LF 줄바꿈 기준으로 정리했다.
 - `scripts/decommission-prod-eks.sh`
@@ -27,6 +28,10 @@
 - 이슈: `full up` 실행 시 monitoring EC2 시작 단계에서 경고가 발생했다.
 - 대응:
   - 인스턴스 상태를 확인해 `stopped` 상태임을 확인했고, `aws ec2 start-instances`를 수동 재시도해 `running` 상태까지 복구했다.
+- 이슈: 최종 `full down` 후 외부 경로는 내려갔지만 `tutum-data` statefulset 일부가 Argo 재동기화 타이밍으로 다시 살아났다.
+- 대응:
+  - down 스크립트에 ArgoCD 종료 후 `tutum-app`, `tutum-data` zero scale 재적용 단계를 추가했다.
+  - 수정 후 `bash scripts/eks-cost-down.sh`를 다시 실행해 stateful workload desired replica가 0으로 수렴하는지 재확인했다.
 - 이슈: `sonar.tutum.my`는 왕복 테스트 이전부터 `503`이었다.
 - 대응:
   - 복구 판정 기준을 “모든 경로 200”이 아니라 “왕복 테스트 전 기준선으로 복귀했는지”로 두고 검증했다.
@@ -46,6 +51,8 @@
   - 최종 `full down` 재실행 완료
   - 현재 `tutum.my`, `kiali.tutum.my/kiali/` -> `503`
   - monitoring EC2 -> `stopping`
+  - `tutum-app` deployment -> `0/0`
+  - `tutum-data` statefulset -> `0` desired replica 기준으로 재수렴 확인
 - 스크립트 검증
   - `bash -n scripts/eks-cost-down.sh`
   - `bash -n scripts/eks-cost-up.sh`

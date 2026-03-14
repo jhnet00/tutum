@@ -46,17 +46,17 @@ scale_named_deployments_zero() {
   done
 }
 
-log "[1/6] Pause KEDA scaled objects"
+log "[1/7] Pause KEDA scaled objects"
 for so in $("${KUBECTL_BIN}" get scaledobject -n tutum-app -o name 2>/dev/null || true); do
   "${KUBECTL_BIN}" annotate "${so}" -n tutum-app autoscaling.keda.sh/paused=true --overwrite >/dev/null
 done
 
-log "[2/6] Scale staging application and data namespaces to zero"
+log "[2/7] Scale staging application and data namespaces to zero"
 for namespace in tutum-app tutum-data; do
   scale_namespace_zero "${namespace}"
 done
 
-log "[3/6] Scale ancillary namespaces to zero"
+log "[3/7] Scale ancillary namespaces to zero"
 scale_namespace_zero gitlab-runner
 scale_named_deployments_zero kyverno \
   kyverno-admission-controller \
@@ -80,7 +80,7 @@ scale_named_deployments_zero kube-system \
   aws-load-balancer-controller \
   metrics-server
 
-log "[4/6] Scale down ArgoCD control plane"
+log "[4/7] Scale down ArgoCD control plane"
 scale_named_deployments_zero argocd \
   argocd-server \
   argocd-repo-server \
@@ -90,7 +90,12 @@ scale_named_deployments_zero argocd \
   argocd-redis
 "${KUBECTL_BIN}" scale statefulset argocd-application-controller -n argocd --replicas=0 2>/dev/null || true
 
-log "[5/6] Stop monitoring EC2 when requested"
+log "[5/7] Re-apply zero scale after ArgoCD shutdown"
+for namespace in tutum-app tutum-data; do
+  scale_namespace_zero "${namespace}"
+done
+
+log "[6/7] Stop monitoring EC2 when requested"
 if [[ "${STOP_MONITORING}" == "1" ]]; then
   "${AWS_BIN}" ec2 stop-instances \
     --instance-ids "${MONITORING_INSTANCE_ID}" \
@@ -104,7 +109,7 @@ else
   warn "STOP_MONITORING=0, skipping monitoring EC2 stop"
 fi
 
-log "[6/6] Current node usage after full-down request"
+log "[7/7] Current node usage after full-down request"
 "${KUBECTL_BIN}" get nodepool
 "${KUBECTL_BIN}" get pods -A | grep -v Running || true
 
