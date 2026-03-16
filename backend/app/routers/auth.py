@@ -38,6 +38,11 @@ class UserResponse(BaseModel):
     created_at: datetime
 
 
+class AuthIdentity(BaseModel):
+    id: str
+    email: str | None = None
+
+
 async def _extract_token(
     request: Request,
     auth_token: str | None = Cookie(default=None),
@@ -93,11 +98,30 @@ def _user_to_response(user) -> UserResponse:
 
 async def get_current_user(token: str = Depends(_extract_token)) -> UserResponse:
     """Validate JWT and return current user from MariaDB."""
-    credentials_exception = HTTPException(
+    payload = await _decode_authenticated_payload(token)
+    user_id_str = payload["sub"]
+
+    try:
+        user = await get_user_by_id(int(user_id_str))
+    except (TypeError, ValueError):
+        raise _credentials_exception()
+
+    if user is None:
+        raise _credentials_exception()
+
+    return _user_to_response(user)
+
+
+def _credentials_exception() -> HTTPException:
+    return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="검증되지 않은 토큰입니다.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+async def _decode_authenticated_payload(token: str) -> dict:
+    credentials_exception = _credentials_exception()
 
     # Backward compatible blacklist key (legacy key format from monolith)
     if cache_get:
@@ -114,12 +138,16 @@ async def get_current_user(token: str = Depends(_extract_token)) -> UserResponse
         logger.debug("JWT decode failed: %s", e)
         raise credentials_exception
 
-    try:
-        user = await get_user_by_id(int(user_id_str))
-    except (TypeError, ValueError):
-        raise credentials_exception
+    return payload
 
-    if user is None:
-        raise credentials_exception
 
-    return _user_to_response(user)
+async def get_current_identity(token: str = Depends(_extract_token)) -> AuthIdentity:
+    """Validate JWT and return lightweight identity without MariaDB lookup."""
+    payload = await _decode_authenticated_payload(token)
+    user_id_str = payload["sub"]
+    email = payload.get("email")
+
+    return AuthIdentity(
+        id=str(user_id_str),
+        email=str(email) if email is not None else None,
+    )

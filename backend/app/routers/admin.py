@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ..config import get_settings
 from ..database import get_database, get_news_collection
 from ..middleware.rate_limit import check_rate_limit
-from .auth import UserResponse, get_current_user
+from .auth import AuthIdentity, get_current_identity
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -84,8 +84,8 @@ def _is_ip_allowed(ip_text: str) -> bool:
 
 async def require_admin_access(
     request: Request,
-    current_user: UserResponse = Depends(get_current_user),
-) -> UserResponse:
+    current_user: AuthIdentity = Depends(get_current_identity),
+) -> AuthIdentity:
     # Enforce admin access by source IP range.
     client_ip = _extract_client_ip(request)
     if not _is_ip_allowed(client_ip):
@@ -810,7 +810,7 @@ severity 기준:
 @router.get("/diagnose")
 async def get_diagnose(
     request: Request,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: AuthIdentity = Depends(get_current_identity),
 ):
     """
     현재 클러스터 상태를 Bedrock Claude로 AI 진단.
@@ -1177,7 +1177,7 @@ status 기준:
 @router.get("/pipeline-diagnose")
 async def get_pipeline_diagnose(
     request: Request,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: AuthIdentity = Depends(get_current_identity),
 ):
     """파이프라인 3대 구성요소를 Bedrock Claude로 AI 분석."""
     # 1. 데이터 수집
@@ -1400,7 +1400,7 @@ def _normalize_ai_card(value: dict | None, default_summary: str) -> dict:
 @router.get("/infra-diagnose")
 async def get_infra_diagnose(
     request: Request,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: AuthIdentity = Depends(get_current_identity),
 ):
     """인프라(노드/파드) 상태를 Bedrock Claude로 AI 진단."""
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
@@ -1480,7 +1480,7 @@ async def get_infra_diagnose(
 @router.get("/data-diagnose")
 async def get_data_diagnose(
     request: Request,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: AuthIdentity = Depends(get_current_identity),
 ):
     """데이터 레이어(ES/Redis/Kafka/MongoDB/Disk) 상태를 AI 진단."""
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
@@ -1533,7 +1533,7 @@ async def get_data_diagnose(
 @router.get("/log-diagnose")
 async def get_log_diagnose(
     request: Request,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: AuthIdentity = Depends(get_current_identity),
 ):
     """최근 1시간 에러 로그 패턴을 AI 분석."""
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
@@ -1582,7 +1582,7 @@ async def get_log_diagnose(
 @router.get("/trace-diagnose")
 async def get_trace_diagnose(
     request: Request,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: AuthIdentity = Depends(get_current_identity),
 ):
     """최근 1시간 트레이스 에러·지연을 AI 분석."""
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
@@ -1639,7 +1639,7 @@ async def get_trace_diagnose(
 @router.get("/backup-diagnose")
 async def get_backup_diagnose(
     request: Request,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: AuthIdentity = Depends(get_current_identity),
 ):
     """백업 CronJob 상태를 AI 진단."""
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
@@ -1674,7 +1674,7 @@ async def get_backup_diagnose(
 @router.get("/ai-summary")
 async def get_ai_summary(
     request: Request,
-    current_user: UserResponse = Depends(get_current_user),
+    current_user: AuthIdentity = Depends(get_current_identity),
 ):
     """Run one-shot AI analysis across all admin sectors."""
     await check_rate_limit(request, "admin_ai", user_id=current_user.id)
