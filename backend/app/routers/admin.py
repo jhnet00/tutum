@@ -930,7 +930,7 @@ async def get_diagnose(
             text = text.split("```")[1]
             if text.startswith("json"):
                 text = text[4:]
-        diagnosis = json.loads(text)
+        diagnosis = await _parse_model_json(text)
 
     except Exception as e:
         logger.error("Bedrock 진단 호출 오류: %s", e)
@@ -1174,6 +1174,86 @@ status 기준:
 중요: 각 워커의 입력 데이터와 실제 상태를 기반으로 판단하세요."""
 
 
+_JSON_REPAIR_SYSTEM_PROMPT = """You fix malformed JSON emitted by another model.
+Return valid JSON only.
+Do not add markdown fences, explanations, or extra keys.
+Preserve the original schema and values as closely as possible."""
+
+
+def _extract_json_text(text: str) -> str:
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        parts = cleaned.split("```")
+        if len(parts) > 1:
+            cleaned = parts[1]
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:]
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end != -1 and end >= start:
+        cleaned = cleaned[start:end + 1]
+
+    return cleaned.strip()
+
+
+async def _invoke_bedrock_text(system_prompt: str, prompt: str, max_tokens: int = 1024) -> str:
+    bedrock = _get_bedrock_client()
+    model_id = os.getenv("BEDROCK_MODEL_ID", "global.anthropic.claude-sonnet-4-6")
+    body = json.dumps({
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": max_tokens,
+        "temperature": 0.1,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": prompt}],
+    })
+    loop = asyncio.get_running_loop()
+    response = await loop.run_in_executor(
+        None,
+        lambda: bedrock.invoke_model(
+            modelId=model_id,
+            body=body,
+            contentType="application/json",
+            accept="application/json",
+        ),
+    )
+    raw_body = json.loads(response["body"].read())
+    return raw_body["content"][0]["text"].strip()
+
+
+async def _parse_model_json(text: str) -> dict:
+    candidate = _extract_json_text(text)
+    last_error: Exception | None = None
+
+    for strict in (True, False):
+        try:
+            return json.loads(candidate, strict=strict)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+
+    repair_prompt = (
+        "Convert the following malformed JSON-like text into valid JSON.\n"
+        "Return JSON only.\n\n"
+        f"{candidate[:12000]}"
+    )
+    repaired = await _invoke_bedrock_text(
+        _JSON_REPAIR_SYSTEM_PROMPT,
+        repair_prompt,
+        max_tokens=1800,
+    )
+    repaired_candidate = _extract_json_text(repaired)
+
+    for strict in (True, False):
+        try:
+            return json.loads(repaired_candidate, strict=strict)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+
+    if last_error is not None:
+        raise last_error
+    raise json.JSONDecodeError("Failed to parse model JSON", candidate, 0)
+
+
 @router.get("/pipeline-diagnose")
 async def get_pipeline_diagnose(
     request: Request,
@@ -1261,7 +1341,7 @@ async def get_pipeline_diagnose(
             text = text.split("```")[1]
             if text.startswith("json"):
                 text = text[4:]
-        result = json.loads(text)
+        result = await _parse_model_json(text)
 
     except Exception as e:
         logger.error("pipeline-diagnose Bedrock 오류: %s", e)
@@ -1297,7 +1377,7 @@ async def _call_bedrock_standard(prompt: str, system_prompt: str, max_tokens: in
         text = text.split("```")[1]
         if text.startswith("json"):
             text = text[4:]
-    return json.loads(text)
+    return await _parse_model_json(text)
 
 
 _AI_SUMMARY_SYSTEM_PROMPT = """You are Tutum's SRE-focused admin AI.
