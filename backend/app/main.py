@@ -3,10 +3,12 @@
 
 import asyncio
 import logging
+import logging.config
 import os
+import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -37,6 +39,70 @@ from .routers import (
 )
 from .services.alert_service import MarketMonitor
 
+
+class TraceContextFilter(logging.Filter):
+    """Attach current OpenTelemetry trace/span IDs to each log record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        span = trace.get_current_span()
+        span_context = span.get_span_context() if span else None
+        if span_context and span_context.is_valid:
+            record.trace_id = format(span_context.trace_id, "032x")
+            record.span_id = format(span_context.span_id, "016x")
+        else:
+            record.trace_id = "-"
+            record.span_id = "-"
+        return True
+
+
+logging.config.dictConfig(
+    {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "filters": {
+            "trace_context": {
+                "()": TraceContextFilter,
+            }
+        },
+        "formatters": {
+            "standard": {
+                "format": (
+                    "%(levelname)s %(asctime)s [%(name)s] %(message)s "
+                    "trace_id=%(trace_id)s span_id=%(span_id)s"
+                )
+            }
+        },
+        "handlers": {
+            "default": {
+                "class": "logging.StreamHandler",
+                "formatter": "standard",
+                "filters": ["trace_context"],
+            }
+        },
+        "root": {
+            "handlers": ["default"],
+            "level": os.getenv("LOG_LEVEL", "INFO").upper(),
+        },
+        "loggers": {
+            "uvicorn": {
+                "handlers": ["default"],
+                "level": os.getenv("LOG_LEVEL", "INFO").upper(),
+                "propagate": False,
+            },
+            "uvicorn.error": {
+                "handlers": ["default"],
+                "level": os.getenv("LOG_LEVEL", "INFO").upper(),
+                "propagate": False,
+            },
+            "uvicorn.access": {
+                "handlers": ["default"],
+                "level": "WARNING",
+                "propagate": False,
+            },
+        },
+    }
+)
+
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
@@ -48,6 +114,8 @@ _tracer_provider.add_span_processor(
     BatchSpanProcessor(OTLPSpanExporter(endpoint=_otlp_endpoint, insecure=True))
 )
 trace.set_tracer_provider(_tracer_provider)
+
+_SKIP_REQUEST_LOG_PATHS = {"/health", "/api/health", "/metrics", "/ready"}
 
 
 @asynccontextmanager
@@ -110,6 +178,50 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def trace_aware_request_logging(request: Request, call_next):
+    start = time.perf_counter()
+    client_ip = request.client.host if request.client else "-"
+    path = request.url.path
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.exception(
+            "request_failed method=%s path=%s status=%s client=%s duration_ms=%.1f",
+            request.method,
+            path,
+            500,
+            client_ip,
+            duration_ms,
+        )
+        raise
+
+    duration_ms = (time.perf_counter() - start) * 1000
+    status_code = response.status_code
+
+    if path in _SKIP_REQUEST_LOG_PATHS and status_code < 400:
+        return response
+
+    log_level = logging.INFO
+    if status_code >= 500:
+        log_level = logging.ERROR
+    elif status_code >= 400:
+        log_level = logging.WARNING
+
+    logger.log(
+        log_level,
+        "request_complete method=%s path=%s status=%s client=%s duration_ms=%.1f",
+        request.method,
+        path,
+        status_code,
+        client_ip,
+        duration_ms,
+    )
+    return response
 
 
 @app.get("/health")

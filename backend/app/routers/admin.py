@@ -17,6 +17,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 from ipaddress import ip_address, ip_network
 from datetime import datetime, timezone, timedelta
@@ -385,6 +386,119 @@ def _safe_round_money(value: float | None) -> float | None:
     return round(value, 2)
 
 
+_GRAFANA_URL = os.getenv("GRAFANA_URL", "http://10.60.11.95:3000")
+_TRACE_ID_PATTERNS = (
+    re.compile(r"\btrace[_ ]?id[=:](?P<trace>[0-9a-f]{16,32})\b", re.IGNORECASE),
+    re.compile(r"\btraceID[=:](?P<trace>[0-9a-f]{16,32})\b", re.IGNORECASE),
+)
+_REQUEST_LOG_RE = re.compile(
+    r"\brequest_(?:complete|failed)\s+method=(?P<method>[A-Z]+)\s+path=(?P<path>\S+)\s+status=(?P<status>\d{3})\b"
+)
+_UVICORN_ACCESS_RE = re.compile(
+    r'"(?P<method>[A-Z]+)\s+(?P<path>\S+)\s+HTTP/[^"]+"\s+(?P<status>\d{3})\b'
+)
+_CRITICAL_LOG_PATTERNS = (
+    "traceback",
+    "exception",
+    "panic",
+    "crashloop",
+    "service unavailable",
+    "connection refused",
+    "timed out",
+    "timeout",
+    "not_ready",
+    "not ready",
+    "db error",
+    "database error",
+)
+_WARN_LOG_PATTERNS = (
+    "too_many_requests",
+    "rate limit",
+    "retry",
+    "temporarily unavailable",
+    "method not allowed",
+    "forbidden",
+)
+_LOW_SIGNAL_STATUS_CODES = {400, 401, 403, 404, 405, 422}
+_WARN_STATUS_CODES = {408, 409, 425, 429}
+_SEVERITY_ORDER = {"CRITICAL": 3, "WARN": 2, "INFO": 1}
+
+
+def _grafana_trace_url(trace_id: str) -> str:
+    return (
+        f"{_GRAFANA_URL}/explore?datasource=tempo&left="
+        "{\"queries\":[{\"refId\":\"A\",\"datasource\":{\"type\":\"tempo\"},"
+        f"\"queryType\":\"traceql\",\"query\":\"{trace_id}\",\"tableType\":\"traces\"}}]}}"
+    )
+
+
+def _extract_trace_id(message: str) -> str | None:
+    for pattern in _TRACE_ID_PATTERNS:
+        match = pattern.search(message)
+        if match:
+            return match.group("trace").lower()
+    return None
+
+
+def _extract_request_context(message: str) -> tuple[str | None, int | None, str | None, str]:
+    custom_match = _REQUEST_LOG_RE.search(message)
+    if custom_match:
+        return (
+            custom_match.group("path"),
+            int(custom_match.group("status")),
+            custom_match.group("method"),
+            "request",
+        )
+
+    access_match = _UVICORN_ACCESS_RE.search(message)
+    if access_match:
+        return (
+            access_match.group("path"),
+            int(access_match.group("status")),
+            access_match.group("method"),
+            "access",
+        )
+
+    return None, None, None, "application"
+
+
+def _classify_log_severity(
+    level: str,
+    message: str,
+    status_code: int | None = None,
+    path: str | None = None,
+) -> str:
+    normalized_level = (level or "INFO").upper()
+    text = (message or "").lower()
+
+    if status_code is not None:
+        if status_code >= 500:
+            return "CRITICAL"
+        if status_code in _WARN_STATUS_CODES:
+            return "WARN"
+        if status_code >= 400:
+            return "INFO" if status_code in _LOW_SIGNAL_STATUS_CODES else "WARN"
+
+    if any(pattern in text for pattern in _CRITICAL_LOG_PATTERNS):
+        return "CRITICAL"
+
+    if normalized_level == "ERROR":
+        if any(pattern in text for pattern in _WARN_LOG_PATTERNS):
+            return "WARN"
+        return "CRITICAL"
+
+    if normalized_level in {"WARN", "WARNING"}:
+        return "WARN"
+
+    if any(pattern in text for pattern in _WARN_LOG_PATTERNS):
+        return "WARN"
+
+    if path in {"/health", "/api/health", "/metrics", "/ready"}:
+        return "INFO"
+
+    return "INFO"
+
+
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.get("/nodes")
@@ -720,13 +834,23 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
             pod_name = labels.get("pod", labels.get("instance", ""))
             for ts_ns, msg in stream.get("values", []):
                 ts = datetime.fromtimestamp(int(ts_ns) / 1_000_000_000, tz=timezone.utc)
+                msg_text = msg.rstrip("\n")
+                path, status_code, method, source_kind = _extract_request_context(msg_text)
+                trace_id = _extract_trace_id(msg_text)
                 logs.append({
                     "time":      ts.strftime("%H:%M:%S"),
                     "timestamp": int(ts_ns),
                     "level":     level if level in ("INFO", "WARN", "WARNING", "ERROR", "DEBUG") else "INFO",
                     "namespace": ns_name,
                     "pod":       pod_name,
-                    "msg":       msg.rstrip("\n"),
+                    "msg":       msg_text,
+                    "severity":  _classify_log_severity(level, msg_text, status_code, path),
+                    "trace_id":  trace_id,
+                    "trace_url": _grafana_trace_url(trace_id) if trace_id else None,
+                    "status_code": status_code,
+                    "path": path,
+                    "method": method,
+                    "source_kind": source_kind,
                 })
         return logs
 
@@ -758,6 +882,18 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
                 seen.add(key)
                 unique.append(log)
 
+        severity_counts = {"critical": 0, "warn": 0, "info": 0, "trace_linked": 0}
+        for log in unique[:limit]:
+            severity = log.get("severity", "INFO")
+            if severity == "CRITICAL":
+                severity_counts["critical"] += 1
+            elif severity == "WARN":
+                severity_counts["warn"] += 1
+            else:
+                severity_counts["info"] += 1
+            if log.get("trace_id"):
+                severity_counts["trace_linked"] += 1
+
         # 에러 이력 집계 (1시간, pod별 ERROR 건수 + 마지막 발생)
         error_summary: list[dict] = []
         if not isinstance(error_resp, Exception) and error_resp.json().get("status") == "success":
@@ -770,18 +906,39 @@ async def get_logs(namespace: str = "tutum-app", limit: int = 50):
                     pod_stat[pod] = {
                         "count": 0, "last_time": e["time"],
                         "last_msg": e["msg"][:80], "namespace": e["namespace"],
+                        "critical_count": 0, "warn_count": 0, "info_count": 0,
+                        "traceable_count": 0, "top_severity": "INFO",
                     }
                 pod_stat[pod]["count"] += 1
+                severity = e.get("severity", "INFO")
+                if severity == "CRITICAL":
+                    pod_stat[pod]["critical_count"] += 1
+                elif severity == "WARN":
+                    pod_stat[pod]["warn_count"] += 1
+                else:
+                    pod_stat[pod]["info_count"] += 1
+                if e.get("trace_id"):
+                    pod_stat[pod]["traceable_count"] += 1
+                if _SEVERITY_ORDER[severity] > _SEVERITY_ORDER[pod_stat[pod]["top_severity"]]:
+                    pod_stat[pod]["top_severity"] = severity
             error_summary = sorted(
                 [{"pod": k, **v} for k, v in pod_stat.items()],
-                key=lambda x: -x["count"],
+                key=lambda x: (-x["critical_count"], -x["count"]),
             )
 
-        return {"logs": unique[:limit], "error_summary": error_summary}
+        return {
+            "logs": unique[:limit],
+            "error_summary": error_summary,
+            "severity_counts": severity_counts,
+        }
 
     except Exception as e:
         logger.error("get_logs Loki 오류: %s", e)
-        return {"logs": [], "error_summary": []}
+        return {
+            "logs": [],
+            "error_summary": [],
+            "severity_counts": {"critical": 0, "warn": 0, "info": 0, "trace_linked": 0},
+        }
 
 
 # ─── AI 진단 ───────────────────────────────────────────────────────────────────
@@ -2679,7 +2836,7 @@ async def get_action_needed():
 # ─── 트레이스 (Tempo) ─────────────────────────────────────────────────────────
 
 TEMPO_URL = os.getenv("TEMPO_URL", "http://10.60.11.95:3200")
-GRAFANA_URL = os.getenv("GRAFANA_URL", "http://10.60.11.95:3000")
+GRAFANA_URL = _GRAFANA_URL
 
 
 @router.get("/traces")
@@ -2691,13 +2848,6 @@ async def get_traces(limit: int = 20, min_duration_ms: int = 50):
     """
     end_s = int(datetime.now(timezone.utc).timestamp())
     start_s = end_s - 3600  # 1시간
-
-    def _grafana_url(trace_id: str) -> str:
-        return (
-            f"{GRAFANA_URL}/explore?datasource=tempo&left="
-            "{\"queries\":[{\"refId\":\"A\",\"datasource\":{\"type\":\"tempo\"},"
-            f"\"queryType\":\"traceql\",\"query\":\"{trace_id}\",\"tableType\":\"traces\"}}]}}"
-        )
 
     def _format(t: dict, is_error: bool = False) -> dict:
         duration_ms = round(int(t.get("durationMs", 0)))
@@ -2712,7 +2862,7 @@ async def get_traces(limit: int = 20, min_duration_ms: int = 50):
             "durationMs":      duration_ms,
             "startTimeMs":     start_time_ms,
             "isError":         is_error,
-            "grafana_url":     _grafana_url(trace_id),
+            "grafana_url":     _grafana_trace_url(trace_id),
         }
 
     async def _search(params: dict) -> list[dict]:
