@@ -2789,28 +2789,28 @@ async def get_action_needed():
                 alerts.append(
                     _build_action_alert(
                         level="CRITICAL",
-                        category="Disk",
-                        message=f"Cluster disk usage is {used_pct:.1f}% (critical >= 85%).",
-                        action="Delete stale data or expand the backing volume immediately.",
-                        owner="Platform",
-                        source="Mimir data-metrics",
+                        category="디스크",
+                        message=f"클러스터 디스크 사용률이 {used_pct:.1f}%입니다. (치명 기준: 85% 이상)",
+                        action="불필요한 데이터를 정리하거나 스토리지 볼륨을 즉시 확장하세요.",
+                        owner="플랫폼",
+                        source="Mimir 데이터 메트릭",
                         signal="disk.used_pct",
-                        runbook="ADMIN_MONITORING_GUIDE -> Disk capacity",
-                        service="cluster-storage",
+                        runbook="ADMIN_MONITORING_GUIDE > 디스크 용량",
+                        service="클러스터 스토리지",
                     )
                 )
             elif used_pct >= 70:
                 alerts.append(
                     _build_action_alert(
                         level="WARN",
-                        category="Disk",
-                        message=f"Cluster disk usage is {used_pct:.1f}% (warning >= 70%).",
-                        action="Watch the growth trend and prepare cleanup or volume expansion.",
-                        owner="Platform",
-                        source="Mimir data-metrics",
+                        category="디스크",
+                        message=f"클러스터 디스크 사용률이 {used_pct:.1f}%입니다. (주의 기준: 70% 이상)",
+                        action="증가 추이를 모니터링하고 정리 또는 볼륨 확장을 준비하세요.",
+                        owner="플랫폼",
+                        source="Mimir 데이터 메트릭",
                         signal="disk.used_pct",
-                        runbook="ADMIN_MONITORING_GUIDE -> Disk capacity",
-                        service="cluster-storage",
+                        runbook="ADMIN_MONITORING_GUIDE > 디스크 용량",
+                        service="클러스터 스토리지",
                     )
                 )
 
@@ -2818,17 +2818,17 @@ async def get_action_needed():
         jvm_pct = es.get("jvm_heap_pct")
         if jvm_pct is not None and jvm_pct >= 80:
             level = "CRITICAL" if jvm_pct >= 90 else "WARN"
-            threshold_label = "critical >= 90%" if level == "CRITICAL" else "warning >= 80%"
+            threshold_label = "치명 기준: 90% 이상" if level == "CRITICAL" else "주의 기준: 80% 이상"
             alerts.append(
                 _build_action_alert(
                     level=level,
                     category="Elasticsearch",
-                    message=f"Elasticsearch JVM heap is {jvm_pct:.1f}% ({threshold_label}).",
-                    action="Reduce indexing pressure or scale Elasticsearch memory or capacity.",
-                    owner="Search/Data",
-                    source="Mimir data-metrics",
+                    message=f"Elasticsearch JVM 힙 사용률이 {jvm_pct:.1f}%입니다. ({threshold_label})",
+                    action="인덱싱 부하를 줄이거나 Elasticsearch 메모리/용량을 확장하세요.",
+                    owner="검색/데이터",
+                    source="Mimir 데이터 메트릭",
                     signal="elasticsearch.jvm_heap_pct",
-                    runbook="ADMIN_MONITORING_GUIDE -> Elasticsearch capacity",
+                    runbook="ADMIN_MONITORING_GUIDE > Elasticsearch 용량",
                     service="elasticsearch",
                 )
             )
@@ -2839,12 +2839,12 @@ async def get_action_needed():
                 _build_action_alert(
                     level="WARN",
                     category="Elasticsearch",
-                    message=f"Elasticsearch write thread pool rejected {thread_rej} operations in the recent window.",
-                    action="Inspect indexing burst size and scale replicas if rejections continue.",
-                    owner="Search/Data",
-                    source="Mimir data-metrics",
+                    message=f"최근 구간에서 Elasticsearch write thread pool이 {thread_rej}건의 작업을 거절했습니다.",
+                    action="인덱싱 버스트를 점검하고 거절이 계속되면 replica를 확장하세요.",
+                    owner="검색/데이터",
+                    source="Mimir 데이터 메트릭",
                     signal="elasticsearch.thread_rejected",
-                    runbook="ADMIN_MONITORING_GUIDE -> Elasticsearch indexing pressure",
+                    runbook="ADMIN_MONITORING_GUIDE > Elasticsearch 인덱싱 부하",
                     service="elasticsearch",
                 )
             )
@@ -2853,18 +2853,18 @@ async def get_action_needed():
         lag = kafka.get("consumer_lag")
         if lag is not None and lag > 500:
             level = "CRITICAL" if lag > 5000 else "WARN"
-            threshold_label = "critical > 5,000" if level == "CRITICAL" else "warning > 500"
+            threshold_label = "치명 기준: 5,000 초과" if level == "CRITICAL" else "주의 기준: 500 초과"
             alerts.append(
                 _build_action_alert(
                     level=level,
                     category="Kafka",
-                    message=f"Kafka consumer lag is {lag:,} messages ({threshold_label}).",
-                    action="Check consumer health and scale replicas if the backlog keeps growing.",
-                    owner="Pipeline",
-                    source="Mimir data-metrics",
+                    message=f"Kafka consumer lag이 {lag:,}건입니다. ({threshold_label})",
+                    action="컨슈머 상태를 확인하고 backlog가 계속 늘면 replica를 확장하세요.",
+                    owner="파이프라인",
+                    source="Mimir 데이터 메트릭",
                     signal="kafka.consumer_lag",
-                    runbook="ADMIN_MONITORING_GUIDE -> Kafka consumer lag",
-                    service="kafka / elastic-consumer",
+                    runbook="ADMIN_MONITORING_GUIDE > Kafka consumer lag",
+                    service="Kafka / elastic-consumer",
                 )
             )
 
@@ -2878,14 +2878,14 @@ async def get_action_needed():
                     level="WARN",
                     category="MongoDB",
                     message=(
-                        f"MongoDB queued operations reached {queued_total} "
-                        f"(readers={queued_readers}, writers={queued_writers})."
+                        f"MongoDB 대기 작업 수가 {queued_total}건입니다. "
+                        f"(readers={queued_readers}, writers={queued_writers})"
                     ),
-                    action="Review slow queries and active operations with db.currentOp().",
-                    owner="Data",
-                    source="Mimir data-metrics",
+                    action="db.currentOp()로 느린 쿼리와 활성 작업을 점검하세요.",
+                    owner="데이터",
+                    source="Mimir 데이터 메트릭",
                     signal="mongodb.queued_ops",
-                    runbook="ADMIN_MONITORING_GUIDE -> Mongo queued operations",
+                    runbook="ADMIN_MONITORING_GUIDE > Mongo 대기 작업",
                     service="mongodb",
                 )
             )
@@ -2899,16 +2899,16 @@ async def get_action_needed():
                 alerts.append(
                     _build_action_alert(
                         level="CRITICAL",
-                        category="Backup",
+                        category="백업",
                         message=(
-                            f"{item['name']} backup failed: "
-                            f"{item.get('last_error') or 'no error message reported'}"
+                            f"{item['name']} 백업이 실패했습니다: "
+                            f"{item.get('last_error') or '오류 메시지가 기록되지 않았습니다'}"
                         ),
-                        action=f"Inspect the latest Job logs in namespace {item['namespace']}.",
-                        owner="Platform",
-                        source="Kubernetes CronJob status",
+                        action=f"{item['namespace']} 네임스페이스의 최신 Job 로그를 확인하세요.",
+                        owner="플랫폼",
+                        source="Kubernetes CronJob 상태",
                         signal=f"backup.{item['name']}.status",
-                        runbook="ADMIN_MONITORING_GUIDE -> Backup CronJobs",
+                        runbook="ADMIN_MONITORING_GUIDE > 백업 CronJob",
                         service=item["name"],
                     )
                 )
@@ -2916,13 +2916,13 @@ async def get_action_needed():
                 alerts.append(
                     _build_action_alert(
                         level="WARN",
-                        category="Backup",
-                        message=f"{item['name']} has not completed a first backup run yet.",
-                        action="Check CronJob schedule, RBAC, and image pull status.",
-                        owner="Platform",
-                        source="Kubernetes CronJob status",
+                        category="백업",
+                        message=f"{item['name']} 백업이 아직 한 번도 성공적으로 실행되지 않았습니다.",
+                        action="CronJob 스케줄, RBAC, 이미지 pull 상태를 확인하세요.",
+                        owner="플랫폼",
+                        source="Kubernetes CronJob 상태",
                         signal=f"backup.{item['name']}.status",
-                        runbook="ADMIN_MONITORING_GUIDE -> Backup CronJobs",
+                        runbook="ADMIN_MONITORING_GUIDE > 백업 CronJob",
                         service=item["name"],
                     )
                 )
