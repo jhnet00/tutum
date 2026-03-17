@@ -170,6 +170,12 @@ async def health_check():
     return {"status": "healthy", "mode": "MOCK" if MOCK_MODE else "PROD"}
 
 
+@app.get("/")
+async def root_health_check():
+    # ALB health checks use "/" via the shared staging ingress annotation.
+    return {"status": "healthy", "service": "ocr-api", "mode": "MOCK" if MOCK_MODE else "PROD"}
+
+
 @app.post("/import/ocr")
 async def process_ocr(
     background_tasks: BackgroundTasks,
