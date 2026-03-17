@@ -16,9 +16,9 @@ spec:
             prefix: /api/proxy/import/ocr
       route:
         - destination:
-            host: ocr.tutum-app.svc.cluster.local
+            host: frontend.tutum-app.svc.cluster.local
             port:
-              number: 8002
+              number: 3000
     - match:
         - uri:
             prefix: /api/v1/auth
