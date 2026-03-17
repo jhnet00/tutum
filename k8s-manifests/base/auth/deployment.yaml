@@ -339,6 +339,16 @@ spec:
               value: "https://tutum.my"
             - name: CORS_ORIGINS
               value: '["https://tutum.my"]'
+            - name: AWS_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: AWS_REGION
+            - name: S3_BUCKET_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secret
+                  key: S3_BUCKET_NAME
           resources:
             requests:
               cpu: 200m
