@@ -89,6 +89,7 @@ python3 scripts/apply_ocr_waf_exception.py \
   --name tutum-stg-waf \
   --id 14db8c23-c2dc-4d17-9f85-4b509bf4c261 \
   --region ap-northeast-2 \
+  --profile ruby \
   --action ALLOW
 ```
 
@@ -99,6 +100,7 @@ python3 scripts/apply_ocr_waf_exception.py \
   --name tutum-stg-waf \
   --id 14db8c23-c2dc-4d17-9f85-4b509bf4c261 \
   --region ap-northeast-2 \
+  --profile ruby \
   --action COUNT \
   --dry-run
 ```
