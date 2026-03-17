@@ -2737,15 +2737,48 @@ async def get_backup_status():
 
 # ─── 운영 경고 요약 ───────────────────────────────────────────────────────────
 
+def _build_action_alert(
+    *,
+    level: str,
+    category: str,
+    message: str,
+    action: str,
+    owner: str,
+    source: str,
+    signal: str,
+    runbook: str,
+    service: str,
+) -> dict:
+    return {
+        "level": level,
+        "category": category,
+        "message": message,
+        "action": action,
+        "owner": owner,
+        "source": source,
+        "signal": signal,
+        "runbook": runbook,
+        "service": service,
+    }
+
+
+def _action_alert_sort_key(alert: dict) -> tuple[int, str, str]:
+    severity_rank = 0 if alert.get("level") == "CRITICAL" else 1
+    return (
+        severity_rank,
+        str(alert.get("category", "")),
+        str(alert.get("signal", "")),
+    )
+
+
 @router.get("/action-needed")
 async def get_action_needed():
     """
     임계치 기반 즉시 조치 필요 항목 목록.
     data-metrics + backup-status를 집계해 경고 생성.
     """
-    alerts = []
+    alerts: list[dict] = []
 
-    # data-metrics 호출
     try:
         metrics = await get_data_metrics()
 
@@ -2753,83 +2786,150 @@ async def get_action_needed():
         used_pct = disk.get("used_pct")
         if used_pct is not None:
             if used_pct >= 85:
-                alerts.append({
-                    "level": "CRITICAL",
-                    "category": "Disk",
-                    "message": f"클러스터 디스크 사용률 {used_pct}% (임계치: 85%)",
-                    "action": "불필요한 데이터 정리 또는 볼륨 확장",
-                })
+                alerts.append(
+                    _build_action_alert(
+                        level="CRITICAL",
+                        category="Disk",
+                        message=f"Cluster disk usage is {used_pct:.1f}% (critical >= 85%).",
+                        action="Delete stale data or expand the backing volume immediately.",
+                        owner="Platform",
+                        source="Mimir data-metrics",
+                        signal="disk.used_pct",
+                        runbook="ADMIN_MONITORING_GUIDE -> Disk capacity",
+                        service="cluster-storage",
+                    )
+                )
             elif used_pct >= 70:
-                alerts.append({
-                    "level": "WARN",
-                    "category": "Disk",
-                    "message": f"클러스터 디스크 사용률 {used_pct}% (임계치: 70%)",
-                    "action": "디스크 사용량 추이 모니터링",
-                })
+                alerts.append(
+                    _build_action_alert(
+                        level="WARN",
+                        category="Disk",
+                        message=f"Cluster disk usage is {used_pct:.1f}% (warning >= 70%).",
+                        action="Watch the growth trend and prepare cleanup or volume expansion.",
+                        owner="Platform",
+                        source="Mimir data-metrics",
+                        signal="disk.used_pct",
+                        runbook="ADMIN_MONITORING_GUIDE -> Disk capacity",
+                        service="cluster-storage",
+                    )
+                )
 
         es = metrics.get("elasticsearch", {})
         jvm_pct = es.get("jvm_heap_pct")
         if jvm_pct is not None and jvm_pct >= 80:
-            alerts.append({
-                "level": "CRITICAL" if jvm_pct >= 90 else "WARN",
-                "category": "Elasticsearch",
-                "message": f"ES JVM Heap {jvm_pct}% (임계치: 80%)",
-                "action": "ES 힙 메모리 증설 또는 인덱스 정리",
-            })
+            level = "CRITICAL" if jvm_pct >= 90 else "WARN"
+            threshold_label = "critical >= 90%" if level == "CRITICAL" else "warning >= 80%"
+            alerts.append(
+                _build_action_alert(
+                    level=level,
+                    category="Elasticsearch",
+                    message=f"Elasticsearch JVM heap is {jvm_pct:.1f}% ({threshold_label}).",
+                    action="Reduce indexing pressure or scale Elasticsearch memory or capacity.",
+                    owner="Search/Data",
+                    source="Mimir data-metrics",
+                    signal="elasticsearch.jvm_heap_pct",
+                    runbook="ADMIN_MONITORING_GUIDE -> Elasticsearch capacity",
+                    service="elasticsearch",
+                )
+            )
+
         thread_rej = es.get("thread_rejected")
         if thread_rej and thread_rej > 0:
-            alerts.append({
-                "level": "WARN",
-                "category": "Elasticsearch",
-                "message": f"ES write thread pool rejected {thread_rej}건 (5m)",
-                "action": "ES 인덱싱 속도 조절 또는 replicas 확장",
-            })
+            alerts.append(
+                _build_action_alert(
+                    level="WARN",
+                    category="Elasticsearch",
+                    message=f"Elasticsearch write thread pool rejected {thread_rej} operations in the recent window.",
+                    action="Inspect indexing burst size and scale replicas if rejections continue.",
+                    owner="Search/Data",
+                    source="Mimir data-metrics",
+                    signal="elasticsearch.thread_rejected",
+                    runbook="ADMIN_MONITORING_GUIDE -> Elasticsearch indexing pressure",
+                    service="elasticsearch",
+                )
+            )
 
         kafka = metrics.get("kafka", {})
         lag = kafka.get("consumer_lag")
         if lag is not None and lag > 500:
-            alerts.append({
-                "level": "CRITICAL" if lag > 5000 else "WARN",
-                "category": "Kafka",
-                "message": f"Kafka consumer lag {lag:,}건",
-                "action": "elastic-consumer 로그 확인 및 replicas 증설",
-            })
+            level = "CRITICAL" if lag > 5000 else "WARN"
+            threshold_label = "critical > 5,000" if level == "CRITICAL" else "warning > 500"
+            alerts.append(
+                _build_action_alert(
+                    level=level,
+                    category="Kafka",
+                    message=f"Kafka consumer lag is {lag:,} messages ({threshold_label}).",
+                    action="Check consumer health and scale replicas if the backlog keeps growing.",
+                    owner="Pipeline",
+                    source="Mimir data-metrics",
+                    signal="kafka.consumer_lag",
+                    runbook="ADMIN_MONITORING_GUIDE -> Kafka consumer lag",
+                    service="kafka / elastic-consumer",
+                )
+            )
 
         mongo = metrics.get("mongodb", {})
-        qr = mongo.get("queued_readers") or 0
-        qw = mongo.get("queued_writers") or 0
-        if qr + qw > 10:
-            alerts.append({
-                "level": "WARN",
-                "category": "MongoDB",
-                "message": f"MongoDB 대기 쿼리 {qr + qw}건 (readers={qr}, writers={qw})",
-                "action": "느린 쿼리 확인: db.currentOp()",
-            })
+        queued_readers = mongo.get("queued_readers") or 0
+        queued_writers = mongo.get("queued_writers") or 0
+        queued_total = queued_readers + queued_writers
+        if queued_total > 10:
+            alerts.append(
+                _build_action_alert(
+                    level="WARN",
+                    category="MongoDB",
+                    message=(
+                        f"MongoDB queued operations reached {queued_total} "
+                        f"(readers={queued_readers}, writers={queued_writers})."
+                    ),
+                    action="Review slow queries and active operations with db.currentOp().",
+                    owner="Data",
+                    source="Mimir data-metrics",
+                    signal="mongodb.queued_ops",
+                    runbook="ADMIN_MONITORING_GUIDE -> Mongo queued operations",
+                    service="mongodb",
+                )
+            )
     except Exception as e:
-        logger.warning("action-needed metrics 조회 실패: %s", e)
+        logger.warning("action-needed metrics query failed: %s", e)
 
-    # backup-status 호출
     try:
         backup = await get_backup_status()
-        for b in backup.get("backups", []):
-            if b["status"] == "ERROR":
-                alerts.append({
-                    "level": "CRITICAL",
-                    "category": "Backup",
-                    "message": f"{b['name']} 백업 실패: {b.get('last_error', '알 수 없음')}",
-                    "action": f"kubectl logs -n {b['namespace']} -l job-name=... 확인",
-                })
-            elif b["status"] == "NO_RUN":
-                alerts.append({
-                    "level": "WARN",
-                    "category": "Backup",
-                    "message": f"{b['name']} 백업이 아직 한 번도 실행되지 않음",
-                    "action": "CronJob 스케줄 및 권한 확인",
-                })
+        for item in backup.get("backups", []):
+            if item["status"] == "ERROR":
+                alerts.append(
+                    _build_action_alert(
+                        level="CRITICAL",
+                        category="Backup",
+                        message=(
+                            f"{item['name']} backup failed: "
+                            f"{item.get('last_error') or 'no error message reported'}"
+                        ),
+                        action=f"Inspect the latest Job logs in namespace {item['namespace']}.",
+                        owner="Platform",
+                        source="Kubernetes CronJob status",
+                        signal=f"backup.{item['name']}.status",
+                        runbook="ADMIN_MONITORING_GUIDE -> Backup CronJobs",
+                        service=item["name"],
+                    )
+                )
+            elif item["status"] == "NO_RUN":
+                alerts.append(
+                    _build_action_alert(
+                        level="WARN",
+                        category="Backup",
+                        message=f"{item['name']} has not completed a first backup run yet.",
+                        action="Check CronJob schedule, RBAC, and image pull status.",
+                        owner="Platform",
+                        source="Kubernetes CronJob status",
+                        signal=f"backup.{item['name']}.status",
+                        runbook="ADMIN_MONITORING_GUIDE -> Backup CronJobs",
+                        service=item["name"],
+                    )
+                )
     except Exception as e:
-        logger.warning("action-needed backup 조회 실패: %s", e)
+        logger.warning("action-needed backup query failed: %s", e)
 
-    alerts.sort(key=lambda a: 0 if a["level"] == "CRITICAL" else 1)
+    alerts.sort(key=_action_alert_sort_key)
     return {"alerts": alerts, "count": len(alerts)}
 
 
