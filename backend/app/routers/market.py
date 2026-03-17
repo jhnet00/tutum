@@ -15,6 +15,7 @@ import asyncio
 import os
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
+import httpx
 
 from ..services.market_data import kis_client, crypto_client
 from ..services.exchange_rate import get_exchange_rate
@@ -37,6 +38,222 @@ CURRENCY_CODES = {
 }
 KST = timezone(timedelta(hours=9))
 ET = ZoneInfo("America/New_York")
+PUBLIC_INDEX_TARGETS = [
+    {"id": "kospi", "name": "코스피", "symbol": "KOSPI", "yahoo_symbol": "^KS11"},
+    {"id": "sp500", "name": "미국 대표 지수", "symbol": "S&P 500", "yahoo_symbol": "^GSPC"},
+    {"id": "nasdaq100", "name": "나스닥 100", "symbol": "NASDAQ 100", "yahoo_symbol": "^NDX"},
+]
+YAHOO_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+PUBLIC_INDEX_CACHE_TTL_SECONDS = 180
+PUBLIC_INDEX_LAST_GOOD_TTL_SECONDS = 6 * 60 * 60
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _latest_non_null(values: list[Any] | None) -> float | None:
+    if not values:
+        return None
+    for value in reversed(values):
+        if value is None:
+            continue
+        try:
+            return float(value)
+        except Exception:
+            continue
+    return None
+
+
+def _format_index_price(value: Any) -> float | None:
+    try:
+        return round(float(value), 2)
+    except Exception:
+        return None
+
+
+def _format_index_change(price: float | None, previous_close: float | None) -> tuple[float | None, float | None]:
+    if price is None or previous_close in (None, 0):
+        return None, None
+    change = price - previous_close
+    change_percent = (change / previous_close) * 100
+    return round(change, 2), round(change_percent, 2)
+
+
+def _to_iso_utc(raw_ts: Any) -> str | None:
+    try:
+        return datetime.fromtimestamp(int(raw_ts), tz=timezone.utc).isoformat()
+    except Exception:
+        return None
+
+
+def _market_status_from_meta(meta: dict[str, Any]) -> str:
+    regular = ((meta.get("currentTradingPeriod") or {}).get("regular") or {})
+    start_ts = regular.get("start")
+    end_ts = regular.get("end")
+    now_ts = int(_now_utc().timestamp())
+    try:
+        if start_ts is not None and end_ts is not None and int(start_ts) <= now_ts <= int(end_ts):
+            return "open"
+    except Exception:
+        pass
+    return "closed"
+
+
+def _is_index_stale(updated_at: str | None) -> bool:
+    if not updated_at:
+        return True
+    parsed = _parse_iso_datetime(updated_at)
+    if parsed is None:
+        return True
+    return (_now_utc() - parsed) > timedelta(days=3)
+
+
+def _unavailable_index_item(target: dict[str, str], source: str = "error") -> dict[str, Any]:
+    return {
+        "id": target["id"],
+        "symbol": target["symbol"],
+        "name": target["name"],
+        "price": None,
+        "change": None,
+        "changePercent": None,
+        "currency": "KRW" if target["id"] == "kospi" else "USD",
+        "marketStatus": "unknown",
+        "updatedAt": None,
+        "stale": True,
+        "available": False,
+        "source": source,
+    }
+
+
+async def _fetch_public_index_item(target: dict[str, str]) -> dict[str, Any]:
+    cache_key = f"market:index:{target['id']}"
+    cache_hit, cache_is_stale = await cache_get_with_last_good(cache_key)
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=10.0,
+            headers={"User-Agent": "Mozilla/5.0 TutumMarketMonitor/1.0"},
+        ) as client:
+            response = await client.get(
+                YAHOO_CHART_URL.format(symbol=target["yahoo_symbol"]),
+                params={"interval": "1d", "range": "5d"},
+            )
+            response.raise_for_status()
+
+        payload = response.json()
+        result = ((payload.get("chart") or {}).get("result") or [None])[0]
+        if not isinstance(result, dict):
+            raise ValueError("missing chart result")
+
+        meta = result.get("meta") or {}
+        indicators = (((result.get("indicators") or {}).get("quote") or [None])[0] or {})
+
+        price = _format_index_price(meta.get("regularMarketPrice"))
+        if price is None:
+            price = _format_index_price(_latest_non_null(indicators.get("close")))
+
+        previous_close = _format_index_price(meta.get("chartPreviousClose"))
+        if previous_close is None:
+            closes = indicators.get("close") or []
+            if isinstance(closes, list):
+                non_null = [float(v) for v in closes if v is not None]
+                if len(non_null) >= 2:
+                    previous_close = round(non_null[-2], 2)
+
+        change, change_percent = _format_index_change(price, previous_close)
+        updated_at = _to_iso_utc(meta.get("regularMarketTime"))
+
+        item = {
+            "id": target["id"],
+            "symbol": target["symbol"],
+            "name": target["name"],
+            "price": price,
+            "change": change,
+            "changePercent": change_percent,
+            "currency": meta.get("currency") or ("KRW" if target["id"] == "kospi" else "USD"),
+            "marketStatus": _market_status_from_meta(meta),
+            "updatedAt": updated_at,
+            "stale": _is_index_stale(updated_at),
+            "available": price is not None,
+            "source": "yahoo",
+        }
+
+        await cache_set_with_last_good(
+            cache_key,
+            json.dumps(item),
+            expire_seconds=PUBLIC_INDEX_CACHE_TTL_SECONDS,
+            backup_ttl=PUBLIC_INDEX_LAST_GOOD_TTL_SECONDS,
+        )
+        return item
+    except Exception as exc:
+        logger.warning("public index fetch failed (%s): %s", target["id"], exc)
+        if cache_hit:
+            try:
+                cached = json.loads(cache_hit)
+                cached["source"] = "last_good" if cache_is_stale else "cache"
+                cached["stale"] = True if cache_is_stale else bool(cached.get("stale", False))
+                return cached
+            except Exception:
+                logger.warning("public index cache decode failed (%s)", target["id"])
+        return _unavailable_index_item(target)
+
+
+async def _build_public_indices_payload() -> dict[str, Any]:
+    items = await asyncio.gather(*[_fetch_public_index_item(target) for target in PUBLIC_INDEX_TARGETS])
+    return {
+        "generatedAt": _now_utc().isoformat(),
+        "items": items,
+    }
+
+
+def _signed_percent_text(value: float | None) -> str:
+    if value is None:
+        return "변동 데이터가 아직 없습니다."
+    sign = "+" if value > 0 else ""
+    return f"{sign}{value:.2f}%"
+
+
+def _tone_from_change(value: float | None) -> str:
+    if value is None:
+        return "neutral"
+    if value >= 0.6:
+        return "positive"
+    if value <= -0.6:
+        return "caution"
+    return "neutral"
+
+
+def _build_index_brief_card(
+    item: dict[str, Any],
+    *,
+    title: str,
+    positive_template: str,
+    negative_template: str,
+    neutral_template: str,
+) -> dict[str, Any]:
+    change_percent = item.get("changePercent")
+    status = item.get("marketStatus") or "unknown"
+
+    if item.get("available") is not True:
+        body = f"{item.get('name')} 데이터가 아직 수집되지 않아 잠시 후 다시 확인하는 편이 좋습니다."
+        tone = "neutral"
+    elif change_percent is not None and float(change_percent) > 0.6:
+        body = positive_template.format(change_text=_signed_percent_text(change_percent), status=status)
+        tone = "positive"
+    elif change_percent is not None and float(change_percent) < -0.6:
+        body = negative_template.format(change_text=_signed_percent_text(change_percent), status=status)
+        tone = "caution"
+    else:
+        body = neutral_template.format(change_text=_signed_percent_text(change_percent), status=status)
+        tone = "neutral"
+
+    return {
+        "id": f"brief-{item.get('id')}",
+        "title": title,
+        "body": body,
+        "tone": tone,
+    }
 
 
 # ============================================================
@@ -769,6 +986,49 @@ async def get_market_status():
             },
             "items": candle_items,
         },
+    }
+
+
+@router.get("/indices")
+async def get_market_indices():
+    """홈페이지 공개 시장 지수 카드용 요약 데이터."""
+    return await _build_public_indices_payload()
+
+
+@router.get("/insights")
+async def get_market_insights():
+    """홈페이지 시장 브리핑 카드용 간단 인사이트."""
+    payload = await _build_public_indices_payload()
+    item_map = {item.get("id"): item for item in payload.get("items", []) if isinstance(item, dict)}
+
+    cards = [
+        _build_index_brief_card(
+            item_map.get("kospi", _unavailable_index_item(PUBLIC_INDEX_TARGETS[0])),
+            title="국내 증시 한줄 요약",
+            positive_template="코스피가 {change_text} 흐름으로 마감하며 국내 증시 분위기가 상대적으로 견조합니다. 현재 상태는 {status} 기준입니다.",
+            negative_template="코스피가 {change_text} 움직이며 국내 증시가 눌린 모습입니다. 추격 매수보다는 보유 비중 점검이 더 중요합니다. 현재 상태는 {status} 기준입니다.",
+            neutral_template="코스피 변동폭이 {change_text} 수준으로 크지 않아 국내 증시는 방향 탐색 구간에 가깝습니다. 현재 상태는 {status} 기준입니다.",
+        ),
+        _build_index_brief_card(
+            item_map.get("sp500", _unavailable_index_item(PUBLIC_INDEX_TARGETS[1])),
+            title="미국 대표 지수 흐름",
+            positive_template="S&P 500이 {change_text} 움직이며 미국 대형주 전반의 투자 심리가 비교적 안정적인 편입니다. 현재 상태는 {status} 기준입니다.",
+            negative_template="S&P 500이 {change_text}로 밀리면서 미국 시장 전반의 위험 선호가 다소 약해진 상태입니다. 현재 상태는 {status} 기준입니다.",
+            neutral_template="S&P 500 변동폭이 {change_text} 수준이라 미국 대표 지수는 뚜렷한 방향성보다 관망 흐름에 가깝습니다. 현재 상태는 {status} 기준입니다.",
+        ),
+        _build_index_brief_card(
+            item_map.get("nasdaq100", _unavailable_index_item(PUBLIC_INDEX_TARGETS[2])),
+            title="기술주 온도 체크",
+            positive_template="나스닥100이 {change_text} 흐름으로 기술주가 상대적으로 강한 날입니다. 성장주 선호 심리가 유지되는지 함께 보는 게 좋습니다. 현재 상태는 {status} 기준입니다.",
+            negative_template="나스닥100이 {change_text} 움직이며 기술주 변동성이 커진 모습입니다. 레버리지나 고변동 자산은 보수적으로 접근하는 편이 낫습니다. 현재 상태는 {status} 기준입니다.",
+            neutral_template="나스닥100 변동폭이 {change_text} 수준이라 기술주는 아직 뚜렷한 방향보다 숨 고르기 구간으로 볼 수 있습니다. 현재 상태는 {status} 기준입니다.",
+        ),
+    ]
+
+    return {
+        "generatedAt": payload["generatedAt"],
+        "cacheHit": any(str(item.get("source")) in {"cache", "last_good"} for item in payload.get("items", [])),
+        "cards": cards,
     }
 
 
