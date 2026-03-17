@@ -1,0 +1,30 @@
+섹션,항목,값,설명,비고
+Cluster,클러스터 구성,Amazon EKS (staging / production),온프레 kubeadm에서 AWS managed control plane 구조로 전환,stg-eks 중심 운영
+Cluster,런타임,EKS Auto Mode + Bottlerocket,노드 운영 복잡도 축소 및 AWS 표준 운영 기반 확보,Karpenter 기반 확장 구조 반영
+Network,VPC,10.60.0.0/16,단일 VPC 채택으로 구조 단순화,별도 CI/CD VPC 미사용
+Network,Public Subnet,10.60.1.0/24 + 10.60.2.0/24,ALB 및 NAT Gateway 배치,Multi-AZ
+Network,Private Subnet,10.60.11.0/24 + 10.60.12.0/24,EKS worker / monitoring EC2 / RDS 배치,private 우선
+Ingress,외부 진입,Route53 + ALB,Cloudflare Tunnel / on-prem MetalLB 의존 제거 방향,HTTP->HTTPS 강제
+Service Mesh,내부 트래픽 제어,Istio,mTLS / traffic policy / canary/blue-green 기반 제어,IngressGateway는 AWS 전환 후 축소
+Namespace,앱,tutum-app,frontend / backend / auth / ocr / workers 배치,핵심 비즈니스 로직
+Namespace,데이터,tutum-data,MongoDB / Redis / Kafka / Elasticsearch,상태 저장 계층
+Namespace,스토리지,tutum-storage,온프레 MinIO 운영 영역,AWS에서는 S3 중심으로 전환
+Namespace,운영,argocd / gitlab-runner / istio-system / keda / kyverno,배포/보안/오토스케일링 운영 영역,플랫폼 계층
+CI/CD,소스/파이프라인,GitLab SaaS,self-hosted GitLab/Jenkins 없이 SaaS 유지,단일 VPC 전략과 연결
+CI/CD,이미지 저장소,ECR,Harbor 미사용 / GitLab CR에서 ECR로 전환,AWS 표준화
+CI/CD,배포 방식,ArgoCD GitOps,manifest 변경 기준 배포,자동 sync + 수동 승인 혼합
+Security,시크릿,AWS Secrets Manager + External Secrets,K8s Secret 하드코딩 최소화,IRSA 연계
+Security,공급망 보안,Trivy + Cosign + Kyverno,취약점 스캔 / 이미지 서명 / 미서명 이미지 차단,배포 게이트 역할
+Security,네트워크 보안,AWS WAF + Shield Standard + SG + NetworkPolicy,외부/내부 계층 분리,ALB 앞단 보호
+Observability,수집기,Grafana Alloy DaemonSet,K8s 내부에는 수집기만 배치,클러스터 리소스 절감
+Observability,백엔드,Grafana + Loki + Tempo + Mimir + Kiali + InfluxDB,monitoring EC2에서 운영,EKS 내부 풀스택 배치 안 함
+Database,회원/인증,RDS MariaDB,학원 외부 DB 의존 제거,D-5 완료
+Database,자산/포트폴리오,EKS MongoDB ReplicaSet,mongo-rs 기준 정본화,D-9 완료
+Database,캐시/세션,Redis StatefulSet,TTL 기반 캐시 및 세션 처리,EKS 이식
+Database,이벤트 브로커,Kafka KRaft StatefulSet,event-driven worker pipeline,EKS 이식 / 장기적으로 EC2 backlog 가능
+Search,뉴스 검색,Elasticsearch StatefulSet,뉴스/검색 인덱싱 처리,EKS 이식
+Object Storage,S3,tutum-prod-storage,MinIO 대체 방향 및 backup target,정합성 검증 일부 잔여
+Scaling,Pod Scaling,KEDA,backend 및 consumer load 기반 scale-out / scale-in,저부하 시간대 비용 절감 포인트
+Scaling,Node Scaling,Karpenter/EKS Auto Mode,부하에 따라 노드 수를 탄력적으로 조절,고정 인프라 과다 사용 방지
+Backup,백업 정책,S3 + Glacier lifecycle,MongoDB / MariaDB / etcd / ES 백업 보관,발표용 러프 정의
+Status,현재 상태,AWS 기준 정본 경로 상당 부분 확보,완전 shutdown보다는 병행 운영 정리 단계,과장 금지

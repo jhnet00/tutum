@@ -1,0 +1,15 @@
+WBS_ID,대분류,세부 작업,시작일,종료일,담당 영역,산출물,상태
+1,프로젝트 기획,온프레 구조 분석 및 AWS 전환 범위 정의,2026-03-03,2026-03-04,공통,AS-IS 분석 문서,완료
+2,아키텍처 설계,AWS target architecture / VPC / subnet / ingress 구조 확정,2026-03-03,2026-03-05,Infra,AWS_MIGRATION_PLAN,완료
+3,K8s 설계,K8s namespace / data layer / observability / security 구조 정리,2026-03-03,2026-03-06,Infra,K8S_MIGRATION_PLAN / K8S_TECH_STACK,완료
+4,AWS 기반 구축,EKS / ECR / 기본 네트워크 자원 구성,2026-03-05,2026-03-08,Infra,AWS 초기 환경,대부분 완료
+5,CI/CD 전환,GitLab SaaS -> ECR -> ArgoCD 파이프라인 정리,2026-03-06,2026-03-09,DevOps,배포 파이프라인,대부분 완료
+6,보안 파이프라인,Trivy / Cosign / Kyverno 적용,2026-03-06,2026-03-10,DevOps+Infra,보안 배포 기준,대부분 완료
+7,모니터링 전환,Alloy + monitoring EC2 기반 LGTM 운영 경로 정리,2026-03-08,2026-03-12,Monitoring,관측성 운영 경로,대부분 완료
+8,DB 마이그레이션 1,MariaDB -> RDS 이전 및 backend secret 반영,2026-03-09,2026-03-10,Backend+Infra,RDS cutover,완료
+9,DB 마이그레이션 2,Atlas/legacy Mongo -> EKS ReplicaSet 정본 전환,2026-03-10,2026-03-12,Backend+Infra,Mongo cutover,완료
+10,스토리지 전환,MinIO -> S3 경로 정리 및 backup 방향 정의,2026-03-10,2026-03-13,Infra,Object storage 전환,부분 완료
+11,애플리케이션 검증,frontend/backend/auth/ocr AWS 기준 경로 점검,2026-03-11,2026-03-13,App,E2E 점검 로그,대부분 완료
+12,온프레 감사,on-prem VM별 역할 / 종료 가능성 / 잔존 의존성 조사,2026-03-12,2026-03-12,Infra+Ops,ONPREM_VM_TO_AWS_MIGRATION_STATUS,완료
+13,잔존 이슈 정리,cloudflared / MinIO / SonarQube / old monitoring / legacy Mongo 후속 계획 정리,2026-03-12,2026-03-14,Infra+Ops,shutdown backlog,진행 중
+14,발표 자료 정리,최종발표 슬라이드 초안 / AI 지시서 / 표 자료 정리,2026-03-15,2026-03-17,공통,발표 자료,진행 중

@@ -1,0 +1,11 @@
+구분,서비스,러프 가정,월 비용 추정(원),비용 절감 포인트,비고
+Control Plane,EKS Cluster,staging + production 2개 클러스터 운영,200000~260000,운영 단순화로 인력 비용 절감,정확 금액은 AWS Pricing Calculator 재검증 필요
+Compute,Monitoring EC2,t3.medium 또는 유사 사양 1대,40000~70000,LGTM 풀스택을 EKS 내부에 올리지 않고 EC2 1대로 분리,관측성 전용
+Database,RDS MariaDB,db.t3.micro + 20GB gp3,20000~40000,학원 외부 DB 의존 제거 / 운영 안정성 확보,D-5 완료 기준
+Network,ALB,외부 진입 1개 ALB 기준,20000~60000,Ingress를 단일 ALB로 단순화,트래픽/LCU에 따라 변동
+Network,NAT Gateway,private subnet outbound 1개 기준,50000~100000,VPC Endpoint 적용으로 NAT 통과 트래픽 절감 가능,AWS에서 비용 민감 항목
+Storage,S3 + Glacier,백업 및 object storage 일부,10000~30000,수명주기 정책으로 장기 보관 비용 절감,MinIO 장기 대체 방향
+Container Registry,ECR,이미지 저장 및 pull/push,5000~20000,GitLab CR/Harbor 추가 운영 제거,이미지 수/보관량에 따라 변동
+Scaling,KEDA / EKS Auto Mode,저부하 시간대 scale-in / 필요 시 scale-out,비용 절감 효과 항목,상시 고정 증설보다 효율적,정량화는 모니터링 데이터 기반 재산정 필요
+Ops,Session Manager,SSH Bastion 미구축,간접 절감,Bastion/Key 관리 비용과 운영 복잡도 감소,정성 효과
+Total,전체 러프 합계,핵심 인프라 합산,345000~580000,불필요한 상시 고사양 운영 억제,발표용 러프 추정치

@@ -1,0 +1,14 @@
+구분,호스트/클러스터,Host IP,VM/Node,내부 IP,역할,현재 상태,AWS 대응 리소스,종료 판단
+On-Prem Control Plane,서버-PC(1),192.168.0.28,cp1,192.168.0.220,kubeadm control-plane 1 / etcd / API server / scheduler / controller-manager,Live,Amazon EKS managed control plane,즉시 종료 금지
+On-Prem Control Plane,팀원-PC(2),192.168.0.13,cp2,192.168.0.221,kubeadm control-plane 2 / etcd / API server,Live,Amazon EKS managed control plane,즉시 종료 금지
+On-Prem Control Plane,팀원-PC(3),192.168.0.98,cp3,192.168.0.222,kubeadm control-plane 3 / Alloy / MetalLB speaker 일부,Live,Amazon EKS managed control plane,즉시 종료 금지
+On-Prem Worker,팀원-PC(4),192.168.0.3,worker1,192.168.0.223,App/Data worker / SonarQube / Kafka-1 / MongoDB-2 / Redis-2 / MinIO-1,Live,EKS tutum-app+tutum-data,즉시 종료 금지
+On-Prem Worker,팀원-PC(5),192.168.0.14,worker2,192.168.0.224,Infra/App/Data worker / ArgoCD / Istio / KEDA / Kyverno / OCR / Kafka-0 / MongoDB-0 / Redis-1 / MinIO-0,Live,EKS tutum-app+tutum-data+argocd+istio,즉시 종료 금지
+On-Prem Worker,팀원-PC(5),192.168.0.14,worker3,192.168.0.225,Ingress/App/Data worker / frontend / backend / email-worker / gitlab-runner / Elasticsearch-0 / Kafka-2 / MongoDB-1 / Redis-0 / MinIO-2,Live,EKS tutum-app+tutum-data+gitlab-runner,즉시 종료 금지
+On-Prem Monitoring,서버-PC(1),192.168.0.28,monitoring,192.168.0.230,Grafana / Loki / Tempo / Mimir / Kiali / InfluxDB Docker Compose,Live,AWS EC2 tutum-monitoring (10.60.11.95),조건부 종료 가능
+On-Prem Legacy DB,팀원-PC(4),192.168.0.3,mongodb,192.168.0.231,legacy standalone MongoDB VM,Live,EKS MongoDB ReplicaSet (tutum-data/mongodb-0~2),조건부 종료 가능
+AWS Cluster,ap-northeast-2,-,tutum-stg-eks,-,주요 앱/데이터 워크로드가 현재 동작 중인 staging EKS,Live,Self,운영 중
+AWS Cluster,ap-northeast-2,-,tutum-prd-eks,-,production EKS 클러스터,Provisioned,Self,운영 준비/확장 대상
+AWS DB,ap-northeast-2,-,tutum-mariadb,-,회원/인증 DB용 RDS MariaDB,Available,Self,운영 중
+AWS Monitoring,ap-northeast-2,-,tutum-monitoring,10.60.11.95,LGTM 운영용 monitoring EC2,Running,Self,운영 중
+AWS Object Storage,ap-northeast-2,-,tutum-prod-storage,-,S3 object storage / backup target,Active,Self,운영 중
