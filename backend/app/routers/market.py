@@ -1006,7 +1006,10 @@ async def get_market_insights():
             item_map.get("kospi", _unavailable_index_item(PUBLIC_INDEX_TARGETS[0])),
             title="국내 증시 한줄 요약",
             positive_template="코스피가 {change_text} 흐름으로 마감하며 국내 증시 분위기가 상대적으로 견조합니다. 현재 상태는 {status} 기준입니다.",
-            negative_template="코스피가 {change_text} 움직이며 국내 증시가 눌린 모습입니다. 추격 매수보다는 보유 비중 점검이 더 중요합니다. 현재 상태는 {status} 기준입니다.",
+            negative_template=(
+                "코스피가 {change_text} 움직이며 국내 증시가 눌린 모습입니다. "
+                "추격 매수보다는 보유 비중 점검이 더 중요합니다. 현재 상태는 {status} 기준입니다."
+            ),
             neutral_template="코스피 변동폭이 {change_text} 수준으로 크지 않아 국내 증시는 방향 탐색 구간에 가깝습니다. 현재 상태는 {status} 기준입니다.",
         ),
         _build_index_brief_card(
@@ -1019,9 +1022,18 @@ async def get_market_insights():
         _build_index_brief_card(
             item_map.get("nasdaq100", _unavailable_index_item(PUBLIC_INDEX_TARGETS[2])),
             title="기술주 온도 체크",
-            positive_template="나스닥100이 {change_text} 흐름으로 기술주가 상대적으로 강한 날입니다. 성장주 선호 심리가 유지되는지 함께 보는 게 좋습니다. 현재 상태는 {status} 기준입니다.",
-            negative_template="나스닥100이 {change_text} 움직이며 기술주 변동성이 커진 모습입니다. 레버리지나 고변동 자산은 보수적으로 접근하는 편이 낫습니다. 현재 상태는 {status} 기준입니다.",
-            neutral_template="나스닥100 변동폭이 {change_text} 수준이라 기술주는 아직 뚜렷한 방향보다 숨 고르기 구간으로 볼 수 있습니다. 현재 상태는 {status} 기준입니다.",
+            positive_template=(
+                "나스닥100이 {change_text} 흐름으로 기술주가 상대적으로 강한 날입니다. "
+                "성장주 선호 심리가 유지되는지 함께 보는 게 좋습니다. 현재 상태는 {status} 기준입니다."
+            ),
+            negative_template=(
+                "나스닥100이 {change_text} 움직이며 기술주 변동성이 커진 모습입니다. "
+                "레버리지나 고변동 자산은 보수적으로 접근하는 편이 낫습니다. 현재 상태는 {status} 기준입니다."
+            ),
+            neutral_template=(
+                "나스닥100 변동폭이 {change_text} 수준이라 기술주는 아직 뚜렷한 방향보다 "
+                "숨 고르기 구간으로 볼 수 있습니다. 현재 상태는 {status} 기준입니다."
+            ),
         ),
     ]
 
