@@ -20,8 +20,8 @@ images:
   - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/frontend
     newTag: d726b729
   - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/backend
-    newTag: 7d7206b0
+    newTag: 36d0b481
   - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/workers
-    newTag: 7d7206b0
+    newTag: 36d0b481
   - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/auth
     newTag: 9f43b170
