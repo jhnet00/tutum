@@ -77,7 +77,14 @@ class RecommendedNewsResponse(BaseModel):
 
 
 def _normalize_text(value: Any) -> str:
-    text = html.unescape(str(value or ""))
+    text = str(value or "")
+    try:
+        repaired = text.encode("latin-1").decode("utf-8")
+        if sum(ch >= "\u0080" for ch in repaired) > sum(ch >= "\u0080" for ch in text):
+            text = repaired
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    text = html.unescape(text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -122,7 +129,7 @@ def _news_body_from_doc(doc: dict[str, Any]) -> str:
     for field in NEWS_BODY_FIELDS:
         value = doc.get(field)
         if isinstance(value, str) and value:
-            return html.unescape(value).strip()
+            return _normalize_text(value)
     return ""
 
 
