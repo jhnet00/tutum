@@ -1,3 +1,4 @@
+import html
 import logging
 import re
 from datetime import datetime, timezone
@@ -76,7 +77,8 @@ class RecommendedNewsResponse(BaseModel):
 
 
 def _normalize_text(value: Any) -> str:
-    return str(value or "").strip()
+    text = html.unescape(str(value or ""))
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _build_base_filter() -> dict[str, Any]:
@@ -120,7 +122,7 @@ def _news_body_from_doc(doc: dict[str, Any]) -> str:
     for field in NEWS_BODY_FIELDS:
         value = doc.get(field)
         if isinstance(value, str) and value:
-            return value
+            return html.unescape(value).strip()
     return ""
 
 
