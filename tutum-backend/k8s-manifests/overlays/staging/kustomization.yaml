@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - alb-ingress.yaml
+  - sonar-ingress.yaml
+  - peer-authentication.yaml
+  - private-nodepools.yaml
+  - eks-builtin-nodepools.yaml
+
+patches:
+  - path: replicas-patch.yaml
+  - path: resource-tuning-patch.yaml
+  - path: remove-nodeselector-patch.yaml
+  - path: workload-nodepool-patch.yaml
+  - path: kafka-startup-probe-patch.yaml
+
+images:
+  - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/frontend
+    newTag: ef64bdaf
+  - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/backend
+    newTag: df1c284a
+  - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/workers
+    newTag: df1c284a
+  - name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/tutum/auth
+    newTag: 9f43b170

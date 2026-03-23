@@ -1,0 +1,204 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .font-technical {
+    font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  }
+
+  .text-profit {
+    color: rgb(32, 123, 112);
+  }
+
+  .text-loss {
+    color: rgb(108, 52, 60);
+  }
+
+  .bg-profit-soft {
+    background-color: rgb(32 123 112 / 0.12);
+  }
+
+  .bg-loss-soft {
+    background-color: rgb(108 52 60 / 0.12);
+  }
+
+  .bg-profit-solid {
+    background-color: rgb(20 93 86);
+  }
+
+  .bg-loss-solid {
+    background-color: rgb(104 44 53);
+  }
+
+  .border-profit-soft {
+    border-color: rgb(32 123 112 / 0.30);
+  }
+
+  .border-loss-soft {
+    border-color: rgb(108 52 60 / 0.30);
+  }
+
+  .fill-profit {
+    fill: rgb(32, 123, 112);
+  }
+
+  .fill-loss {
+    fill: rgb(108, 52, 60);
+  }
+}
+
+@layer base {
+  :root {
+    /* Sophisticated Light Theme - Deeper Gray for improved depth */
+    --background: 210 10% 92%;
+    --foreground: 240 10% 3.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+
+    --primary: 240 10% 9%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 0 0% 100%;
+    --secondary-foreground: 240 10% 9%;
+
+    --muted: 210 20% 96%;
+    --muted-foreground: 240 5% 40%;
+
+    --accent: 210 20% 96%;
+    --accent-foreground: 240 10% 9%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 210 20% 92%;
+    --input: 210 20% 92%;
+    --ring: 158 100% 45%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    /* Crafted Charcoal - Neutral, high-end dark gray */
+    --background: 230 15% 8%; /* Indigo Purple Gray tint */
+    --foreground: 230 10% 95%;
+
+    --card: 0 0% 9%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 0 0% 9%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 0 0% 95%;
+    --primary-foreground: 0 0% 7%;
+
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 0 0% 95%;
+
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 60%;
+
+    --accent: 0 0% 14%;
+    --accent-foreground: 0 0% 95%;
+
+    --destructive: 350 80% 60%; /* Handcrafted Soft Rose */
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 0 0% 12%;
+    --input: 0 0% 12%;
+    --ring: 158 80% 40%; /* Professional Chrome Green */
+  }
+}
+
+@layer utilities {
+  .dark .text-profit {
+    color: rgb(75, 170, 161);
+  }
+
+  .dark .text-loss {
+    color: rgb(171, 92, 105);
+  }
+
+  .dark .bg-profit-soft {
+    background-color: rgb(75 170 161 / 0.14);
+  }
+
+  .dark .bg-loss-soft {
+    background-color: rgb(171 92 105 / 0.14);
+  }
+
+  .dark .bg-profit-solid {
+    background-color: rgb(56 148 137);
+  }
+
+  .dark .bg-loss-solid {
+    background-color: rgb(148 88 101);
+  }
+
+  .dark .border-profit-soft {
+    border-color: rgb(75 170 161 / 0.35);
+  }
+
+  .dark .border-loss-soft {
+    border-color: rgb(171 92 105 / 0.35);
+  }
+
+  .dark .fill-profit {
+    fill: rgb(75, 170, 161);
+  }
+
+  .dark .fill-loss {
+    fill: rgb(171, 92, 105);
+  }
+}
+
+@layer base {
+  /* * {
+    @apply border;
+  } */
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    min-height: 100vh;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* Custom Sleek Scrollbar */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: rgba(156, 163, 175, 0.3);
+    border-radius: 20px;
+  }
+  .dark .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.1);
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(156, 163, 175, 0.5);
+  }
+  .dark .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+  }
+}
