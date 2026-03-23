@@ -1,0 +1,47 @@
+# ============================================
+# FastAPI Backend - Python 의존성
+# ============================================
+
+# Core
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+email-validator>=2.1.0
+
+# Database
+motor==3.6.0                    # MongoDB 비동기 드라이버
+redis==5.0.1                    # Redis 클라이언트
+aiomysql==0.2.0                 # MySQL/MariaDB 비동기 드라이버
+sqlalchemy[asyncio]>=2.0.36     # ORM (비동기, Python 3.13 호환)
+
+# Kafka
+aiokafka==0.10.0
+
+# Elasticsearch
+elasticsearch[async]==8.11.0
+
+# Authentication
+python-jose[cryptography]==3.3.0
+bcrypt==4.1.2
+python-multipart==0.0.6
+
+# AWS
+boto3>=1.34.0                   # AWS SDK (Bedrock, S3)
+minio>=7.2.0                    # MinIO Python SDK (S3-compatible)
+google-cloud-vision==3.7.4      # OCR worker dependency
+google-auth==2.33.0             # Google client auth
+
+# Utilities
+httpx==0.26.0                   # HTTP 클라이언트
+websockets>=12.0                # Upbit WebSocket 클라이언트
+python-dotenv==1.0.0
+ccxt==4.4.22                     # 암호화폐 거래소 API Client
+prometheus-fastapi-instrumentator==7.1.0
+kubernetes>=29.0.0              # K8s in-cluster client (Admin API용)
+
+# OpenTelemetry (Tracing)
+opentelemetry-sdk>=1.20.0
+opentelemetry-exporter-otlp-proto-grpc>=1.20.0
+opentelemetry-instrumentation-fastapi>=0.41b0
+

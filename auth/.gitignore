@@ -1,0 +1,35 @@
+node_modules
+.next
+out
+build
+.env
+.kis_token
+backend/.kis_token
+backend/.cache/
+.env*
+!.env.example
+.DS_Store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.idea
+.vscode
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.env/
+.kis_token
+
+# Credentials
+docs/MariaDB.md
+
+# Claude/Agentic info
+.claude/
+.gemini/

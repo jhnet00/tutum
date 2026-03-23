@@ -1,0 +1,535 @@
+# retry build after EKS node stabilization (2026-03-11)
+# deploy trigger for auth staging validation (2026-03-13)
+# retry auth staging deploy validation after live auth tag check (2026-03-13)
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_PIPELINE_SOURCE == "api"'
+
+default:
+  tags: [k8s]
+
+stages:
+  - guard
+  - lint
+  - test
+  - scan
+  - build
+  - security
+  - sign
+  - deploy
+  - notify
+  - mirror
+
+variables:
+  AUTH_IMAGE: "${ECR_REGISTRY}/tutum/auth"
+  K8S_MANIFESTS_REPO: "https://oauth2:${K8S_MANIFESTS_TOKEN}@gitlab.com/tutum-project/tutum-app/tutum-backend.git"
+  STAGING_MANIFEST: "k8s-manifests/overlays/staging/kustomization.yaml"
+  PRODUCTION_MANIFEST: "k8s-manifests/overlays/production/kustomization.yaml"
+  GITHUB_MONOREPO_REPO: "https://github.com/kyk02405/clouddx-project.git"
+
+guard:commit-policy:
+  stage: guard
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/alpine:3.20
+  before_script:
+    - apk add --no-cache git
+  script:
+    - |
+      ZERO_SHA="0000000000000000000000000000000000000000"
+      BEFORE="${CI_COMMIT_BEFORE_SHA:-$ZERO_SHA}"
+      if [ "$BEFORE" != "$ZERO_SHA" ] && git rev-parse "$BEFORE" >/dev/null 2>&1; then
+        git diff --name-only "$BEFORE" "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
+      else
+        git ls-tree -r --name-only "${CI_COMMIT_SHA}" > /tmp/changed_files.txt
+      fi
+
+      bad=0
+      while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        case "$f" in
+          .env.example|.env|app/.env) echo "INFO: skip known env file: $f"; continue ;;
+        esac
+        if git check-ignore -q -- "$f"; then
+          echo "WARNING: gitignore-matched file detected: $f"
+          bad=1
+        fi
+      done < /tmp/changed_files.txt
+
+      [ "$bad" -ne 0 ] && exit 1 || true
+
+lint:auth:
+  stage: lint
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/python:3.11-slim
+  script:
+    - pip install flake8
+    - flake8 app --max-line-length=120
+  rules:
+    - changes:
+        - app/**/*
+        - Dockerfile
+
+test:auth:
+  stage: test
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/python:3.11-slim
+  script:
+    - |
+      set -e
+      if [ -f requirements.txt ]; then
+        pip install -r requirements.txt
+      fi
+      pip install pytest
+
+      if [ -d tests ] && find tests -type f \( -name 'test_*.py' -o -name '*_test.py' \) | grep -q .; then
+        pytest tests -q
+      else
+        echo "INFO: No auth tests found. Skip."
+      fi
+  rules:
+    - changes:
+        - app/**/*
+        - Dockerfile
+
+aws:precheck:
+  stage: test
+  image: amazon/aws-cli:2.15.44
+  tags: [k8s]
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
+  script:
+    - |
+      set -e
+      test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
+      test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
+      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+      aws --version
+      aws sts get-caller-identity --region "${AWS_DEFAULT_REGION}"
+      aws ecr describe-repositories --region "${AWS_DEFAULT_REGION}" --query "repositories[].repositoryName" || true
+
+aws:ecr-bootstrap:
+  stage: test
+  image: amazon/aws-cli:2.15.44
+  tags: [k8s]
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
+  script:
+    - |
+      set -e
+      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+      aws ecr describe-repositories \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-names tutum/auth >/dev/null 2>&1 || \
+      aws ecr create-repository \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-name tutum/auth
+      aws ecr describe-repositories --region "${AWS_DEFAULT_REGION}" --query "repositories[].repositoryName"
+
+aws:ecr-push-check:
+  stage: test
+  image: docker:24
+  services:
+    - name: docker:24-dind
+      alias: docker
+      command: ["--tls=false"]
+  tags: [k8s]
+  when: manual
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
+  script:
+    - apk add --no-cache aws-cli
+    - |
+      i=0
+      until docker info >/dev/null 2>&1; do
+        i=$((i+1))
+        if [ "$i" -ge 30 ]; then
+          echo "ERROR: Docker daemon not ready after 60s"
+          exit 1
+        fi
+        sleep 2
+      done
+    - |
+      set -e
+      test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
+      test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
+      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+      test -n "${AWS_ACCOUNT_ID:-}" || { echo "ERROR: AWS_ACCOUNT_ID is missing"; exit 1; }
+
+      ECR_REGISTRY_EFFECTIVE="${ECR_REGISTRY:-${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com}"
+      ECR_REPO_EFFECTIVE="tutum/auth"
+      TEST_TAG="ci-smoke-${CI_PIPELINE_ID}-${CI_JOB_ID}"
+
+      aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" | \
+        docker login --username AWS --password-stdin "${ECR_REGISTRY_EFFECTIVE}"
+
+      aws ecr describe-repositories \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-names "${ECR_REPO_EFFECTIVE}" >/dev/null 2>&1 || \
+      aws ecr create-repository \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-name "${ECR_REPO_EFFECTIVE}" >/dev/null
+
+      docker pull alpine:3.20
+      docker tag alpine:3.20 "${ECR_REGISTRY_EFFECTIVE}/${ECR_REPO_EFFECTIVE}:${TEST_TAG}"
+      docker push "${ECR_REGISTRY_EFFECTIVE}/${ECR_REPO_EFFECTIVE}:${TEST_TAG}"
+      aws ecr describe-images \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-name "${ECR_REPO_EFFECTIVE}" \
+        --image-ids imageTag="${TEST_TAG}" \
+        --query "imageDetails[0].imageTags"
+      aws ecr batch-delete-image \
+        --region "${AWS_DEFAULT_REGION}" \
+        --repository-name "${ECR_REPO_EFFECTIVE}" \
+        --image-ids imageTag="${TEST_TAG}" >/dev/null || true
+
+aws:eks-cluster-check:
+  stage: test
+  image: amazon/aws-cli:2.15.44
+  tags: [k8s]
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
+  script:
+    - |
+      set -e
+      test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
+      test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
+      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+      test -n "${AWS_ACCOUNT_ID:-}" || { echo "ERROR: AWS_ACCOUNT_ID is missing"; exit 1; }
+      test -n "${EKS_CLUSTER_NAME_STG:-}" || { echo "ERROR: EKS_CLUSTER_NAME_STG is missing"; exit 1; }
+
+      echo "Checking AWS identity..."
+      aws sts get-caller-identity --region "${AWS_DEFAULT_REGION}"
+      echo "Checking EKS cluster: ${EKS_CLUSTER_NAME_STG}"
+      aws eks describe-cluster \
+        --region "${AWS_DEFAULT_REGION}" \
+        --name "${EKS_CLUSTER_NAME_STG}" \
+        --query "cluster.{name:name,status:status,version:version,platformVersion:platformVersion,endpoint:endpoint}"
+
+aws:eks-kubectl-smoke:
+  stage: test
+  image: amazon/aws-cli:2.15.44
+  tags: [k8s]
+  when: manual
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+    - when: never
+  script:
+    - |
+      set -e
+      test -n "${AWS_ACCESS_KEY_ID:-}" || { echo "ERROR: AWS_ACCESS_KEY_ID is missing"; exit 1; }
+      test -n "${AWS_SECRET_ACCESS_KEY:-}" || { echo "ERROR: AWS_SECRET_ACCESS_KEY is missing"; exit 1; }
+      test -n "${AWS_DEFAULT_REGION:-}" || { echo "ERROR: AWS_DEFAULT_REGION is missing"; exit 1; }
+      test -n "${EKS_CLUSTER_NAME_STG:-}" || { echo "ERROR: EKS_CLUSTER_NAME_STG is missing"; exit 1; }
+
+      echo "Installing kubectl..."
+      KUBECTL_VERSION="$(curl -L -s https://dl.k8s.io/release/stable.txt)"
+      curl -L -o kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+      chmod +x kubectl
+      mv kubectl /usr/local/bin/kubectl
+      aws eks update-kubeconfig \
+        --region "${AWS_DEFAULT_REGION}" \
+        --name "${EKS_CLUSTER_NAME_STG}"
+      kubectl get nodes -o wide
+      kubectl get ns
+
+sonar:auth:
+  stage: scan
+  tags: [k8s]
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/sonarsource/sonar-scanner-cli:latest
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
+  script:
+    - >
+      sonar-scanner
+      -Dsonar.projectKey=tutum-auth
+      -Dsonar.projectName="Tutum Auth"
+      -Dsonar.sources=app
+      -Dsonar.exclusions=**/__pycache__/**,.venv/**
+      -Dsonar.host.url=${SONAR_HOST_URL}
+      -Dsonar.token=${SONAR_TOKEN}
+  allow_failure: true
+  rules:
+    - changes:
+        - app/**/*
+        - Dockerfile
+
+.build_retry_registry: &build_retry_registry
+  retry:
+    max: 2
+    when:
+      - script_failure
+      - runner_system_failure
+      - api_failure
+      - stuck_or_timeout_failure
+
+build:auth:
+  <<: *build_retry_registry
+  stage: build
+  image:
+    name: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  variables:
+    KUBERNETES_EPHEMERAL_STORAGE_REQUEST: "6Gi"
+    KUBERNETES_EPHEMERAL_STORAGE_LIMIT: "8Gi"
+  before_script:
+    - mkdir -p /kaniko/.docker
+    - printf '{"credHelpers":{"%s":"ecr-login"}}' "${ECR_REGISTRY}" > /kaniko/.docker/config.json
+  script:
+    - /kaniko/executor
+      --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/Dockerfile"
+      --destination "${AUTH_IMAGE}:${CI_COMMIT_SHORT_SHA}"
+      --destination "${AUTH_IMAGE}:latest"
+      --compressed-caching=false
+  rules:
+    - changes:
+        - app/**/*
+        - Dockerfile
+        - .gitlab-ci.yml
+
+security:auth:
+  stage: security
+  tags: [k8s]
+  image: aquasec/trivy:latest
+  variables:
+    TRIVY_DB_REPOSITORY: "ghcr.io/aquasecurity/trivy-db:2"
+  before_script:
+    - apk add --no-cache aws-cli
+    - export TRIVY_USERNAME=AWS
+    - export TRIVY_PASSWORD=$(aws ecr get-login-password --region ${AWS_DEFAULT_REGION})
+    - export TRIVY_AUTH_URL=${ECR_REGISTRY}
+  script:
+    - trivy image --severity HIGH,CRITICAL --exit-code 0 --timeout 10m ${AUTH_IMAGE}:${CI_COMMIT_SHORT_SHA}
+  allow_failure: true
+  needs:
+    - job: build:auth
+      optional: true
+  rules:
+    - changes:
+        - app/**/*
+        - Dockerfile
+
+sign:auth:
+  stage: sign
+  tags: [k8s]
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/alpine:3.20
+  variables:
+    COSIGN_YES: "true"
+  before_script:
+    - apk add --no-cache aws-cli curl
+    - curl -sLo /usr/local/bin/cosign https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
+    - chmod +x /usr/local/bin/cosign
+    - TOKEN=$(aws ecr get-login-password --region ${AWS_DEFAULT_REGION})
+    - mkdir -p ~/.docker
+    - printf '{"auths":{"%s":{"auth":"%s"}}}' "${ECR_REGISTRY}" "$(printf 'AWS:%s' "$TOKEN" | base64 -w 0)" > ~/.docker/config.json
+  script:
+    - cosign sign --key env://COSIGN_PRIVATE_KEY --registry-referrers-mode=legacy ${AUTH_IMAGE}:${CI_COMMIT_SHORT_SHA}
+  allow_failure: false
+  needs:
+    - job: build:auth
+    - job: security:auth
+      optional: true
+  rules:
+    - changes:
+        - app/**/*
+        - Dockerfile
+        - .gitlab-ci.yml
+
+deploy:staging:
+  stage: deploy
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/alpine:3.20
+  before_script:
+    - apk add --no-cache git
+  needs:
+    - job: sign:auth
+  script: |
+    set -e
+    git clone "${K8S_MANIFESTS_REPO}" /tmp/manifests
+    cd /tmp/manifests
+    git config user.email ci@tutum.dev
+    git config user.name "GitLab CI"
+    git checkout develop
+
+    echo "0" > /tmp/manifest_changed
+    kustomization_file="${STAGING_MANIFEST}"
+
+    if grep -qF "  - name: ${AUTH_IMAGE}" "${kustomization_file}"; then
+      if ! awk -v img="${AUTH_IMAGE}" -v tag="${CI_COMMIT_SHORT_SHA}" '
+          {
+            trimmed=$0
+            sub(/^[[:space:]]*/, "", trimmed)
+            if (trimmed == "- name: " img) {
+              found=1
+            } else if (found && trimmed ~ /^newTag:/) {
+              match($0, /^[[:space:]]*/)
+              indent = substr($0, 1, RLENGTH)
+              print indent "newTag: " tag
+              found=0
+              updated=1
+              next
+            } else if (found && trimmed ~ /^-[[:space:]]/) {
+              found=0
+            }
+
+            print
+          }
+          END {
+            if (!updated) exit 1
+          }
+        ' "${kustomization_file}" > "${kustomization_file}.tmp"; then
+        mv "${kustomization_file}.tmp" "${kustomization_file}"
+        echo "1" > /tmp/manifest_changed
+      else
+        rm -f "${kustomization_file}.tmp"
+        echo "WARN: auth image block found but newTag line missing in ${kustomization_file}."
+      fi
+    else
+      echo "WARN: ${AUTH_IMAGE} not found in ${kustomization_file}. Add this line to kustomization first."
+    fi
+
+    if [ "$(cat /tmp/manifest_changed)" = "0" ]; then
+      echo "No auth image tag to update. Exit."
+      exit 0
+    fi
+
+    git add "${kustomization_file}"
+    git diff --cached --quiet || git commit -m "deploy(staging): auth ${CI_COMMIT_SHORT_SHA} [skip ci]"
+    git push origin develop
+  environment:
+    name: staging
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      changes:
+        - app/**/*
+        - Dockerfile
+        - .gitlab-ci.yml
+
+deploy:production:
+  stage: deploy
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/alpine:3.20
+  before_script:
+    - apk add --no-cache git
+  when: manual
+  needs:
+    - job: sign:auth
+  script: |
+    set -e
+    git clone "${K8S_MANIFESTS_REPO}" /tmp/manifests
+    cd /tmp/manifests
+    git config user.email ci@tutum.dev
+    git config user.name "GitLab CI"
+    git checkout develop
+
+    echo "0" > /tmp/manifest_changed
+    kustomization_file="${PRODUCTION_MANIFEST}"
+
+    if grep -qF "  - name: ${AUTH_IMAGE}" "${kustomization_file}"; then
+      if ! awk -v img="${AUTH_IMAGE}" -v tag="${CI_COMMIT_SHORT_SHA}" '
+          {
+            trimmed=$0
+            sub(/^[[:space:]]*/, "", trimmed)
+            if (trimmed == "- name: " img) {
+              found=1
+            } else if (found && trimmed ~ /^newTag:/) {
+              match($0, /^[[:space:]]*/)
+              indent = substr($0, 1, RLENGTH)
+              print indent "newTag: " tag
+              found=0
+              updated=1
+              next
+            } else if (found && trimmed ~ /^-[[:space:]]/) {
+              found=0
+            }
+
+            print
+          }
+          END {
+            if (!updated) exit 1
+          }
+        ' "${kustomization_file}" > "${kustomization_file}.tmp"; then
+        mv "${kustomization_file}.tmp" "${kustomization_file}"
+        echo "1" > /tmp/manifest_changed
+      else
+        rm -f "${kustomization_file}.tmp"
+        echo "WARN: auth image block found but newTag line missing in ${kustomization_file}."
+      fi
+    else
+      echo "WARN: ${AUTH_IMAGE} not found in ${kustomization_file}. Add this line to kustomization first."
+    fi
+
+    if [ "$(cat /tmp/manifest_changed)" = "0" ]; then
+      echo "No auth image tag to update. Exit."
+      exit 0
+    fi
+
+    git add "${kustomization_file}"
+    git diff --cached --quiet || git commit -m "deploy(prod): auth ${CI_COMMIT_SHORT_SHA} [skip ci]"
+    git push origin develop
+  environment:
+    name: production
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+      when: manual
+      changes:
+        - app/**/*
+        - Dockerfile
+
+notify:slack_on_failure:
+  stage: notify
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/curlimages/curl:8.7.1
+  allow_failure: true
+  script:
+    - |
+      if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+        echo "SLACK_WEBHOOK_URL is not set. Skip Slack notify."
+        exit 0
+      fi
+      curl -fsS -X POST -H "Content-type: application/json" \
+      --data "{\"text\":\"[CI FAIL] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\\n${CI_PIPELINE_URL}\"}" \
+      "${SLACK_WEBHOOK_URL}"
+  when: on_failure
+
+notify:slack_on_success:
+  stage: notify
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/curlimages/curl:8.7.1
+  allow_failure: true
+  script:
+    - |
+      if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+        echo "SLACK_WEBHOOK_URL is not set. Skip Slack notify."
+        exit 0
+      fi
+      curl -fsS -X POST -H "Content-type: application/json" \
+      --data "{\"text\":\"[CI OK] ${CI_PROJECT_PATH} #${CI_PIPELINE_ID}\\n${CI_PIPELINE_URL}\"}" \
+      "${SLACK_WEBHOOK_URL}"
+  when: on_success
+
+
+mirror:github-monorepo:
+  stage: mirror
+  image: 903913341620.dkr.ecr.ap-northeast-2.amazonaws.com/alpine:3.20
+  before_script:
+    - apk add --no-cache git
+    - chmod +x scripts/sync-to-github-monorepo.sh
+  script:
+    - |
+      SYNC_SOURCE_PATH=.       SYNC_TARGET_PATH=auth       SYNC_COMPONENT_NAME=auth       GITHUB_MONOREPO_REPO="${GITHUB_MONOREPO_REPO}"       GITHUB_MONOREPO_TOKEN="${GITHUB_MONOREPO_TOKEN:-}"       scripts/sync-to-github-monorepo.sh
+  rules:
+    - if: '$GITHUB_MONOREPO_TOKEN && $CI_COMMIT_BRANCH == "develop" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api")'
+    - if: '$GITHUB_MONOREPO_TOKEN && $CI_COMMIT_BRANCH == "main" && ($CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api")'
+
