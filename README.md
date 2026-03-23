@@ -1,139 +1,141 @@
 # TUTUM
 
-TUTUM is an AI-assisted investment support platform that brings portfolio management, real-time market data, personalized news, OCR-based asset registration, and AI-driven insights into one service.
+TUTUM은 사용자의 투자 자산을 한 곳에서 관리하고, 실시간 시세, 맞춤형 뉴스, OCR 기반 자산 등록, AI 질의응답까지 연결하는 AI 기반 투자 지원 플랫폼입니다.
 
-This repository is a GitHub integration point that groups the project's three main services in one place:
+이 저장소는 프로젝트의 주요 서비스를 한 곳에서 함께 볼 수 있도록 정리한 GitHub 통합 저장소입니다.
 
 - `tutum-backend`
 - `tutum-frontend`
 - `auth`
 
-## Overview
+## 프로젝트 개요
 
-TUTUM was built to solve a practical problem: investment data is fragmented across multiple services, while portfolio tracking, market monitoring, and related news consumption are often disconnected.
+TUTUM은 분산된 투자 정보를 한 곳에서 통합해 보여주고, 사용자의 실제 보유 자산과 연결된 정보 탐색 경험을 제공하는 것을 목표로 했습니다.
 
-The project combines:
+프로젝트 주요 목표는 다음과 같습니다.
 
-- portfolio and asset management
-- real-time market data handling
-- personalized news based on owned assets
-- OCR-based asset input
-- AI chat and insight workflows
-- Kubernetes, CI/CD, monitoring, security, backup, and AWS operations
+- 자산 및 포트폴리오 통합 관리
+- 실시간 시세 조회와 차트 데이터 처리
+- 보유 종목 기반 개인화 뉴스 제공
+- OCR 기반 자산 등록 자동화
+- AI 기반 투자 정보 질의응답 지원
+- Kubernetes, CI/CD, 모니터링, 보안, 백업, AWS 운영 환경 구축
 
-## Repository Structure
+## 저장소 구조
 
 ```text
 tutum/
-├─ tutum-backend/     FastAPI backend, workers, data pipeline, k8s manifests, infra docs
-├─ tutum-frontend/    Next.js frontend, BFF proxy routes, user/admin UI
-└─ auth/              FastAPI auth service, JWT/OAuth/email verification
+├─ tutum-backend/     FastAPI 백엔드, 워커, 데이터 파이프라인, Kubernetes 매니페스트, 인프라 문서
+├─ tutum-frontend/    Next.js 프론트엔드, BFF 프록시 라우트, 사용자/관리자 UI
+└─ auth/              FastAPI 인증 서비스, JWT/OAuth/이메일 인증
 ```
 
-## Main Features
+## 주요 기능
 
-- Asset and portfolio registration and management
-- Real-time price lookup and chart-oriented data flow
-- Personalized news tied to user holdings
-- OCR-based asset upload flow
-- AI chat for investment-related questions
-- Admin pages for monitoring and operations
-- CI/CD, Kubernetes, and AWS-based production operations
+- 포트폴리오 자산 등록 및 관리
+- 실시간 시세 조회 및 차트 데이터 처리
+- 사용자 보유 자산 기반 맞춤형 뉴스 추천
+- OCR 기반 자산 업로드 및 등록
+- AI 챗 기반 투자 정보 질의응답
+- 관리자용 운영 및 모니터링 화면
+- CI/CD, Kubernetes, AWS 기반 운영 자동화
 
-## Architecture
+## 아키텍처
 
 ### Frontend
 
 - Next.js 14 App Router
 - TypeScript
 - Tailwind CSS
-- BFF-style proxy routes such as `/api/proxy` and `/api/public/*`
+- `/api/proxy`, `/api/public/*` 기반 BFF 구조
 
 ### Backend
 
 - FastAPI
-- APIs for assets, portfolio, market, news, notifications, chat, and admin
-- Kafka-based asynchronous processing for news and market data
-- OCR and AI integration paths
+- 자산, 포트폴리오, 시세, 뉴스, 알림, 채팅, 관리자 API 제공
+- Kafka 기반 비동기 데이터 처리
+- OCR 및 AI 연동 기능 포함
 
 ### Auth
 
 - FastAPI
-- JWT / refresh token / CSRF cookie handling
+- JWT / Refresh Token / CSRF Cookie 기반 인증 처리
 - Google / Kakao / Naver OAuth
-- email verification and account-related auth flows
+- 이메일 인증 및 계정 관련 인증 기능 전담
 
 ### Data Layer
 
-- MariaDB for users, portfolios, and transaction-oriented relational data
-- MongoDB for news source documents and document-style data
-- Redis for cache and real-time price lookup
-- Kafka for asynchronous event streaming
-- Elasticsearch for search, indexing, and RAG-oriented retrieval
+- MariaDB: 사용자, 포트폴리오, 거래 등 정형 데이터
+- MongoDB: 뉴스 원본 및 문서성 데이터
+- Redis: 캐시 및 실시간 가격 조회
+- Kafka: 비동기 이벤트 스트리밍
+- Elasticsearch: 검색, 색인, RAG 검색용 데이터 활용
 
-## Infra, DevOps, and Operations
+## 인프라 및 운영
 
-This project was not only about application development. A major part of the work focused on infrastructure and operations:
+이 프로젝트는 애플리케이션 개발뿐 아니라 인프라와 운영 체계 구축도 중요한 범위였습니다.
 
-- Docker and Docker Compose-based development environments
-- Kubernetes-based service separation and orchestration
-- AWS migration and EKS-based deployment
-- GitLab CI/CD pipeline design and stabilization
-- ArgoCD-based GitOps delivery
-- KEDA-based event-driven scaling
-- Karpenter and Spot-based cost optimization
-- WAF, GuardDuty, CloudTrail, KMS, and Secrets Manager-based security setup
-- S3 and RDS-centered backup strategy
+- Docker / Docker Compose 기반 개발 환경
+- Kubernetes 기반 서비스 분리 및 오케스트레이션
+- AWS 마이그레이션 및 EKS 기반 배포
+- GitLab CI/CD 파이프라인 구성 및 안정화
+- ArgoCD 기반 GitOps 배포
+- KEDA 기반 이벤트 스케일링
+- Karpenter + Spot 기반 비용 최적화
+- WAF, GuardDuty, CloudTrail, KMS, Secrets Manager 기반 보안 구성
+- S3 및 RDS 중심 백업 전략
 
-## Observability
+## 모니터링
 
-The project used an LGTM-style observability stack centered around:
+운영 가시성을 위해 LGTM 계열 스택을 활용했습니다.
 
 - Grafana
 - Loki
 - Tempo
 - Mimir
 
-Operational visibility focused on indicators such as:
+주요 운영 지표는 다음과 같습니다.
 
 - API latency
 - error rate
 - Kafka lag
-- worker health
-- data-layer availability
+- worker 상태
+- 데이터 계층 가용성
 
-## Data Flow Highlights
+## 데이터 흐름 요약
 
-### News Pipeline
+### 뉴스 파이프라인
 
-- Python workers collect news from external sources
-- producer sends raw data to Kafka
-- MongoDB consumer stores source documents
-- Elasticsearch consumer indexes searchable / RAG-usable documents
+- Python 워커가 외부 뉴스 소스를 수집
+- producer가 Kafka로 원본 뉴스 전달
+- MongoDB consumer가 원본 문서 저장
+- Elasticsearch consumer가 검색 및 RAG 활용용 색인 처리
 
-### Market Data Pipeline
+### 시세 파이프라인
 
-- price producer gathers market data from external feeds
-- Kafka topics separate current price and candle-oriented tick flow
-- Redis stores fast current-price cache
-- candle aggregation logic prepares chart-oriented time series data
+- price producer가 외부 시세 공급원에서 데이터 수집
+- Kafka 토픽을 현재가용 / 캔들용으로 분리
+- Redis에 최신 시세 캐시 저장
+- 캔들 집계 로직이 차트용 시계열 데이터 생성
 
-## Why This Repository Exists
+## 이 저장소를 만든 이유
 
-The original project work was split across multiple repositories and services. This GitHub repository was organized so the full project can be reviewed from one place while still preserving the service boundaries between frontend, backend, and auth.
+원래 프로젝트 작업은 서비스별로 나뉘어 있었지만, GitHub에서는 전체 프로젝트를 한 번에 검토할 수 있도록 `frontend`, `backend`, `auth`를 한 저장소에서 볼 수 있게 정리했습니다.
 
-## Getting Started
+즉, 이 저장소는 단일 애플리케이션 저장소라기보다 프로젝트 전체를 함께 확인하기 위한 통합 진입점 역할을 합니다.
 
-Each service should be explored and run from its own directory:
+## 시작하기
+
+각 서비스는 개별 디렉터리에서 확인하고 실행하면 됩니다.
 
 - [tutum-backend](./tutum-backend)
 - [tutum-frontend](./tutum-frontend)
 - [auth](./auth)
 
-Please refer to the README and environment examples inside each directory for service-specific setup steps.
+실행 방법과 환경 변수 설정은 각 디렉터리 내부의 `README` 및 `.env.example` 파일을 참고하면 됩니다.
 
-## Notes
+## 참고 사항
 
-- Running only the frontend is enough for UI shell verification, but interactive features such as login, personalized news, and real-time data require backend and related dependencies.
-- The backend depends on external services such as MariaDB, MongoDB, Redis, and in some flows Kafka and Elasticsearch.
-- This repository reflects both application code and the operational thinking behind deployment, monitoring, backup, security, and cost optimization.
+- 프론트엔드만 실행하면 UI 껍데기 확인은 가능하지만, 로그인, 맞춤 뉴스, 실시간 데이터 기능은 백엔드 및 의존 서비스가 필요합니다.
+- 백엔드는 MariaDB, MongoDB, Redis, 일부 흐름에서는 Kafka와 Elasticsearch까지 필요로 합니다.
+- 이 저장소는 코드뿐 아니라 배포, 모니터링, 백업, 보안, 비용 최적화까지 포함한 운영 관점의 결과도 함께 담고 있습니다.
